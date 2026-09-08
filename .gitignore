@@ -1,3 +1,30 @@
+.venv/
+models/
+__pycache__/
+*.pyc
+.DS_Store
+
+# Preserved application and upstream ignore rules
+node_modules/
+dist/
+.DS_Store
+*.local
+.env
+.vite/
+.artifacts/
+
+# Tauri
+src-tauri/target/
+src-tauri/gen/
+
+# LLM GGUF 权重不入版本库（用户规则；导入/回退模型都放 models/llm/）
+models/llm/*.gguf
+
+# Qwen3-ASR MLX 打包运行时(python-build-standalone + mlx wheels;由
+# scripts/build-qwen3-mlx-runtime.sh 重建)与离线模型目录不入版本库。
+src-tauri/resources/qwen3-mlx/runtime/
+models/qwen3-asr-1.7b/
+
 .DS_Store
 .build/
 build/
@@ -67,11 +94,11 @@ tmp-run*/
 .cargo/git/
 
 # Windows TSF IME local build outputs
-openless-all/app/windows-ime/OpenLessIme/
-openless-all/app/windows-ime/x64/
-openless-all/app/windows-ime/Win32/
-openless-all/app/windows-ime/Release/
-openless-all/app/windows-ime/obj/
+windows-ime/OpenLessIme/
+windows-ime/x64/
+windows-ime/Win32/
+windows-ime/Release/
+windows-ime/obj/
 
 # Planning docs are kept local only, not published to the public repo.
 docs/plans/
@@ -115,3 +142,5 @@ CapsWriter
 
 .reasonix
 /.codex
+
+/.zcode/

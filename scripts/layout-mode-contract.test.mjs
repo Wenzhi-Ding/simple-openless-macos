@@ -1,0 +1,45 @@
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const appRoot = dirname(dirname(fileURLToPath(import.meta.url)));
+const read = relativePath => readFileSync(join(appRoot, relativePath), 'utf8');
+
+const css = read('src/styles/global.css');
+const stackedLayout = read('src/lib/stackedLayout.ts');
+const shared = read('src/pages/settings/shared.tsx');
+const pageAtoms = read('src/pages/_atoms.tsx');
+const row = read('src/components/ui/Row.tsx');
+const permissions = read('src/pages/settings/PermissionsSection.tsx');
+const androidPermissions = read('android/frontend/components/AndroidPermissionsPanel.tsx');
+const about = read('src/pages/settings/AboutSection.tsx');
+const moreSheet = read('src/components/MobileMoreSheet.tsx');
+const styleSheet = read('src/components/MobileStyleSheet.tsx');
+
+assert.doesNotMatch(css, /\.ol-flex-row\s*>\s*\*/);
+assert.doesNotMatch(css, /\[class\*=["']ol-grid["']\]/);
+assert.match(css, /\.ol-flex-row\.ol-flex-split/);
+assert.match(css, /\.ol-conservative-stack/);
+
+assert.match(stackedLayout, /stackedRowLayout\?: boolean/);
+assert.doesNotMatch(stackedLayout, /mobile\s*\|\|/);
+assert.match(pageAtoms, /preferenceStack\s*\?/);
+assert.match(row, /stackLayout\s*\?\s*'minmax\(0, 1fr\)'/);
+
+assert.match(permissions, /permissionActionsStyle/);
+assert.match(permissions, /justifyContent:\s*stackLayout\s*\?\s*'flex-start'\s*:\s*'flex-end'/);
+assert.match(androidPermissions, /const baseLayoutStack = useLayoutStack\(\)/);
+assert.match(androidPermissions, /const rowJustify = layoutStack \? 'flex-start' : 'flex-end'/);
+
+assert.match(about, /ol-inline-composite/);
+assert.match(moreSheet, /chevRight/);
+assert.match(styleSheet, /chevRight/);
+assert.match(moreSheet, /flexWrap:\s*'nowrap'/);
+assert.match(styleSheet, /flexWrap:\s*'nowrap'/);
+assert.match(moreSheet, /position:\s*'fixed'/);
+assert.match(styleSheet, /position:\s*'fixed'/);
+assert.match(moreSheet, /boxSizing:\s*'border-box'/);
+assert.match(styleSheet, /boxSizing:\s*'border-box'/);
+
+console.log('layout mode contract tests passed');
