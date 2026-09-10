@@ -42,7 +42,7 @@ export function GeneralTab() {
   );
 }
 
-// 「服务」tab 已删除：模型/引擎由构建固定（Qwen3-ASR 1.7B + Gemma 4 E2B），
+// 「服务」tab 已删除：模型/引擎由构建固定（Qwen3-ASR 1.7B + Gemma 4 E4B），
 // 真实加载状态在概览页两张状态卡展示；没有导入/选择/路径入口。
 
 // 隐私：本地优先说明 + 权限管理 · 数据存储。
@@ -78,10 +78,7 @@ export function PrivacyTab() {
   );
 }
 
-// 高级：只留真正的实验性/开发者功能 —— Less Computer · Claude 控制台 · 调试工具。
-// （本地模型移入「服务」、更新相关移入「关于」，这个 tab 不再是杂物抽屉。）
-// 调试工具本身是跨端的：Android 复用同一份 prefs / 录音导出入口；
-// 这里只做平台 gating，不把桌面特有能力耦合进移动端运行时。
+// 高级：只保留本地调试工具与录音导出入口。
 export function AdvancedTab() {
   return <DebugToolsSection />;
 }

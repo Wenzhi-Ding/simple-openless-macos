@@ -7,11 +7,9 @@ import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Icon } from '../../components/Icon';
 import { Row } from '../../components/ui/Row';
-import { getPlatformCapabilities } from '../../lib/ipc';
-import type { PlatformCapabilities } from '../../lib/types';
 import { APP_VERSION_LABEL } from '../../lib/appVersion';
 import { Card } from '../_atoms';
-import { useConservativeLayout, useLayoutStack } from '../../lib/useMobileLayout';
+import { useConservativeLayout, useLayoutStack } from '../../lib/useResponsiveLayout';
 import { btnGhostStyle } from './shared';
 
 
@@ -22,12 +20,7 @@ export function AboutSection() {
   const compactLayout = baseLayoutStack || conservativeLayout;
   const appIconSize = compactLayout ? 36 : 56;
   const [qqCopied, setQqCopied] = useState(false);
-  const [platformCaps, setPlatformCaps] = useState<PlatformCapabilities | null>(null);
   const qqCopiedRef = useRef<number | null>(null);
-
-  useEffect(() => {
-    void getPlatformCapabilities().then(setPlatformCaps);
-  }, []);
 
   useEffect(() => () => {
     if (qqCopiedRef.current) clearTimeout(qqCopiedRef.current);

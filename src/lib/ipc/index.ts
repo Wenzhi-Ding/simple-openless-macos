@@ -3,18 +3,10 @@
 // Coding Agent、Marketplace、GitHub OAuth、updater、remote-server、
 // check_network 的导出已随对应后端命令移除。
 
-export type { UpdateChannel, PlatformCapabilities } from "../types"
+export type { PlatformCapabilities } from "../types"
 
-// platform & android
-export { isAndroid, isDesktop, isMobile } from "./platform-exports"
-export {
-    getAndroidOverlayStatus,
-    requestAndroidOverlayPermission,
-    showAndroidOverlay,
-    hideAndroidOverlay,
-    getAndroidAccessibilityStatus,
-    requestAndroidAccessibilityPermission,
-} from "./platform-exports"
+// platform
+export { isDesktop } from "./platform-exports"
 
 // shared
 export { isTauri, invokeOrMock, getPlatformCapabilities } from "./shared"
@@ -25,7 +17,6 @@ export {
     BACKEND_CONTRACT_VERSION,
     getStartupSnapshot,
     getSettings,
-    getDefaultStyleSystemPrompts,
     setSettings,
 } from "./settings"
 
@@ -37,6 +28,7 @@ export {
     getActivityStats,
     readAudioRecording,
     retranscribeRecording,
+    repolish,
 } from "./history"
 
 // vocab
@@ -45,18 +37,9 @@ export {
     addVocab,
     removeVocab,
     setVocabEnabled,
-    listCorrectionRules,
-    addCorrectionRule,
-    acceptPendingCorrection,
-    rejectPendingCorrection,
-    dismissVocabSuggestions,
     copyTextToClipboard,
     dismissInsertFallbackCard,
     reportInsertFallbackCardHeight,
-    removeCorrectionRule,
-    setCorrectionRuleEnabled,
-    listVocabPresets,
-    saveVocabPresets,
 } from "./vocab"
 
 // dictation
@@ -67,23 +50,6 @@ export {
     handleWindowHotkeyEvent,
 } from "./dictation"
 
-// style-packs
-export {
-    repolish,
-    setDefaultPolishMode,
-    setStyleEnabled,
-    listStylePacks,
-    saveStylePack,
-    createStylePackFromTemplate,
-    previewStylePackRuntime,
-    setActiveStylePack,
-    setStylePackEnabled,
-    resetBuiltinStylePack,
-    deleteStylePack,
-    importStylePackFromZip,
-    exportStylePackToZip,
-} from "./style-packs"
-
 // permissions
 export {
     checkAccessibilityPermission,
@@ -92,23 +58,17 @@ export {
     requestMicrophonePermission,
     openSystemSettings,
     triggerMicrophonePrompt,
-    restartApp,
-    resetAccessibilityPermissionAndRestartApp,
 } from "./permissions"
 
 // hotkeys
 export {
     getHotkeyStatus,
     getHotkeyCapability,
-    getWindowsImeStatus,
     validateComboHotkey,
     setComboHotkey,
     validateShortcutBinding,
     setDictationHotkey,
-    setSelectionPolishHotkey,
-    setSwitchStyleHotkey,
     setOpenAppHotkey,
-    setStylePackHotkeys,
     setShortcutRecordingActive,
 } from "./hotkeys"
 
@@ -117,14 +77,8 @@ export {
     listMicrophoneDevices,
     startMicrophoneLevelMonitor,
     stopMicrophoneLevelMonitor,
-    isWaylandCliMode,
 } from "./devices"
 
-export {
-    getSelectionPolishPreview,
-    confirmSelectionPolishPreview,
-    cancelSelectionPolishPreview,
-} from './selection-polish-preview'
 
 // utils
-export { openExternal, exportErrorLog, logClientError, debugReadCursorContext } from "./utils"
+export { exportErrorLog, debugReadCursorContext } from "./utils"

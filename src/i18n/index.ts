@@ -11,7 +11,6 @@
 import i18n from 'i18next';
 import { initReactI18next } from 'react-i18next';
 import { zhCN } from './zh-CN';
-import type { UserPreferences } from '../lib/types';
 
 export const SUPPORTED_LOCALES = ['zh-CN', 'zh-TW', 'en', 'ja', 'ko'] as const;
 export type SupportedLocale = (typeof SUPPORTED_LOCALES)[number];
@@ -48,7 +47,7 @@ const initialLng: SupportedLocale = getStoredLocale() ?? detectSystemLocale();
 // 把 en / ja / ko / zh-TW 四份语言包拆成按需 chunk，减小每个 webview 的常驻体积。
 // 代价：非 zh-CN 用户首屏先显示 zh-CN 一瞬，语言包异步到位后切换；最坏情况（加载失败）
 // 也只停在 zh-CN（可读），不会出现 key 字面量。
-const localeLoaders: Record<Exclude<SupportedLocale, 'zh-CN'>, () => Promise<typeof zhCN>> = {
+const localeLoaders: Record<Exclude<SupportedLocale, 'zh-CN'>, () => Promise<Record<string, unknown>>> = {
   'zh-TW': () => import('./zh-TW').then(m => m.zhTW),
   en: () => import('./en').then(m => m.en),
   ja: () => import('./ja').then(m => m.ja),
@@ -109,42 +108,3 @@ export async function setLocalePreference(
 }
 
 export const FOLLOW_SYSTEM = FOLLOW_SYSTEM_VALUE;
-
-export function outputPrefsForLocale(
-  resolved: SupportedLocale,
-): Pick<UserPreferences, 'chineseScriptPreference' | 'outputLanguagePreference'> {
-  if (resolved === 'zh-CN') {
-    return {
-      chineseScriptPreference: 'simplified',
-      outputLanguagePreference: 'zhCn',
-    };
-  }
-  if (resolved === 'zh-TW') {
-    return {
-      chineseScriptPreference: 'traditional',
-      outputLanguagePreference: 'zhTw',
-    };
-  }
-  if (resolved === 'en') {
-    return {
-      chineseScriptPreference: 'auto',
-      outputLanguagePreference: 'en',
-    };
-  }
-  if (resolved === 'ja') {
-    return {
-      chineseScriptPreference: 'auto',
-      outputLanguagePreference: 'ja',
-    };
-  }
-  if (resolved === 'ko') {
-    return {
-      chineseScriptPreference: 'auto',
-      outputLanguagePreference: 'ko',
-    };
-  }
-  return {
-    chineseScriptPreference: 'auto',
-    outputLanguagePreference: 'auto',
-  };
-}

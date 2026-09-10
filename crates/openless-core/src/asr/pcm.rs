@@ -1,8 +1,7 @@
 //! 共享 PCM 时长计算。
 //!
-//! 录音统一是 16 kHz / 单声道 / 16-bit 小端 PCM，时长换算 `(字节数 / 2) * 1000 / 16000`
-//! 原本散落在各 ASR provider 里重复（foundry / sherpa / whisper / mimo），这里收口成
-//! 唯一实现，各处改为薄封装调用（参考 `wav::encode_wav_16k_mono` 的共享先例）。
+//! 录音统一是 16 kHz / 单声道 / 16-bit 小端 PCM，时长换算
+//! `(字节数 / 2) * 1000 / 16000`，由本模块提供唯一实现。
 
 /// 每个采样的字节数（16-bit → 2 字节）。
 const PCM_BYTES_PER_SAMPLE: u64 = 2;

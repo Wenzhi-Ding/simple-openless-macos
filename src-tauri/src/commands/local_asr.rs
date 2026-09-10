@@ -1,7 +1,5 @@
 use super::*;
 
-use openless_core::LocalAsrRuntime;
-
 fn core_error(error: openless_core::BackendError) -> String {
     error.to_string()
 }
@@ -67,7 +65,7 @@ pub async fn local_asr_engine_status(
     backend
         .services()
         .local_asr
-        .runtime_status(LocalAsrRuntime::Generic)
+        .runtime_status()
         .await
         .map(LocalAsrEngineStatus::from_core)
         .map_err(core_error)
@@ -80,14 +78,12 @@ mod tests {
     #[test]
     fn loading_maps_from_the_core_operation_field() {
         let core = openless_core::LocalAsrRuntimeStatus {
-            runtime: LocalAsrRuntime::Generic,
             provider_id: "local-qwen3-mlx".into(),
             available: true,
             loaded: false,
             active_model: "qwen3-asr-1.7b".into(),
             model_id: None,
             keep_loaded_secs: 300,
-            endpoint: None,
             operation: Some("loading".into()),
             error: None,
             last_error: None,

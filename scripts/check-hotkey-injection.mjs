@@ -7,7 +7,7 @@ const result = spawnSync(
     '--locked',
     '-p',
     'openless-core',
-    'shared_hotkey_edges_own_hold_auto_and_combo_abort_semantics',
+    'hotkey_interpreter::tests::auto_uses_native_press_duration_and_release_generation',
     '--',
     '--nocapture',
   ],
@@ -26,7 +26,7 @@ if (result.status !== 0) {
   process.exit(result.status ?? 1);
 }
 
-if (!output.includes('test api::tests::shared_hotkey_edges_own_hold_auto_and_combo_abort_semantics ... ok')) {
+if (!output.includes('test hotkey_interpreter::tests::auto_uses_native_press_duration_and_release_generation ... ok')) {
   console.error('Core hotkey edge gate did not execute the expected test.');
   process.exit(1);
 }

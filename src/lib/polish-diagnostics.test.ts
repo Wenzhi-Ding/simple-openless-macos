@@ -1,5 +1,5 @@
 // polish-diagnostics.test.ts — 诊断展示逻辑的最小测试（纯函数，无 IPC/无渲染）。
-// 与 history-repolish.test.ts 同款裸断言风格，由 scripts/frontend-test-runner.mjs 发现。
+// 裸断言风格，由 scripts/frontend-test-runner.mjs 发现。
 import {
   contextStatusLabelKey,
   contextSummary,

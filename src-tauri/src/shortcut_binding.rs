@@ -1,17 +1,14 @@
 //! Shared parsing/validation for user-configurable shortcut bindings.
-
-use global_hotkey::hotkey::{Code, HotKey, Modifiers};
-
 #[cfg(test)]
 use crate::types::HotkeyTrigger;
 use crate::types::ShortcutBinding;
-
+use global_hotkey::hotkey::{Code, HotKey, Modifiers};
 pub use openless_core::{
-    binding_requires_side_aware_hook, bindings_overlap, is_side_specific_modifier_tag,
-    legacy_modifier_trigger, normalize_side_modifier_tag, reject_side_specific_non_dictation,
-    ShortcutBindingError, SIDE_SPECIFIC_NON_DICTATION_MSG,
+    binding_requires_side_aware_hook, is_side_specific_modifier_tag, legacy_modifier_trigger,
+    normalize_side_modifier_tag, reject_side_specific_non_dictation, ShortcutBindingError,
 };
-
+#[cfg(test)]
+use openless_core::{bindings_overlap, SIDE_SPECIFIC_NON_DICTATION_MSG};
 pub fn validate_binding(binding: &ShortcutBinding) -> Result<(), ShortcutBindingError> {
     openless_core::validate_shortcut_binding(binding)?;
     if legacy_modifier_trigger(binding).is_some()
@@ -23,7 +20,6 @@ pub fn validate_binding(binding: &ShortcutBinding) -> Result<(), ShortcutBinding
     parse_global_hotkey(binding)?;
     Ok(())
 }
-
 pub fn parse_global_hotkey(binding: &ShortcutBinding) -> Result<HotKey, ShortcutBindingError> {
     let mut mods = Modifiers::empty();
     for raw in &binding.modifiers {
@@ -33,7 +29,9 @@ pub fn parse_global_hotkey(binding: &ShortcutBinding) -> Result<HotKey, Shortcut
             "ctrl" | "control" => Modifiers::CONTROL,
             "alt" | "option" | "opt" => Modifiers::ALT,
             "shift" => Modifiers::SHIFT,
-            other => return Err(ShortcutBindingError::UnsupportedModifier(other.to_string())),
+            other => {
+                return Err(ShortcutBindingError::UnsupportedModifier(other.to_string()));
+            }
         };
         mods |= bit;
     }
@@ -41,21 +39,13 @@ pub fn parse_global_hotkey(binding: &ShortcutBinding) -> Result<HotKey, Shortcut
     let mods = if mods.is_empty() { None } else { Some(mods) };
     Ok(HotKey::new(mods, code))
 }
-
 fn normalize_modifier_tag(raw: &str) -> String {
     let tag = raw.trim().to_ascii_lowercase();
     if is_side_specific_modifier_tag(&tag) {
         return tag;
     }
-    #[cfg(target_os = "windows")]
-    {
-        if matches!(tag.as_str(), "cmd" | "command") {
-            return "ctrl".to_string();
-        }
-    }
     tag
 }
-
 pub fn parse_primary(raw: &str) -> Result<Code, ShortcutBindingError> {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
@@ -99,7 +89,6 @@ pub fn parse_primary(raw: &str) -> Result<Code, ShortcutBindingError> {
     };
     Ok(named)
 }
-
 fn char_to_code(ch: char) -> Option<Code> {
     let c = ch.to_ascii_uppercase();
     let code = match c {
@@ -155,11 +144,9 @@ fn char_to_code(ch: char) -> Option<Code> {
     };
     Some(code)
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
     #[test]
     fn parses_combo_and_single_key() {
         let combo = ShortcutBinding {
@@ -167,13 +154,9 @@ mod tests {
             modifiers: vec!["cmd".into(), "shift".into()],
         };
         let parsed = parse_global_hotkey(&combo).expect("combo parses");
-        #[cfg(target_os = "windows")]
-        assert!(parsed.mods.contains(Modifiers::CONTROL));
-        #[cfg(not(target_os = "windows"))]
         assert!(parsed.mods.contains(Modifiers::SUPER));
         assert!(parsed.mods.contains(Modifiers::SHIFT));
         assert_eq!(parsed.key, Code::KeyD);
-
         let single = ShortcutBinding {
             primary: "F8".into(),
             modifiers: vec![],
@@ -182,7 +165,6 @@ mod tests {
         assert!(parsed.mods.is_empty());
         assert_eq!(parsed.key, Code::F8);
     }
-
     #[test]
     fn detects_legacy_modifier_only() {
         let binding = ShortcutBinding {
@@ -202,7 +184,6 @@ mod tests {
             Some(HotkeyTrigger::LeftCommand)
         );
     }
-
     #[test]
     fn side_specific_combo_requires_side_aware_hook() {
         let binding = ShortcutBinding {
@@ -212,7 +193,6 @@ mod tests {
         assert!(binding_requires_side_aware_hook(&binding));
         assert!(validate_binding(&binding).is_ok());
     }
-
     #[test]
     fn generic_combo_uses_global_hotkey_path() {
         let binding = ShortcutBinding {
@@ -222,14 +202,12 @@ mod tests {
         assert!(!binding_requires_side_aware_hook(&binding));
         assert!(parse_global_hotkey(&binding).is_ok());
     }
-
     #[test]
     fn super_side_aliases_normalize_to_cmd() {
         assert_eq!(normalize_side_modifier_tag("super-left"), "cmd-left");
         assert_eq!(normalize_side_modifier_tag("Super-Right"), "cmd-right");
         assert!(is_side_specific_modifier_tag("super-left"));
     }
-
     #[test]
     fn accepts_shifted_printable_aliases() {
         let cases = [
@@ -251,28 +229,14 @@ mod tests {
             assert!(parsed.mods.contains(Modifiers::SHIFT));
         }
     }
-
     fn combo(primary: &str, modifiers: Vec<&str>) -> ShortcutBinding {
         ShortcutBinding {
             primary: primary.into(),
             modifiers: modifiers.into_iter().map(str::to_string).collect(),
         }
     }
-
     #[test]
     fn side_combo_overlaps_generic_combo_with_same_physical_modifiers() {
-        #[cfg(target_os = "windows")]
-        {
-            assert!(!bindings_overlap(
-                &combo("D", vec!["cmd-left"]),
-                &combo("D", vec!["cmd"]),
-            ));
-            assert!(bindings_overlap(
-                &combo("D", vec!["cmd-left"]),
-                &combo("D", vec!["super"]),
-            ));
-        }
-        #[cfg(not(target_os = "windows"))]
         {
             assert!(bindings_overlap(
                 &combo("D", vec!["cmd-left"]),
@@ -280,7 +244,6 @@ mod tests {
             ));
         }
     }
-
     #[test]
     fn side_combo_does_not_overlap_generic_combo_with_extra_modifier() {
         assert!(!bindings_overlap(
@@ -288,7 +251,6 @@ mod tests {
             &combo("D", vec!["cmd", "shift"]),
         ));
     }
-
     #[test]
     fn side_combos_with_different_sides_do_not_overlap() {
         assert!(!bindings_overlap(
@@ -296,7 +258,6 @@ mod tests {
             &combo("D", vec!["cmd-right"]),
         ));
     }
-
     #[test]
     fn rejects_side_specific_non_dictation_shortcut() {
         let binding = combo("D", vec!["cmd-left"]);

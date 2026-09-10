@@ -1,4 +1,6 @@
 import {
+  defaultDictationHotkey,
+  formatComboLabel,
   genericModifiersFromPressedCodes,
   modifiersFromPressedCodes,
   shortcutFromLegacyTrigger,
@@ -41,6 +43,16 @@ assertDeepEqual(
 );
 
 mockNavigator('MacIntel', 'Macintosh');
+assertEqual(
+  defaultDictationHotkey().primary,
+  'RightCommand',
+  'default dictation hotkey matches the macOS product default',
+);
+assertEqual(
+  formatComboLabel(defaultDictationHotkey()),
+  'Right ⌘',
+  'formats the default macOS dictation hotkey',
+);
 assertDeepEqual(
   genericModifiersFromPressedCodes(new Set(['MetaLeft', 'ShiftRight'])),
   ['cmd', 'shift'],

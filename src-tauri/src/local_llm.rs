@@ -14,14 +14,13 @@ use llama_cpp_2::llama_batch::LlamaBatch;
 use llama_cpp_2::model::params::LlamaModelParams;
 use llama_cpp_2::model::{AddBos, LlamaChatMessage, LlamaModel};
 use llama_cpp_2::sampling::LlamaSampler;
+use openless_core::polish_diagnostics::{
+    context_diagnostics, PolishDiagnosticError, PolishDiagnosticMessage, PolishDiagnostics,
+    PolishDiagnosticsOutcome, PolishDiagnosticsStage, PolishTemplateKind, ADD_BOS_NOTE,
+};
 use openless_core::{
     BackendError, BackendErrorCode, DictationContext, PolishAttempt, PolishOutput, SessionId,
     TextPolisher, TextStreamSink,
-};
-use openless_core::polish_diagnostics::{
-    context_diagnostics, PolishContextDiagnostics, PolishDiagnosticError, PolishDiagnosticMessage,
-    PolishDiagnostics, PolishDiagnosticsOutcome, PolishDiagnosticsStage, PolishTemplateKind,
-    ADD_BOS_NOTE,
 };
 use serde::Serialize;
 
@@ -29,14 +28,14 @@ pub const LOCAL_LLM_PROVIDER_ID: &str = "local-llama";
 const CONTEXT_TOKENS: u32 = 16_384;
 const MIN_GENERATION_TOKENS: usize = 1024;
 
-/// 固定润色模型：Gemma 4 E2B it Q4_0（llama.cpp 官方 ggml-org 转换，Apache-2.0，
+/// 固定润色模型：Gemma 4 E4B it Q4_0（llama.cpp 官方 ggml-org 转换，Apache-2.0，
 /// QAT 量化）。思考关闭由 Gemma 4 canonical chat template 的 enable_thinking=false
 /// 分支保证，见 [`render_gemma4_prompt`]。
 /// 模型由构建固定：没有导入/选择/回退路径（旧版会回退 Qwen2.5 或扫描目录里其它
 /// GGUF，已按要求移除）；磁盘上其它 GGUF 保留但不会被自动选用。
-pub const DEFAULT_MODEL_FILE: &str = "gemma-4-E2B-it-Q4_0.gguf";
-/// 仅测试(热换载冒烟)引用的旧回退文件名,运行时解析不再使用。
-pub const LEGACY_SWAP_MODEL_FILE: &str = "qwen2.5-7b-instruct-q4_k_m.gguf";
+pub const DEFAULT_MODEL_FILE: &str = "gemma-4-E4B-it-Q4_0.gguf";
+#[cfg(test)]
+const LEGACY_SWAP_MODEL_FILE: &str = "qwen2.5-7b-instruct-q4_k_m.gguf";
 
 pub fn models_dir() -> Result<PathBuf, String> {
     crate::persistence::models_root()
@@ -80,7 +79,7 @@ pub struct LocalLlmEngineStatus {
 
 pub struct LocalLlamaPolisher {
     /// `None` = 使用固定模型（`resolve_active_model_path()`，AppSupport 模型目录，
-    /// 当前即 Gemma 4 E2B）；`Some(path)` = 固定模型路径（测试与显式指定）。
+    /// 当前即 Gemma 4 E4B）；`Some(path)` = 固定模型路径（测试与显式指定）。
     fixed_model_path: Option<PathBuf>,
     // 字段声明顺序即 drop 顺序：loaded 里的模型必须先于 backend 消失。
     loaded: Arc<Mutex<Option<Arc<LoadedModel>>>>,
@@ -110,8 +109,8 @@ impl LocalLlamaPolisher {
         Self::build(None)
     }
 
-    /// 固定模型路径（测试与显式指定场景）。
-    pub fn with_fixed_model(path: PathBuf) -> Self {
+    #[cfg(test)]
+    fn with_fixed_model(path: PathBuf) -> Self {
         Self::build(Some(path))
     }
 
@@ -157,10 +156,7 @@ impl LocalLlamaPolisher {
             ("loaded", None)
         } else {
             match state {
-                LoadState::NotLoaded => (
-                    if exists { "notLoaded" } else { "notFound" },
-                    None,
-                ),
+                LoadState::NotLoaded => (if exists { "notLoaded" } else { "notFound" }, None),
                 LoadState::Loading => ("loading", None),
                 // 载入后文件被移走：内存里的模型仍可用，保持 loaded。
                 LoadState::Loaded => ("loaded", None),
@@ -193,10 +189,7 @@ impl LocalLlamaPolisher {
     }
 
     /// 注册状态变化回调（Coordinator 用来向前端广播引擎状态事件）。
-    pub fn set_status_watcher(
-        &self,
-        watcher: Box<dyn Fn(&LocalLlmEngineStatus) + Send + Sync>,
-    ) {
+    pub fn set_status_watcher(&self, watcher: Box<dyn Fn(&LocalLlmEngineStatus) + Send + Sync>) {
         *self.watcher.lock().unwrap() = Some(watcher);
     }
 
@@ -777,36 +770,9 @@ struct ChatTurn {
     content: String,
 }
 
-fn prompt_messages(context: &DictationContext, raw: &str, gemma4: bool) -> Vec<ChatTurn> {
-    let (style_system_prompt, user_prompt) = context.effective_polish_prompts(raw);
-    // Working languages help recognize terms and tone; they must never change the language of
-    // the dictated text unless the captured context explicitly activated translation.
-    //
-    // 语言约束块按模型家族选择：Qwen 等中文原生模型沿用既有中文约束（字节不变，
-    // 不回归已验证行为）；Gemma 4 E2B 是英文指令最强的多语言小模型，整段中文指令
-    // 会被它理解成「用中文作答」，实测把英文输入译成中文——所以 Gemma 走英文约束。
-    let language_constraint = if gemma4 {
-        // 实测（2026-09-07，gemma-4-E2B-it-Q4_0 + 默认 Structured 风格 prompt）：英文
-        // 最高优先级约束放在 system 末尾能压住中文角色块让既有用例通过，但未见过样本
-        // 评测显示 E2B 对纯英文输入仍会漂移成中文（数字/实体保真、语言漂移）；更短的
-        // 双语简化版反而连既有用例都压不住，已回退。详见 gemma_unseen_language_eval。
-        "# Language constraint (highest priority — overrides everything else in this system prompt)\n\
-         Polish only. Never translate. The output language MUST exactly match the language of\n\
-         the text inside <raw_transcript>: English input produces English output, Chinese input\n\
-         produces Chinese output, and mixed input keeps every segment in its own language.\n\
-         Ignore any other statement in this system prompt (including the role or editor\n\
-         description) that suggests writing in Chinese; the transcript language always wins.\n\
-         working_languages is only for recognizing terms and tone, never for changing the\n\
-         output language. Keep proper nouns, version numbers, digits, units, and code exactly\n\
-         as written."
-    } else {
-        "# 本地模型语言约束（最高优先级）\n\
-         仅润色，不翻译。最终正文必须保留输入的原始语言；英文输入必须保持英文，\n\
-         中文输入必须保持中文，中英混合输入须保持各语言片段。working_languages 只用于\n\
-         识别术语和语气，绝不可据此转换输出语言。专名、版本号、数字、单位、代码原样保留。"
-    };
-    // 实测约束块必须放在 system 末尾（紧贴 user turn）：放开头会被中文角色声明压过。
-    let system_prompt = format!("{style_system_prompt}\n\n{language_constraint}");
+fn prompt_messages(context: &DictationContext, raw: &str, _gemma4: bool) -> Vec<ChatTurn> {
+    let (system_prompt, user_prompt) = context.effective_polish_prompts(raw);
+    // One code-owned contract for every model call; no legacy style or language suffix.
     let mut messages = Vec::with_capacity(context.polish.prior_turns.len() * 2 + 2);
     messages.push(ChatTurn {
         role: "system".into(),
@@ -873,7 +839,6 @@ mod tests {
     #[test]
     fn prompt_messages_use_the_captured_style_and_context_not_debug_mode() {
         let mut context = DictationContext::default();
-        context.polish.style_system_prompt = "STYLE-CONTRACT".into();
         context.polish.working_languages = vec!["English".into()];
         context.polish.front_app = Some("Mail".into());
         context
@@ -886,8 +851,11 @@ mod tests {
         let messages = prompt_messages(&context, "new raw", false);
         assert_eq!(messages.len(), 4);
         let rendered = format!("{messages:?}");
-        assert!(rendered.contains("STYLE-CONTRACT"));
-        assert!(rendered.contains("Mail"));
+        assert!(!rendered.contains("STYLE-CONTRACT"));
+        assert!(!rendered.contains("Mail"));
+        assert!(messages[0]
+            .content
+            .contains(openless_core::prompts::FIXED_POLISH_PROMPT));
         assert!(rendered.contains("old polished"));
         assert!(!rendered.contains("模式："));
     }
@@ -898,12 +866,13 @@ mod tests {
         context.polish.cursor_context = Some("doc before cursor".into());
         context.polish.cursor_context_trace =
             openless_core::polish_diagnostics::PolishContextTrace::included();
-        context.polish.screen_ocr_trace = openless_core::polish_diagnostics::PolishContextTrace::new(
-            openless_core::polish_diagnostics::PolishContextStatus::NotReady,
-            None,
-        );
-        let path = PathBuf::from("/tmp/models/llm/gemma-4-E2B-it-Q4_0.gguf");
-        let mut capture = DiagnosticsCapture::new(&path, &context);
+        context.polish.screen_ocr_trace =
+            openless_core::polish_diagnostics::PolishContextTrace::new(
+                openless_core::polish_diagnostics::PolishContextStatus::NotReady,
+                None,
+            );
+        let path = PathBuf::from("/tmp/models/llm/gemma-4-E4B-it-Q4_0.gguf");
+        let capture = DiagnosticsCapture::new(&path, &context);
         // 渲染前：有正文也只算「捕获未采用」，绝不误标 Included。
         assert_eq!(
             capture.diagnostics.cursor.as_ref().unwrap().status,
@@ -917,8 +886,14 @@ mod tests {
             capture.diagnostics.screen_ocr.as_ref().unwrap().status,
             openless_core::polish_diagnostics::PolishContextStatus::NotReady
         );
-        assert_eq!(capture.diagnostics.model.as_deref(), Some("gemma-4-E2B-it-Q4_0.gguf"));
-        assert_eq!(capture.diagnostics.provider.as_deref(), Some(LOCAL_LLM_PROVIDER_ID));
+        assert_eq!(
+            capture.diagnostics.model.as_deref(),
+            Some("gemma-4-E4B-it-Q4_0.gguf")
+        );
+        assert_eq!(
+            capture.diagnostics.provider.as_deref(),
+            Some(LOCAL_LLM_PROVIDER_ID)
+        );
     }
 
     #[test]
@@ -927,7 +902,7 @@ mod tests {
         context.polish.cursor_context = Some("doc".into());
         context.polish.cursor_context_trace =
             openless_core::polish_diagnostics::PolishContextTrace::included();
-        let path = PathBuf::from("/tmp/models/llm/gemma-4-E2B-it-Q4_0.gguf");
+        let path = PathBuf::from("/tmp/models/llm/gemma-4-E4B-it-Q4_0.gguf");
         let mut capture = DiagnosticsCapture::new(&path, &context);
         let messages = prompt_messages(&context, "你好世界", true);
         let prompt = render_gemma4_prompt(&messages);
@@ -949,10 +924,20 @@ mod tests {
             "system"
         );
         assert_eq!(
-            capture.diagnostics.messages.as_ref().unwrap().last().unwrap().role,
+            capture
+                .diagnostics
+                .messages
+                .as_ref()
+                .unwrap()
+                .last()
+                .unwrap()
+                .role,
             "user"
         );
-        assert_eq!(capture.diagnostics.template, Some(PolishTemplateKind::Gemma4Canonical));
+        assert_eq!(
+            capture.diagnostics.template,
+            Some(PolishTemplateKind::Gemma4Canonical)
+        );
         assert_eq!(capture.diagnostics.add_bos, Some(true));
         assert_eq!(
             capture.diagnostics.add_bos_note.as_deref(),
@@ -968,7 +953,7 @@ mod tests {
     #[test]
     fn diagnostics_capture_failure_keeps_a_sanitized_error_summary() {
         let context = DictationContext::default();
-        let path = PathBuf::from("/tmp/models/llm/gemma-4-E2B-it-Q4_0.gguf");
+        let path = PathBuf::from("/tmp/models/llm/gemma-4-E4B-it-Q4_0.gguf");
         let mut capture = DiagnosticsCapture::new(&path, &context);
         capture.diagnostics.stage = PolishDiagnosticsStage::Tokenized;
         capture.failed(&BackendError::new(
@@ -987,7 +972,17 @@ mod tests {
             BackendErrorCode::Internal,
             std::iter::repeat('x').take(1_000).collect::<String>(),
         ));
-        assert!(capture.diagnostics.error.as_ref().unwrap().message.chars().count() <= 400);
+        assert!(
+            capture
+                .diagnostics
+                .error
+                .as_ref()
+                .unwrap()
+                .message
+                .chars()
+                .count()
+                <= 400
+        );
     }
 
     #[test]
@@ -1007,29 +1002,11 @@ mod tests {
         let legacy = prompt_messages(&context, "hello", false);
         let gemma = prompt_messages(&context, "hello", true);
         assert_eq!(legacy.len(), gemma.len());
-        // Qwen 等既有家族保持中文约束，不因 Gemma 适配被改动。
-        assert!(legacy[0].content.contains("本地模型语言约束"));
-        assert!(!legacy[0].content.contains("Language constraint"));
-        // Gemma 走英文最高优先级约束，且必须位于 system 末尾（紧贴 user turn）：
-        // 放开头实测会被中文角色块压过。
-        assert!(gemma[0]
-            .content
-            .contains("Language constraint (highest priority — overrides everything else"));
-        assert!(gemma[0].content.contains("Never translate"));
-        assert!(gemma[0]
-            .content
-            .contains("the transcript language always wins"));
+        assert_eq!(legacy[0].content, gemma[0].content);
+        assert!(gemma[0].content.contains("英文不翻译"));
+        assert!(gemma[0].content.contains("阿拉伯数字不改成汉字"));
+        assert!(!gemma[0].content.contains("Language constraint"));
         assert!(!gemma[0].content.contains("本地模型语言约束"));
-        let body = &gemma[0].content;
-        let constraint_pos = body
-            .find("Language constraint")
-            .expect("constraint present");
-        if let Some(role_pos) = body.find("# 角色") {
-            assert!(
-                constraint_pos > role_pos,
-                "gemma language constraint must come after the style body"
-            );
-        }
         // 两种家族的 user 信封一致，差异只在约束块。
         assert_eq!(
             legacy.last().unwrap().content,
@@ -1048,7 +1025,10 @@ mod tests {
         let dir = temp_resolve_dir("fixed");
         // 空目录、残留标记、目录里其它 GGUF（含旧回退 Qwen）都不影响解析结果：
         // 永远指向固定 Gemma 文件,不做任何回退/扫描。
+        assert_eq!(DEFAULT_MODEL_FILE, "gemma-4-E4B-it-Q4_0.gguf");
         assert_eq!(resolve_model_in_dir(&dir), dir.join(DEFAULT_MODEL_FILE));
+        // 升级后旧 E2B 即使仍在盘上也不得成为缺失 E4B 的隐式回退。
+        std::fs::write(dir.join("gemma-4-E2B-it-Q4_0.gguf"), "x").unwrap();
         std::fs::write(dir.join(LEGACY_SWAP_MODEL_FILE), "x").unwrap();
         std::fs::write(dir.join(".active-model"), LEGACY_SWAP_MODEL_FILE).unwrap();
         std::fs::write(dir.join("aa-random.gguf"), "x").unwrap();
@@ -1119,7 +1099,9 @@ mod tests {
             BackendErrorCode::Unsupported
         );
         // 模型缺失也必须携带诊断快照：阶段 ModelMissing、无 prompt、结局 Failed。
-        let diagnostics = attempt.diagnostics.expect("missing model carries diagnostics");
+        let diagnostics = attempt
+            .diagnostics
+            .expect("missing model carries diagnostics");
         assert_eq!(
             diagnostics.stage,
             openless_core::polish_diagnostics::PolishDiagnosticsStage::ModelMissing
@@ -1134,6 +1116,108 @@ mod tests {
         let rendered = format!("{diagnostics:?}");
         assert!(rendered.contains("ModelMissing"));
         assert!(rendered.contains("model: Some"));
+    }
+
+    #[test]
+    fn fixed_rendered_prompt_ignores_legacy_style_and_language_preferences() {
+        let context = DictationContext::default();
+        let prompt = render_gemma4_prompt(&prompt_messages(
+            &context,
+            "Release v2.3 costs $12.50",
+            true,
+        ));
+        assert!(prompt.contains("英文不翻译"));
+        assert!(prompt.contains("阿拉伯数字不改成汉字"));
+        assert!(!prompt.contains("{{"));
+        assert!(!prompt.contains("旧风格"));
+        assert!(!prompt.contains("翻译成中文"));
+        assert!(!prompt.contains("Language constraint"));
+    }
+
+    #[tokio::test]
+    #[ignore = "explicit real E4B text evaluation"]
+    async fn fixed_template_e4b_text_fidelity() {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .join("models/llm")
+            .join(DEFAULT_MODEL_FILE);
+        assert!(path.is_file(), "missing {}", path.display());
+        let polisher = Arc::new(LocalLlamaPolisher::with_fixed_model(path));
+        let cases: [(&str, &str, &[&str]); 5] = [
+            (
+                "digits",
+                "嗯我们有 3 个项目和 12,500 条请求，完成率 98.5%。",
+                &["3", "12,500", "98.5%"],
+            ),
+            (
+                "english",
+                "uh the release v2.3.1 costs $12.50 and is due on 2026-09-08",
+                &["v2.3.1", "$12.50", "2026-09-08", "release"],
+            ),
+            (
+                "mixed",
+                "这个 API update 用 Rust 1.89.0，ETA is Friday，预算 USD 1,250.00。",
+                &["API update", "Rust 1.89.0", "ETA is Friday", "USD 1,250.00"],
+            ),
+            (
+                "amount",
+                "金额是 2,500 元，折扣 12.5%，版本 v4.0.2，容量 512 GB。",
+                &["2,500", "12.5%", "v4.0.2", "512 GB"],
+            ),
+            (
+                "han_digits",
+                "我们有三个项目，明天十点开会。",
+                &["三个", "十点"],
+            ),
+        ];
+        let mut failures = Vec::new();
+        for (name, input, expected) in cases {
+            let context = DictationContext::default();
+            let expected_prompt = render_gemma4_prompt(&prompt_messages(&context, input, true));
+            let attempt = polisher
+                .polish(
+                    SessionId::new(),
+                    Arc::new(context),
+                    input.into(),
+                    Arc::new(NoopTextStream),
+                )
+                .await;
+            let diagnostics = attempt.diagnostics.expect("actual diagnostics");
+            assert_eq!(
+                diagnostics.prompt.as_deref(),
+                Some(expected_prompt.as_str())
+            );
+            match attempt.result {
+                Ok(output) => {
+                    let mut missing: Vec<_> = expected
+                        .iter()
+                        .filter(|value| !output.text.contains(**value))
+                        .copied()
+                        .collect();
+                    if name == "english"
+                        && output
+                            .text
+                            .chars()
+                            .any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c))
+                    {
+                        missing.push("English-only output");
+                    }
+                    println!(
+                        "FIXED_E4B case={name} input={input:?} output={:?} missing={missing:?}",
+                        output.text
+                    );
+                    if !missing.is_empty() {
+                        failures.push(name);
+                    }
+                }
+                Err(error) => {
+                    println!("FIXED_E4B case={name} error={error}");
+                    failures.push(name);
+                }
+            }
+        }
+        assert!(failures.is_empty(), "fidelity failures: {failures:?}");
     }
 
     /// Exercises the installed GGUF only when explicitly requested because model loading is large
@@ -1252,7 +1336,11 @@ mod tests {
             output_limit_diag.stage,
             openless_core::polish_diagnostics::PolishDiagnosticsStage::Generating
         );
-        assert!(output_limit_diag.prompt.as_deref().unwrap().contains("<|turn>"));
+        assert!(output_limit_diag
+            .prompt
+            .as_deref()
+            .unwrap()
+            .contains("<|turn>"));
         assert!(!output_limit.message.contains("版本"));
         assert!(!output_limit.message.contains("prefix:"));
 
@@ -1267,12 +1355,7 @@ mod tests {
 ");
         // Use the stock Light style, not a test-authored summarization instruction: this is the
         // application's standard non-structuring polish contract for a long status document.
-        let mut long_context = DictationContext::default();
-        long_context.polish.mode = openless_core::PolishMode::Light;
-        long_context.polish.style_system_prompt =
-            openless_core::style_packs::default_style_system_prompt_for_mode(
-                openless_core::PolishMode::Light,
-            );
+        let long_context = DictationContext::default();
         let started = std::time::Instant::now();
         let attempt = polisher
             .polish(
@@ -1372,7 +1455,10 @@ mod tests {
             model_path.display()
         );
         let started = std::time::Instant::now();
-        polisher.preload().await.expect("preload must load the fixed model");
+        polisher
+            .preload()
+            .await
+            .expect("preload must load the fixed model");
         println!(
             "preload_shared_slot case=preload elapsed_ms={} file={}",
             started.elapsed().as_millis(),
@@ -1380,17 +1466,17 @@ mod tests {
         );
         assert_eq!(polisher.status().state, "loaded");
         assert_eq!(
-            polisher.loaded.lock().unwrap().as_ref().map(|m| m.path.clone()),
+            polisher
+                .loaded
+                .lock()
+                .unwrap()
+                .as_ref()
+                .map(|m| m.path.clone()),
             Some(model_path.clone()),
             "preload must populate the same slot the polish path uses"
         );
 
-        let mut context = DictationContext::default();
-        context.polish.mode = openless_core::PolishMode::Light;
-        context.polish.style_system_prompt =
-            openless_core::style_packs::default_style_system_prompt_for_mode(
-                openless_core::PolishMode::Light,
-            );
+        let context = DictationContext::default();
         let attempt = polisher
             .polish(
                 SessionId::new(),
@@ -1399,13 +1485,16 @@ mod tests {
                 Arc::new(NoopTextStream),
             )
             .await;
-        let output = attempt
-            .result
-            .expect("polish after preload");
+        let output = attempt.result.expect("polish after preload");
         assert!(!output.text.trim().is_empty());
         // 润色没有触发换载：slot 里的路径仍是预载写入的那份。
         assert_eq!(
-            polisher.loaded.lock().unwrap().as_ref().map(|m| m.path.clone()),
+            polisher
+                .loaded
+                .lock()
+                .unwrap()
+                .as_ref()
+                .map(|m| m.path.clone()),
             Some(model_path),
             "polish must reuse the preloaded slot instead of reloading"
         );
@@ -1433,12 +1522,7 @@ mod tests {
         let slot: Arc<Mutex<Option<Arc<LoadedModel>>>> = Arc::new(Mutex::new(None));
         let backend_slot: Arc<Mutex<Option<Arc<LlamaBackend>>>> = Arc::new(Mutex::new(None));
         let inference = Arc::new(Mutex::new(()));
-        let mut context = DictationContext::default();
-        context.polish.mode = openless_core::PolishMode::Light;
-        context.polish.style_system_prompt =
-            openless_core::style_packs::default_style_system_prompt_for_mode(
-                openless_core::PolishMode::Light,
-            );
+        let context = DictationContext::default();
         for (name, path) in [("first", first), ("second", second)] {
             let started = std::time::Instant::now();
             let attempt = generate(

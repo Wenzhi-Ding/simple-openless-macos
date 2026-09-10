@@ -4,12 +4,12 @@ use std::sync::{Arc, Mutex};
 
 use tokio::sync::broadcast;
 
-use crate::domains::{LocalAsrRuntimeStatus, SelectionSnapshot};
-use crate::shared_types::{CredentialsStatus, HotkeyStatus, PendingCorrection};
+use crate::domains::LocalAsrRuntimeStatus;
+use crate::shared_types::HotkeyStatus;
 use crate::types::{
     DictationResult, DictationStateSnapshot, HistoryChange, InsertFallbackPayload,
     NotificationPayload, PermissionSnapshot, PolishDelta, PreferencesChange, SessionId,
-    StylePackChange, TranscriptDelta, VocabularyChange,
+    TranscriptDelta, VocabularyChange,
 };
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -23,9 +23,7 @@ pub struct BackendEvent {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum LocalAsrRuntimeKind {
-    Foundry,
-    SherpaOnnx,
-    Generic,
+    Qwen3Mlx,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -51,7 +49,6 @@ pub struct LocalAsrPrepareProgress {
     pub error: Option<String>,
 }
 
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RecordingControlAction {
@@ -76,20 +73,16 @@ pub enum BackendEventKind {
     PolishDelta(PolishDelta),
     DictationCompleted(DictationResult),
     RecordingControlRequested(RecordingControlRequest),
-    SelectionStateChanged(SelectionSnapshot),
     InsertFallback(InsertFallbackPayload),
     PreferencesChanged(PreferencesChange),
-    CredentialsChanged(CredentialsStatus),
     HistoryChanged(HistoryChange),
     VocabularyChanged(VocabularyChange),
-    StylePacksChanged(StylePackChange),
     PermissionChanged(PermissionSnapshot),
     HotkeyStatusChanged(HotkeyStatus),
     Notification(NotificationPayload),
     LocalAsrPrepareProgress(LocalAsrPrepareProgress),
     LocalAsrEngineChanged(LocalAsrRuntimeStatus),
     MicrophoneDevicesChanged,
-    VocabularySuggestionsChanged(Vec<PendingCorrection>),
 }
 
 /// Bounded, instance-local replay result used when a host mounts after events
@@ -122,7 +115,7 @@ impl EventBus {
         }
     }
 
-    pub fn publish(&self, session_id: Option<SessionId>, mut kind: BackendEventKind) {
+    pub fn publish(&self, session_id: Option<SessionId>, kind: BackendEventKind) {
         // One existing lock linearizes sequence allocation, projection, replay
         // and live delivery. Native audio and Agent threads publish concurrently:
         // assigning a number before locking (or sending after unlocking) lets a
@@ -167,7 +160,6 @@ impl EventBus {
             truncated,
         }
     }
-
 }
 
 /// Cloneable typed event sink for platform and transport Adapters.
@@ -193,7 +185,6 @@ impl BackendEventPublisher {
     pub fn replay_after(&self, sequence: u64) -> EventReplay {
         self.bus.replay_after(sequence)
     }
-
 }
 
 pub struct EventSubscription {
@@ -313,23 +304,15 @@ mod tests {
     }
 
     #[test]
-    fn event_serialization_is_tagged_and_does_not_add_secret_fields() {
+    fn event_serialization_is_tagged() {
         let event = BackendEvent {
             sequence: 7,
             session_id: None,
-            kind: BackendEventKind::CredentialsChanged(CredentialsStatus {
-                active_asr_provider: "fixture-asr".to_string(),
-                active_llm_provider: "fixture-llm".to_string(),
-                asr_configured: true,
-                llm_configured: true,
-                ..CredentialsStatus::default()
-            }),
+            kind: BackendEventKind::BackendStarted,
         };
         let json = serde_json::to_string(&event).expect("event should serialize");
-        assert!(json.contains("credentials_changed"));
-        assert!(json.contains("activeAsrProvider"));
-        assert!(!json.contains("token"));
-        assert!(!json.contains("authorization"));
+        assert!(json.contains("backend_started"));
+        assert!(json.contains("sequence"));
     }
 
     #[test]
@@ -373,7 +356,4 @@ mod tests {
         let other = EventBus::new(2);
         assert!(other.replay_after(0).events.is_empty());
     }
-
-
-
 }

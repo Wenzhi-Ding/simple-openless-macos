@@ -22,6 +22,6 @@ OpenLess 的 Qwen3-ASR MLX 后端需要 Apple MetalToolchain。
 
 然后重新运行源码构建命令（例如）：
 
-  ./scripts/build-mac.sh
+  OPENLESS_SIGNING_IDENTITY=79372AB3796B116E7D792939EDD9B58CC677C216 bash scripts/build-mac-stable.sh
 `)
 process.exit(1)

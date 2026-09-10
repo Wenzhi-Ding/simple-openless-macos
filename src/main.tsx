@@ -12,9 +12,7 @@ import type { OS } from "./components/WindowChrome";
 const params = new URLSearchParams(window.location.search);
 const windowKind = params.get("window");
 const isCapsule = windowKind === "capsule";
-const isSelectionPolishPreview = windowKind === "selection-polish-preview";
-const osQuery = params.get("os") as OS | null;
-const os = osQuery ?? detectOS();
+const os: OS = detectOS();
 document.documentElement.dataset.olPlatform = os;
 initThemeMode();
 
@@ -25,7 +23,6 @@ const renderApp = () => {
     <React.StrictMode>
       <App
         isCapsule={isCapsule}
-        isSelectionPolishPreview={isSelectionPolishPreview}
         forcedOs={os}
       />
     </React.StrictMode>,

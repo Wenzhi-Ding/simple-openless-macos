@@ -1,7 +1,6 @@
-#![allow(dead_code, unused_imports, unused_variables)]
 //! Qwen3-ASR(MLX)本地引擎:常驻 Python 子进程 + stdio 换行分隔 JSON 协议。
 //!
-//! 设计对齐 `sherpa_runtime.rs` / `sherpa_provider.rs`:
+//! Runtime 与 provider 共享同一常驻 worker 和取消状态：
 //! - `Qwen3MlxRuntime` 是 worker 进程与模型加载状态的单一持有者,
 //!   不感知 Coordinator / UI / Tauri 事件;失败统一 `anyhow::Error` 上抛。
 //! - `Qwen3MlxAsr` 作为 `Recorder::AudioConsumer` 缓冲 16kHz mono s16le PCM,
@@ -13,7 +12,7 @@
 //!
 //! 失败语义:worker 启动/加载失败或中途退出 → runtime 记录错误并清空句柄,
 //! 下一次使用会重新拉起;转写超时 → 判定 worker 卡死,杀进程并在下次重建。
-//! 任何失败都会显式报错,绝不回退到 SenseVoice 冒充 Qwen。
+//! 任何失败都会显式报错，不存在隐藏 fallback。
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
@@ -26,8 +25,8 @@ use std::time::{Duration, Instant};
 use anyhow::{bail, Context, Result};
 use base64::Engine as _;
 use parking_lot::Mutex;
-use tokio::sync::Mutex as AsyncMutex;
 use tokio::sync::oneshot;
+use tokio::sync::Mutex as AsyncMutex;
 
 use crate::asr::RawTranscript;
 
@@ -40,7 +39,6 @@ const WORKER_READY_TIMEOUT: Duration = Duration::from_secs(240);
 
 #[derive(Clone, Debug, Default)]
 pub struct Qwen3MlxStatus {
-    pub provider_id: String,
     pub available: bool,
     pub runtime_ready: bool,
     /// worker 正在拉起/载模型（预载或懒加载进行中）。
@@ -178,7 +176,6 @@ impl Qwen3MlxRuntime {
         let diagnostics = self.diagnostics.lock().clone();
         let loading = self.loading.load(Ordering::SeqCst);
         Qwen3MlxStatus {
-            provider_id: PROVIDER_ID.into(),
             available: self.is_available(),
             runtime_ready,
             loading,
@@ -207,7 +204,9 @@ impl Qwen3MlxRuntime {
         F: Fn(&'static str, Option<f64>, Option<String>) + Send + Sync + 'static,
     {
         let started = Instant::now();
-        let result = self.ensure_loaded_inner(model_id, model_dir, &progress).await;
+        let result = self
+            .ensure_loaded_inner(model_id, model_dir, &progress)
+            .await;
         let elapsed_ms = started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
         match &result {
             Ok(loaded) => {
@@ -235,9 +234,7 @@ impl Qwen3MlxRuntime {
         F: Fn(&'static str, Option<f64>, Option<String>),
     {
         if model_id != SUPPORTED_MODEL_ID {
-            bail!(
-                "Qwen3-ASR MLX engine supports {SUPPORTED_MODEL_ID} only (requested {model_id})"
-            );
+            bail!("Qwen3-ASR MLX engine supports {SUPPORTED_MODEL_ID} only (requested {model_id})");
         }
         let _lifecycle = self.lifecycle.lock().await;
         let _loading = LoadingFlag::acquire(&self.loading);
@@ -309,7 +306,7 @@ impl Qwen3MlxRuntime {
     }
 
     /// 整段 PCM batch 转写。未加载时先拉起 worker(懒加载;首次听写需要等待
-    /// 模型加载,与 sherpa 的懒加载行为一致)。
+    /// 模型加载,与 worker 的懒加载行为一致)。
     pub async fn transcribe_pcm(
         &self,
         model_dir: &Path,
@@ -361,9 +358,7 @@ impl Qwen3MlxRuntime {
         // 短持锁:分配请求 id、登记 oneshot、编码行,不在锁内 await。
         let (request_id, receiver, stdin, stderr_tail, line) = {
             let mut state = self.state.lock();
-            let worker = state
-                .as_mut()
-                .context("Qwen3-ASR worker is not running")?;
+            let worker = state.as_mut().context("Qwen3-ASR worker is not running")?;
             let request_id = worker.next_id;
             worker.next_id += 1;
             let mut payload = payload;
@@ -427,29 +422,10 @@ impl Qwen3MlxRuntime {
         self.cancel_prepare.store(true, Ordering::SeqCst);
     }
 
-    #[cfg(test)]
-    pub(crate) fn cancel_prepare_requested_for_tests(&self) -> bool {
-        self.cancel_prepare.load(Ordering::SeqCst)
-    }
-
     pub async fn release_now(&self) -> Result<()> {
         let _lifecycle = self.lifecycle.lock().await;
         self.kill_state_worker();
         Ok(())
-    }
-
-    /// 与 sherpa 相同的代次复核释放:等待期间被新会话接管时不误杀。
-    pub(crate) async fn release_if_generation(
-        &self,
-        generation: &AtomicU64,
-        expected: u64,
-    ) -> Result<bool> {
-        let _lifecycle = self.lifecycle.lock().await;
-        if generation.load(Ordering::Acquire) != expected {
-            return Ok(false);
-        }
-        self.kill_state_worker();
-        Ok(true)
     }
 
     fn check_prepare_cancelled(&self) -> Result<()> {
@@ -491,15 +467,18 @@ pub fn resolve_worker_locations() -> Result<(PathBuf, PathBuf)> {
             }
         }
     }
-    let exe = std::env::current_exe()
-        .context("cannot locate current executable for Qwen3-ASR worker")?;
+    let exe =
+        std::env::current_exe().context("cannot locate current executable for Qwen3-ASR worker")?;
     for ancestor in exe.ancestors().skip(1) {
         // 打包后:Resources/resources/qwen3-mlx(数组形式 resources 保留相对路径);
         // 开发:src-tauri/resources/qwen3-mlx(exe 在 target/{debug,release} 下)。
         for candidate in [
             ancestor.join("resources").join("qwen3-mlx"),
             ancestor.join("Resources").join("qwen3-mlx"),
-            ancestor.join("Resources").join("resources").join("qwen3-mlx"),
+            ancestor
+                .join("Resources")
+                .join("resources")
+                .join("qwen3-mlx"),
         ] {
             let python = candidate.join("runtime").join("bin").join("python3");
             let worker = candidate.join("worker").join("qwen3_worker.py");
@@ -544,7 +523,12 @@ fn spawn_worker(
         )
         .env("PYTHONUNBUFFERED", "1");
     // 隔离宿主可能注入的 Python 配置,保证行为可复现。
-    for key in ["PYTHONPATH", "PYTHONHOME", "PYTHONSTARTUP", "PYTHONUSERBASE"] {
+    for key in [
+        "PYTHONPATH",
+        "PYTHONHOME",
+        "PYTHONSTARTUP",
+        "PYTHONUSERBASE",
+    ] {
         command.env_remove(key);
     }
     let mut child = command
@@ -642,8 +626,8 @@ fn spawn_worker(
 
 // ─────────────────────────── provider(Recorder 消费端) ───────────────────────────
 
-/// 与 `SherpaOnnxAsr` offline 模式同形状的 provider:缓冲 PCM,
-/// 转写时整段交给 runtime;`cancel()` 递增代次使过期结果被丢弃。
+/// 本地批式转写 provider：缓冲 PCM，转写时整段交给 runtime；
+/// `cancel()` 递增代次使过期结果被丢弃。
 pub struct Qwen3MlxAsr {
     runtime: Arc<Qwen3MlxRuntime>,
     model_id: String,
@@ -701,7 +685,7 @@ impl Qwen3MlxAsr {
         if self.cancel_generation.load(Ordering::SeqCst) != cancel_generation {
             bail!("Qwen3-ASR transcription cancelled");
         }
-        // 与 sherpa 对齐:进入推理后清空缓冲,避免重复消费。
+        // 与 worker 对齐:进入推理后清空缓冲,避免重复消费。
         self.buffer.lock().clear();
         let text = result?;
         Ok(RawTranscript {
@@ -822,7 +806,7 @@ mod tests {
         runtime.release_now().await.unwrap();
         let status = runtime.status_snapshot(SUPPORTED_MODEL_ID).await;
         assert!(!status.runtime_ready);
-        assert_eq!(status.provider_id, PROVIDER_ID);
+        assert_eq!(status.active_model, SUPPORTED_MODEL_ID);
     }
 
     /// 启动预载真实加载冒烟(默认 ignore;OPENLESS_QWEN3_REAL_MODEL=<模型目录> 后
@@ -839,7 +823,10 @@ mod tests {
         );
         let runtime = Qwen3MlxRuntime::new();
         assert!(
-            !runtime.status_snapshot(SUPPORTED_MODEL_ID).await.runtime_ready,
+            !runtime
+                .status_snapshot(SUPPORTED_MODEL_ID)
+                .await
+                .runtime_ready,
             "fresh runtime must not report a ready worker"
         );
         let started = Instant::now();
@@ -848,10 +835,7 @@ mod tests {
             .await
             .expect("worker must become ready");
         assert_eq!(loaded, SUPPORTED_MODEL_ID);
-        println!(
-            "qwen3_preload elapsed_ms={}",
-            started.elapsed().as_millis()
-        );
+        println!("qwen3_preload elapsed_ms={}", started.elapsed().as_millis());
         let status = runtime.status_snapshot(SUPPORTED_MODEL_ID).await;
         assert!(status.runtime_ready);
         assert_eq!(status.loaded_model_id.as_deref(), Some(SUPPORTED_MODEL_ID));
@@ -864,7 +848,10 @@ mod tests {
         assert_eq!(again, SUPPORTED_MODEL_ID);
         runtime.release_now().await.expect("release worker");
         assert!(
-            !runtime.status_snapshot(SUPPORTED_MODEL_ID).await.runtime_ready,
+            !runtime
+                .status_snapshot(SUPPORTED_MODEL_ID)
+                .await
+                .runtime_ready,
             "released runtime must not report a ready worker"
         );
     }
@@ -895,14 +882,20 @@ mod tests {
             started.elapsed().as_millis(),
             first
         );
-        assert!(!first.trim().is_empty(), "model returned no text for real speech");
+        assert!(
+            !first.trim().is_empty(),
+            "model returned no text for real speech"
+        );
 
         // 第二次转写应复用常驻 worker(不再有加载耗时)。
         let second = runtime
             .transcribe_pcm(&model_dir, &pcm, None, Duration::from_secs(120))
             .await
             .unwrap();
-        assert_eq!(first, second, "resident worker must be deterministic on the same audio");
+        assert_eq!(
+            first, second,
+            "resident worker must be deterministic on the same audio"
+        );
 
         runtime.release_now().await.unwrap();
         let status = runtime.status_snapshot(SUPPORTED_MODEL_ID).await;

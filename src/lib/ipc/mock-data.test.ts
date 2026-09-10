@@ -1,8 +1,7 @@
-import { mockSettings } from './mock-data';
+import { mockSettings, mockHotkeyCapability } from './mock-data';
 
-// 系统代理开关默认开启，与后端 serde 默认值保持一致（issue #869）。
-if (mockSettings.useSystemProxy !== true) {
-  throw new Error(`mockSettings.useSystemProxy must default to true, got ${mockSettings.useSystemProxy}`);
-}
-
+if (mockSettings.useSystemProxy !== false) throw new Error('mock settings must disable system proxy');
+if (mockSettings.autoUpdateCheck !== false) throw new Error('mock settings must disable update checks');
+if (!mockSettings.cursorContextEnabled || !mockSettings.screenOcrContextEnabled) throw new Error('mock settings must enable fixed macOS context features');
+if (mockHotkeyCapability.adapter !== 'macEventTap') throw new Error('mock hotkey must represent macOS');
 console.log('mock-data.test.ts passed');

@@ -122,7 +122,7 @@ impl HistoryStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{HistoryInsertStatus, HistorySource, PolishMode};
+    use crate::types::{HistoryInsertStatus, HistorySource};
 
     fn session(id: &str, created_at: String) -> DictationSession {
         DictationSession {
@@ -132,9 +132,6 @@ mod tests {
             raw_transcript: "raw".into(),
             asr_transcript: None,
             final_text: "final".into(),
-            mode: PolishMode::Light,
-            style_pack_id: None,
-            translation_active: false,
             polish_source: None,
             app_bundle_id: None,
             app_name: None,
@@ -152,6 +149,82 @@ mod tests {
             polish_ms: None,
             polish_diagnostics: None,
         }
+    }
+
+    #[test]
+    fn legacy_styles_are_ignored_without_losing_history_evidence() {
+        let mut original =
+            serde_json::to_value(session("legacy", chrono::Utc::now().to_rfc3339())).unwrap();
+        original["rawTranscript"] = serde_json::json!("原始转写 😀\n第二行");
+        original["finalText"] = serde_json::json!("过去的整理结果");
+        original["hasAudioRecording"] = serde_json::json!(true);
+        original["llmModel"] = serde_json::json!("legacy-E2B");
+        original["polishMs"] = serde_json::json!(456);
+        original["polishDiagnostics"] = serde_json::json!({
+            "stage": "succeeded", "outcome": "succeeded",
+            "prompt": "确切过去请求：轻度润色 / 正式表达",
+            "messages": [{"role": "user", "content": "保留正文与 OCR"}]
+        });
+        for mode in [
+            Some("raw"),
+            Some("light"),
+            Some("structured"),
+            Some("formal"),
+            Some("future-style"),
+            None,
+        ] {
+            let mut legacy = original.clone();
+            if let Some(mode) = mode {
+                legacy["mode"] = serde_json::json!(mode);
+                legacy["stylePackId"] = serde_json::json!(format!("old.{mode}"));
+            }
+            // 旧记录里的风格标签被静默跳过，其余字段一个不丢。
+            let loaded: DictationSession = serde_json::from_value(legacy).unwrap();
+            let normalized = serde_json::to_value(&loaded).unwrap();
+            assert!(normalized.get("mode").is_none());
+            assert!(normalized.get("stylePackId").is_none());
+            let baseline: DictationSession = serde_json::from_value(original.clone()).unwrap();
+            assert_eq!(
+                loaded, baseline,
+                "style removal must preserve every other field"
+            );
+            assert_eq!(
+                normalized["polishDiagnostics"]["prompt"],
+                original["polishDiagnostics"]["prompt"]
+            );
+            // Exercise the real storage path using synthetic data only. A normal
+            // update gradually normalizes labels; reading alone never rewrites.
+            let path =
+                std::env::temp_dir().join(format!("openless-legacy-{}.json", uuid::Uuid::new_v4()));
+            let mut old_record = original.clone();
+            old_record["mode"] = serde_json::json!(mode);
+            old_record["stylePackId"] = serde_json::json!("old.custom");
+            let old_bytes = serde_json::to_vec(&vec![old_record]).unwrap();
+            std::fs::write(&path, &old_bytes).unwrap();
+            let store = HistoryStore::at_path(path.clone());
+            assert_eq!(store.list().unwrap(), vec![loaded.clone()]);
+            assert_eq!(std::fs::read(&path).unwrap(), old_bytes);
+            assert!(store.update_entry(loaded.clone()).unwrap());
+            assert_eq!(store.list().unwrap(), vec![loaded]);
+            let saved: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+            assert_eq!(saved[0], normalized);
+            std::fs::remove_file(path).unwrap();
+        }
+    }
+
+    #[test]
+    fn context_accepts_old_and_unlabelled_history_without_style_filtering() {
+        let first = session("first", chrono::Utc::now().to_rfc3339());
+        let second = session("second", chrono::Utc::now().to_rfc3339());
+        let mut failed = first.clone();
+        failed.error_code = Some("failed".into());
+        let turns =
+            crate::dictation_context::eligible_polish_context_turns(vec![failed, first, second]);
+        assert_eq!(turns.len(), 2);
+        assert!(turns
+            .iter()
+            .all(|turn| turn.raw_text == "raw" && turn.polished_text == "final"));
     }
 
     #[test]

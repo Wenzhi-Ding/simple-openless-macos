@@ -22,6 +22,8 @@ use parking_lot::Mutex;
 use serde::Serialize;
 use thiserror::Error;
 
+use crate::permissions::is_no_device_error;
+
 /// 目标采样率（与 Swift 端常量一致；不要改）。
 const TARGET_SAMPLE_RATE: u32 = 16_000;
 /// 每多少个回调打一次诊断日志。
@@ -408,20 +410,6 @@ fn build_input_stream(
     Ok((stream, state))
 }
 
-#[cfg(target_os = "android")]
-fn stable_input_config_for_platform(default_config: &StreamConfig) -> StreamConfig {
-    let mut config = default_config.clone();
-    if config.channels > 1 {
-        log::info!(
-            "[recorder] android forcing mono input channels: {} -> 1",
-            config.channels
-        );
-        config.channels = 1;
-    }
-    config
-}
-
-#[cfg(not(target_os = "android"))]
 fn stable_input_config_for_platform(default_config: &StreamConfig) -> StreamConfig {
     default_config.clone()
 }
@@ -477,25 +465,6 @@ fn classify_build_stream_err(err: cpal::BuildStreamError) -> RecorderError {
     } else {
         RecorderError::EngineFailed(format!("build_input_stream: {msg}"))
     }
-}
-
-/// 错误字符串是否暗示“当前没有可用输入设备”（区别于权限被拒）。
-/// 与 permissions.rs::is_no_device_error 保持同一套关键字；backend-tests
-/// harness 单独编译本模块，所以不跨模块引用。
-fn is_no_device_error(lower: &str) -> bool {
-    [
-        "no default input device",
-        "no default input",
-        "no input device",
-        "no device",
-        "device not found",
-        "device not available",
-        "not connected",
-        "unplugged",
-        "disconnected",
-    ]
-    .iter()
-    .any(|pattern| lower.contains(pattern))
 }
 
 /// `SupportedStreamConfig` → 对应 SampleFormat 的具体 build 调用。

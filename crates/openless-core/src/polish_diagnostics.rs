@@ -187,11 +187,11 @@ impl std::fmt::Debug for PolishDiagnostics {
             .field("model", &self.model)
             .field("template", &self.template)
             .field("addBos", &self.add_bos)
-            .field("promptChars", &self.prompt.as_ref().map(|p| p.chars().count()))
             .field(
-                "messageCount",
-                &self.messages.as_ref().map(|m| m.len()),
+                "promptChars",
+                &self.prompt.as_ref().map(|p| p.chars().count()),
             )
+            .field("messageCount", &self.messages.as_ref().map(|m| m.len()))
             .field("promptTokens", &self.prompt_tokens)
             .field("contextTokens", &self.context_tokens)
             .field("generationBudget", &self.generation_budget)
@@ -347,7 +347,9 @@ pub fn cursor_trace_from_capture(
     has_text: bool,
 ) -> PolishContextTrace {
     let reason_or = |fallback: &'static str, reason: Option<String>| {
-        reason.filter(|value| !value.trim().is_empty()).or(Some(fallback.to_string()))
+        reason
+            .filter(|value| !value.trim().is_empty())
+            .or(Some(fallback.to_string()))
     };
     match status {
         Some("ok") => {

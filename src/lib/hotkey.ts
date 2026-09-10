@@ -1,40 +1,16 @@
 import i18n from '../i18n';
-import type { ComboBinding, HotkeyBinding, HotkeyMode, HotkeyTrigger, QaHotkeyBinding, ShortcutBinding } from './types';
-
-export function defaultQaShortcut(): ShortcutBinding {
-  return {
-    primary: ';',
-    modifiers: defaultAppShortcutModifiers(),
-  };
-}
-
-/** 选区润色的默认触发键，与后端默认值保持一致。 */
-export function defaultSelectionPolishShortcut(): ShortcutBinding {
-  return { primary: 'RightAlt', modifiers: [] };
-}
+import type { ComboBinding, HotkeyBinding, HotkeyMode, HotkeyTrigger, ShortcutBinding } from './types';
 
 export function defaultAppShortcutModifiers(): string[] {
   return currentPlatform().isMac ? ['cmd', 'shift'] : ['ctrl', 'shift'];
-}
-
-// 「停用」后重新「启用」时恢复的默认键，与后端 default_switch_style_hotkey /
-// default_open_app_hotkey 保持一致（issue #576）。
-export function defaultSwitchStyleShortcut(): ShortcutBinding {
-  return { primary: 'S', modifiers: defaultAppShortcutModifiers() };
 }
 
 export function defaultOpenAppShortcut(): ShortcutBinding {
   return { primary: 'O', modifiers: defaultAppShortcutModifiers() };
 }
 
-export function defaultLessComputerShortcut(): ShortcutBinding {
-  return { primary: 'LeftControl', modifiers: [] };
-}
-
-// 默认录音快捷键：右侧 Control。与 mock-data 默认值 / Rust legacy trigger
-// （shortcut_binding.rs 的 rightControl 映射）保持一致。
 export function defaultDictationHotkey(): ShortcutBinding {
-  return { primary: 'RightControl', modifiers: [] };
+  return { primary: 'RightCommand', modifiers: [] };
 }
 
 export function getHotkeyTriggerLabel(trigger: HotkeyTrigger | null | undefined): string {
@@ -228,7 +204,7 @@ export function shortcutFromLegacyTrigger(trigger: HotkeyTrigger): ShortcutBindi
 /** 把 ComboBinding 或 QaHotkeyBinding 格式化为可读标签，如 "⌘⇧D" / "Ctrl+Shift+D"。 */
 /** 组合键的逐键显示段（修饰键按固定顺序 + 主键），供键帽（Kbd）逐键渲染。 */
 export function formatComboParts(
-  binding: ComboBinding | QaHotkeyBinding | ShortcutBinding,
+  binding: ComboBinding | ShortcutBinding,
 ): string[] {
   const parts: string[] = [];
   const platform = currentPlatform();
@@ -249,7 +225,7 @@ export function formatComboParts(
   return parts;
 }
 
-export function formatComboLabel(binding: ComboBinding | QaHotkeyBinding | ShortcutBinding): string {
+export function formatComboLabel(binding: ComboBinding | ShortcutBinding): string {
   return formatComboParts(binding).join(currentPlatform().isMac ? '' : '+');
 }
 

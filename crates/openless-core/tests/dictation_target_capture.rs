@@ -2,18 +2,19 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use futures_util::future::BoxFuture;
-use openless_core::testing::{FixtureDictationEngine, RecordingHostActions};
 use openless_core::{
     BackendConfig, BackendDependencies, BackendError, BackendErrorCode, CliDispatchOutcome,
-    CliIntent, DictationContext, DictationHotkeyEdge, DictationInsertStatus,
-    DictationStartOptions, HostContextAdapter, HostContextCapture, InsertOutcome,
-    InsertWriteResult, InMemoryCredentialStore, OpenLessBackend, SessionId, TextInserter,
-    TextInsertionSession,
+    CliIntent, DictationContext, DictationHotkeyEdge, DictationInsertStatus, DictationStartOptions,
+    HostContextAdapter, HostContextCapture, InsertOutcome, InsertWriteResult, OpenLessBackend,
+    SessionId, TextInserter, TextInsertionSession,
+};
+use openless_core::{
+    DictationEngine, EngineFailure, EngineProgress, EngineProgressSink, EngineResult, EngineStage,
+    PolishDelta, TranscriptDelta,
 };
 use tokio::sync::Notify;
 
-/// 减法改造(纯本地):provider 解析不再访问凭据库,延迟闸门改挂在
-/// HostContext 捕获上——语义不变:验证「插入目标先冻结,再进入异步等待」。
+/// Verifies that insertion target capture precedes asynchronous context capture.
 #[derive(Default)]
 struct DelayedHostContext {
     waited: AtomicBool,
@@ -108,6 +109,85 @@ impl TextInsertionSession for FocusSession {
     }
 }
 
+#[derive(Clone)]
+struct FixtureDictationEngine {
+    result: Result<EngineResult, EngineFailure>,
+}
+
+impl FixtureDictationEngine {
+    fn successful(raw_text: impl Into<String>, polished_text: impl Into<String>) -> Self {
+        Self {
+            result: Ok(EngineResult {
+                raw_text: raw_text.into(),
+                asr_transcript: None,
+                polished_text: polished_text.into(),
+                polish_source: None,
+                duration_ms: 0,
+                polish_failed: false,
+                asr_ms: None,
+                polish_ms: None,
+                has_audio_recording: None,
+                asr_call_label: None,
+                llm_call_label: None,
+                polish_diagnostics: None,
+            }),
+        }
+    }
+}
+
+impl DictationEngine for FixtureDictationEngine {
+    fn start(
+        &self,
+        _session_id: SessionId,
+        _context: Arc<DictationContext>,
+        _progress: Arc<dyn EngineProgressSink>,
+    ) -> BoxFuture<'static, Result<(), BackendError>> {
+        Box::pin(async { Ok(()) })
+    }
+    fn finish(
+        &self,
+        session_id: SessionId,
+        progress: Arc<dyn EngineProgressSink>,
+    ) -> BoxFuture<'static, Result<EngineResult, EngineFailure>> {
+        let result = self.result.clone();
+        Box::pin(async move {
+            progress.publish(session_id, EngineProgress::Stage(EngineStage::Transcribing))?;
+            let result = result?;
+            progress.publish(
+                session_id,
+                EngineProgress::TranscriptDelta(TranscriptDelta {
+                    text: result.raw_text.clone(),
+                    offset: 0,
+                    is_final: true,
+                }),
+            )?;
+            progress.publish(session_id, EngineProgress::Stage(EngineStage::Polishing))?;
+            progress.publish(
+                session_id,
+                EngineProgress::PolishDelta(PolishDelta {
+                    text: result.polished_text.clone(),
+                    offset: 0,
+                    is_final: true,
+                }),
+            )?;
+            Ok(result)
+        })
+    }
+    fn update_context(
+        &self,
+        _session_id: SessionId,
+        _context: Arc<DictationContext>,
+    ) -> BoxFuture<'static, Result<(), BackendError>> {
+        Box::pin(async { Ok(()) })
+    }
+    fn feed_audio(&self, _session_id: SessionId, _pcm: &[u8]) -> Result<(), BackendError> {
+        Ok(())
+    }
+    fn cancel(&self, _session_id: SessionId) -> BoxFuture<'static, Result<(), BackendError>> {
+        Box::pin(async { Ok(()) })
+    }
+}
+
 struct Fixture {
     backend: Arc<OpenLessBackend>,
     credentials: Arc<DelayedHostContext>,
@@ -126,9 +206,8 @@ impl Fixture {
             delivered: Vec::new(),
         }));
         let mut dependencies = BackendDependencies::unsupported();
-        dependencies.credential_store = Arc::new(InMemoryCredentialStore::default());
         dependencies.services.host_context = credentials.clone();
-        dependencies.host_actions = Arc::new(RecordingHostActions::default());
+        dependencies.host_actions = Arc::new(openless_core::NoopHostActions);
         dependencies.dictation_engine =
             Arc::new(FixtureDictationEngine::successful("spoken", "spoken"));
         dependencies.text_inserter = Arc::new(FocusInserter {

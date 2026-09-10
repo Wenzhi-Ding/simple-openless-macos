@@ -12,13 +12,13 @@ use futures_util::future::BoxFuture;
 
 use crate::dictation_context::DictationContext;
 use crate::errors::{BackendError, BackendErrorCode};
+use crate::polish_diagnostics::PolishDiagnostics;
 use crate::ports::{
     ActiveRecording, AudioCapture, AudioConsumer, AudioRecorder, CapturedPcm, DictationEngine,
     EngineFailure, EngineFailureStage, EngineProgress, EngineProgressSink, EngineResult,
     EngineStage, PolishAttempt, RecordingProgressSink, TextPolisher, TextStreamChunk,
     TextStreamSink, TranscriptionEngine, TranscriptionSession, VoiceCapture,
 };
-use crate::polish_diagnostics::PolishDiagnostics;
 use crate::types::{PolishDelta, SessionId, TranscriptDelta};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -383,7 +383,7 @@ impl DictationEngine for PipelineDictationEngine {
                     EngineProgress::Notification(notification),
                 )?;
             }
-            let mut transcript = match transcription_result {
+            let transcript = match transcription_result {
                 Ok(transcript) => {
                     session
                         .transcription_finished
@@ -443,12 +443,11 @@ impl DictationEngine for PipelineDictationEngine {
                             failure.asr_ms = Some(asr_started.elapsed().as_millis() as u64);
                             failure.has_audio_recording = has_audio_recording;
                             failure.asr_call_label = asr_call_label;
-                            failure.polish_diagnostics = Some(
-                                PolishDiagnostics::not_called_from_context(
+                            failure.polish_diagnostics =
+                                Some(PolishDiagnostics::not_called_from_context(
                                     &context,
                                     "transcription failed before the polish model was called",
-                                ),
-                            );
+                                ));
                             return Err(failure);
                         }
                     }
@@ -463,10 +462,6 @@ impl DictationEngine for PipelineDictationEngine {
                 .into());
             }
             let original_asr_text = transcript.text.clone();
-            transcript.text = crate::correction::apply_correction_rules(
-                &transcript.text,
-                &context.correction_rules,
-            );
             let asr_transcript =
                 (transcript.text != original_asr_text).then_some(original_asr_text);
             if !context.recording.archive_successful_recording && !transcript.text.trim().is_empty()
@@ -1218,10 +1213,11 @@ mod tests {
             let result = self.result.clone();
             // 测试桩的诊断：成功/失败都带一个最小快照，便于断言持久化链路；
             // 失败路径镜像 local_llm 的行为（错误摘要进快照、阶段标 Tokenized）。
-            let mut diagnostics = crate::polish_diagnostics::PolishDiagnostics::not_called_from_context(
-                &context,
-                "fixture polisher marker",
-            );
+            let mut diagnostics =
+                crate::polish_diagnostics::PolishDiagnostics::not_called_from_context(
+                    &context,
+                    "fixture polisher marker",
+                );
             if let Err(error) = &self.result {
                 diagnostics.stage = crate::polish_diagnostics::PolishDiagnosticsStage::Tokenized;
                 diagnostics.outcome = crate::polish_diagnostics::PolishDiagnosticsOutcome::Failed;
@@ -1389,9 +1385,7 @@ mod tests {
             .start(session_id, initial.clone(), fixture.progress.clone())
             .await
             .unwrap();
-        let mut updated = (*initial).clone();
-        updated.polish.translation_active = true;
-        let updated = Arc::new(updated);
+        let updated = Arc::new((*initial).clone());
 
         fixture
             .engine
@@ -1662,10 +1656,7 @@ mod tests {
             None,
         );
         let session_id = SessionId::new();
-        let mut context = DictationContext::default();
-        context.polish.mode = crate::types::PolishMode::Raw;
-        context.polish.style_system_prompt =
-            crate::style_packs::default_style_system_prompt_for_mode(crate::types::PolishMode::Raw);
+        let context = DictationContext::default();
         fixture
             .engine
             .start(session_id, Arc::new(context), fixture.progress.clone())
@@ -1677,27 +1668,14 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(result.polished_text, "raw text");
-        assert_eq!(fixture.polish_calls.load(Ordering::SeqCst), 0);
-        // Raw 直通：模型未调用，快照记 NotCalled 且绝不拼 prompt。
-        let bypass = result
-            .polish_diagnostics
-            .as_ref()
-            .expect("raw bypass carries a not-called snapshot");
+        assert_eq!(result.polished_text, "must not be used");
+        assert_eq!(fixture.polish_calls.load(Ordering::SeqCst), 1);
+        let diagnostics = result.polish_diagnostics.expect("fixture diagnostics");
         assert_eq!(
-            bypass.stage,
-            crate::polish_diagnostics::PolishDiagnosticsStage::NotCalled
+            diagnostics.not_called_reason.as_deref(),
+            Some("fixture polisher marker"),
+            "keep the actual fixture snapshot, not a Raw bypass"
         );
-        assert_eq!(
-            bypass.outcome,
-            crate::polish_diagnostics::PolishDiagnosticsOutcome::NotCalled
-        );
-        assert!(bypass.prompt.is_none());
-        assert!(bypass.messages.is_none());
-        assert!(bypass
-            .not_called_reason
-            .as_deref()
-            .is_some_and(|reason| reason.contains("raw passthrough")));
     }
 
     #[tokio::test]
@@ -1771,12 +1749,8 @@ mod tests {
             }),
         );
         let progress: Arc<RecordingProgress> = Arc::new(RecordingProgress::default());
-        let sink: Arc<dyn EngineProgressSink> = Arc::clone(&progress) as Arc<dyn EngineProgressSink>;
         let session_id = SessionId::new();
-        let mut context = DictationContext::default();
-        context.polish.mode = crate::types::PolishMode::Raw;
-        context.polish.style_system_prompt =
-            crate::style_packs::default_style_system_prompt_for_mode(crate::types::PolishMode::Raw);
+        let context = DictationContext::default();
         engine
             .start(session_id, Arc::new(context), progress.clone())
             .await
@@ -1828,11 +1802,7 @@ mod tests {
     }
 
     fn raw_dictation_context() -> Arc<DictationContext> {
-        let mut context = DictationContext::default();
-        context.polish.mode = crate::types::PolishMode::Raw;
-        context.polish.style_system_prompt =
-            crate::style_packs::default_style_system_prompt_for_mode(crate::types::PolishMode::Raw);
-        Arc::new(context)
+        Arc::new(DictationContext::default())
     }
 
     #[tokio::test]
@@ -2110,7 +2080,8 @@ mod tests {
         let slot = FakeScreenOcrSlot::pending();
         let session_id = SessionId::new();
         let progress: Arc<RecordingProgress> = Arc::new(RecordingProgress::default());
-        let sink: Arc<dyn EngineProgressSink> = Arc::clone(&progress) as Arc<dyn EngineProgressSink>;
+        let sink: Arc<dyn EngineProgressSink> =
+            Arc::clone(&progress) as Arc<dyn EngineProgressSink>;
         let started = std::time::Instant::now();
         tokio::time::timeout(
             std::time::Duration::from_millis(500),
@@ -2125,12 +2096,18 @@ mod tests {
         .unwrap();
 
         assert!(entered.load(Ordering::SeqCst), "recorder.start 已进入");
-        assert_eq!(slot.takes.load(Ordering::SeqCst), 0, "start 阶段绝不探测槽位");
+        assert_eq!(
+            slot.takes.load(Ordering::SeqCst),
+            0,
+            "start 阶段绝不探测槽位"
+        );
         assert!(started.elapsed() < std::time::Duration::from_millis(500));
         let _ = engine.finish(session_id, sink).await;
     }
 
-    fn context_with_screen_slot(slot: Arc<dyn crate::ports::ScreenOcrSlot>) -> Arc<DictationContext> {
+    fn context_with_screen_slot(
+        slot: Arc<dyn crate::ports::ScreenOcrSlot>,
+    ) -> Arc<DictationContext> {
         let mut context = DictationContext::default();
         context.screen_ocr_pending = crate::screen_ocr::ScreenOcrPending::new(slot);
         Arc::new(context)
@@ -2191,9 +2168,9 @@ mod tests {
                 session_id,
                 context_with_screen_slot({
                     let dyn_slot: Arc<dyn crate::ports::ScreenOcrSlot> = {
-            let cloned: Arc<FakeScreenOcrSlot> = Arc::clone(&slot);
-            cloned
-        };
+                        let cloned: Arc<FakeScreenOcrSlot> = Arc::clone(&slot);
+                        cloned
+                    };
                     dyn_slot
                 }),
                 fixture.progress.clone(),
@@ -2235,13 +2212,9 @@ mod tests {
         let session_id = SessionId::new();
         let slot = FakeScreenOcrSlot::with_ready("should not be read");
         let mut context = DictationContext::default();
-        context.polish.mode = crate::types::PolishMode::Raw;
-        context.polish.style_system_prompt =
-            crate::style_packs::default_style_system_prompt_for_mode(crate::types::PolishMode::Raw);
         let cloned: Arc<FakeScreenOcrSlot> = Arc::clone(&slot);
         let dyn_slot: Arc<dyn crate::ports::ScreenOcrSlot> = cloned;
-        context.screen_ocr_pending =
-            crate::screen_ocr::ScreenOcrPending::new(dyn_slot);
+        context.screen_ocr_pending = crate::screen_ocr::ScreenOcrPending::new(dyn_slot);
         fixture
             .engine
             .start(session_id, Arc::new(context), fixture.progress.clone())
@@ -2255,13 +2228,13 @@ mod tests {
 
         assert_eq!(
             fixture.polish_calls.load(Ordering::SeqCst),
-            0,
-            "Raw 直通不调润色器"
+            1,
+            "legacy Raw uses the fixed polisher"
         );
         assert_eq!(
             slot.takes.load(Ordering::SeqCst),
-            0,
-            "无润色就没有「润色输入冻结点」，槽位不被触碰"
+            1,
+            "the fixed polisher freezes OCR exactly once"
         );
     }
 }

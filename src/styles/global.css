@@ -13,11 +13,6 @@ html[data-ol-platform="linux"] #root {
   background: var(--ol-surface);
 }
 
-html[data-ol-platform="android"],
-html[data-ol-platform="android"] body,
-html[data-ol-platform="android"] #root {
-  background: var(--ol-surface);
-}
 
 html {
   color-scheme: light dark;
@@ -196,19 +191,8 @@ html[data-ol-platform="linux"] .ol-frost::before {
   content: none;
 }
 
-html[data-ol-platform="android"] .ol-frost {
-  background: var(--ol-surface);
-}
 
-html[data-ol-platform="android"] .ol-frost::before {
-  content: none;
-}
 
-/* Android WebView：modal 遮罩禁用 backdrop-filter，避免触摸迟滞与渲染异常。 */
-html[data-ol-platform="android"] .ol-modal-backdrop {
-  backdrop-filter: none !important;
-  -webkit-backdrop-filter: none !important;
-}
 
 /* ── 易读布局（data-ol-stacked-layout）──────────────────────────────────────────
    小屏或大字号时强制同行控件换行，避免横向溢出与 flex 压扁文字。 */
@@ -296,7 +280,7 @@ html[data-ol-conservative-layout="true"] .ol-conservative-scope .ol-select-lite-
   background: var(--ol-settings-content-bg);
 }
 
-.ol-settings-surface[data-ol-mobile="true"] {
+.ol-settings-surface[data-ol-narrow="true"] {
   border-radius: var(--ol-panel-radius) var(--ol-panel-radius) 0 0;
 }
 
@@ -306,9 +290,6 @@ html[data-ol-conservative-layout="true"] .ol-conservative-scope .ol-select-lite-
 }
 
 html[data-ol-platform="linux"] .ol-capsule-pill,
-html[data-ol-platform="android"] .ol-capsule-pill {
-  background: var(--ol-capsule-pill-bg) !important;
-}
 
 /* ── 滚动边缘渐隐（.ol-scroll-fade）──────────────────────────────────────────
    参照 shadcn scroll-fade 工具的行为，纯 CSS scroll-driven animations 实现：

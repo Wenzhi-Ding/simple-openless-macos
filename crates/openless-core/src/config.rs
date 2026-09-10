@@ -3,10 +3,9 @@ use std::sync::Arc;
 
 use futures_util::future::BoxFuture;
 
-use crate::credentials::CredentialStore;
 use crate::domains::BackendServices;
 use crate::errors::BackendError;
-use crate::ports::{DictationEngine, HostActions, TextInserter, TextPolisher};
+use crate::ports::{DictationEngine, HostActions, TextInserter};
 use crate::shared_types::PlatformCapabilities;
 
 pub trait Clock: Send + Sync {
@@ -60,11 +59,8 @@ pub struct BackendDependencies {
     pub text_inserter: Arc<dyn TextInserter>,
     pub dictation_engine: Arc<dyn DictationEngine>,
     pub task_spawner: Arc<dyn TaskSpawner>,
-    pub credential_store: Arc<dyn CredentialStore>,
     pub services: BackendServices,
     pub local_asr_runtime: Option<Arc<dyn crate::local_asr_service::ModelRuntimeAdapter>>,
-    pub selection_runtime: Option<Arc<dyn crate::domains::SelectionRuntimeAdapter>>,
-    pub selection_polisher: Option<Arc<dyn TextPolisher>>,
 }
 
 impl BackendDependencies {
@@ -77,11 +73,8 @@ impl BackendDependencies {
             text_inserter: Arc::new(crate::ports::UnsupportedTextInserter),
             dictation_engine: Arc::new(UnsupportedDictationEngine),
             task_spawner: Arc::new(TokioTaskSpawner),
-            credential_store: Arc::new(crate::credentials::UnsupportedCredentialStore),
             services: BackendServices::unsupported(),
             local_asr_runtime: None,
-            selection_runtime: None,
-            selection_polisher: None,
         }
     }
 }

@@ -1,13 +1,10 @@
 // 语言切换面板：跟随系统 / 简中 / 繁中 / 英文 / 日文 (Beta) / 韩文 (Beta)。
-// 切换语言同时把对应的 outputPrefs（中文偏好、输出语言）合并进 prefs。
 
 import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useHotkeySettings } from '../../state/HotkeySettingsContext';
 import {
   FOLLOW_SYSTEM,
   getLocalePreference,
-  outputPrefsForLocale,
   setLocalePreference,
   type SupportedLocale,
 } from '../../i18n';
@@ -17,7 +14,6 @@ import { SettingRow } from './shared';
 
 export function LanguageSection() {
   const { t } = useTranslation();
-  const { updatePrefs } = useHotkeySettings();
   const [pref, setPref] = useState<SupportedLocale | typeof FOLLOW_SYSTEM>(getLocalePreference());
 
   const options = useMemo(() => ([
@@ -31,17 +27,7 @@ export function LanguageSection() {
 
   const apply = async (next: SupportedLocale | typeof FOLLOW_SYSTEM) => {
     setPref(next);
-    const resolved = await setLocalePreference(next);
-    const localePrefs = outputPrefsForLocale(resolved);
-    await updatePrefs(current => {
-      if (
-        current.chineseScriptPreference === localePrefs.chineseScriptPreference &&
-        current.outputLanguagePreference === localePrefs.outputLanguagePreference
-      ) {
-        return current;
-      }
-      return { ...current, ...localePrefs };
-    });
+    await setLocalePreference(next);
   };
 
   return (

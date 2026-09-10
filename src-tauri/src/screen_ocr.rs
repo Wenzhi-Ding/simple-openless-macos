@@ -39,10 +39,10 @@
 //! 偏好仍然不存任何内容。
 
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 use std::time::Duration;
 
-use openless_core::ports::{ScreenOcrNotStarted, ScreenOcrOutcome, ScreenOcrSlot, ScreenOcrStart};
+use openless_core::ports::{ScreenOcrOutcome, ScreenOcrSlot, ScreenOcrStart};
 
 /// 整次观测（复核 + 截图 + OCR）的后台硬上限。Vision 是同步 API、没有内建
 /// 超时；超时后槽位作废，被拖住的工作线程在下一个检查点自行退出（其结果
@@ -245,8 +245,8 @@ pub fn request_screen_capture_permission() -> bool {
 #[cfg(target_os = "macos")]
 mod imp {
     use super::{
-        choose_frontmost_window, run_with_deadline, InflightGuard, ScreenOcrSlotImpl,
-        WindowInfo, SCREEN_OCR_DEADLINE,
+        choose_frontmost_window, run_with_deadline, InflightGuard, ScreenOcrSlotImpl, WindowInfo,
+        SCREEN_OCR_DEADLINE,
     };
     use core_foundation::base::{CFType, TCFType};
     use core_foundation::dictionary::CFDictionary;
@@ -259,7 +259,9 @@ mod imp {
     use objc2::rc::autoreleasepool;
     use objc2::runtime::AnyObject;
     use objc2::{class, msg_send};
-    use openless_core::ports::{ScreenOcrNotStarted, ScreenOcrOutcome, ScreenOcrSlot, ScreenOcrStart};
+    use openless_core::ports::{
+        ScreenOcrNotStarted, ScreenOcrOutcome, ScreenOcrSlot, ScreenOcrStart,
+    };
     use std::ffi::c_void;
     use std::sync::Arc;
     use std::time::Instant;
@@ -280,7 +282,7 @@ mod imp {
         ) -> *mut AnyObject;
     }
 
-    /// NSWorkspace frontmostApplication 的 (pid, bundle id)。与 selection.rs 同一
+    /// NSWorkspace frontmostApplication 的 (pid, bundle id)。与 focus_target.rs 同一
     /// msg_send 模式（仓库无 NSWorkspace 绑定先例）。processIdentifier 返回
     /// pid_t（i32，编码 "i"），不能按 isize 收。bundleIdentifier 是
     /// ARC 框架属性 getter（返回 +1），用 Retained::from_raw 接管所有权。
@@ -322,9 +324,8 @@ mod imp {
         let mut windows = Vec::with_capacity(array.len() as usize);
         for index in 0..array.len() {
             let item = array.get(index)?;
-            let dict = unsafe {
-                CFDictionary::<CFString, CFType>::wrap_under_get_rule((*item) as *mut _)
-            };
+            let dict =
+                unsafe { CFDictionary::<CFString, CFType>::wrap_under_get_rule((*item) as *mut _) };
             let integer = |key: &CFString| -> Option<i64> {
                 dict.find(key)
                     .and_then(|value| value.downcast::<CFNumber>())
@@ -371,7 +372,7 @@ mod imp {
     }
 
     /// 本地 Vision OCR（zh-Hans + en-US，accurate，语言纠正）。objc2 只用
-    /// msg_send/class（与 selection.rs 同模式）；NSArray/NSString 经 core-foundation
+    /// msg_send/class（与 focus_target.rs 同模式）；NSArray/NSString 经 core-foundation
     /// 的 toll-free bridging 构造与读取。**引用计数约定**：request/handler 出自
     /// alloc/init（+1，手动 release 配对）；languages/empty_options/results 由 RAII
     /// wrapper（Drop = CFRelease）持有，不做手动 release；NSError 出参按约定是
@@ -493,8 +494,7 @@ mod imp {
                 ScreenOcrOutcome::TargetChanged,
             );
         }
-        let (current_pid, _) =
-            frontmost_pid_and_bundle().ok_or(ScreenOcrOutcome::Failed)?;
+        let (current_pid, _) = frontmost_pid_and_bundle().ok_or(ScreenOcrOutcome::Failed)?;
         if current_pid != frozen_pid {
             return bail(
                 "frontmost application changed before capture",
@@ -518,13 +518,9 @@ mod imp {
             );
         }
         if Instant::now() >= deadline {
-            return bail(
-                "deadline reached before capture",
-                ScreenOcrOutcome::Timeout,
-            );
+            return bail("deadline reached before capture", ScreenOcrOutcome::Timeout);
         }
-        let image =
-            capture_window_image(window_id).ok_or(ScreenOcrOutcome::Failed)?;
+        let image = capture_window_image(window_id).ok_or(ScreenOcrOutcome::Failed)?;
 
         if !slot.alive() {
             return bail(
@@ -548,10 +544,7 @@ mod imp {
     fn focus_gate_outcome(reason: &str) -> ScreenOcrOutcome {
         if reason.contains("belongs to the frozen app") || reason.contains("frozen window") {
             ScreenOcrOutcome::TargetChanged
-        } else if matches!(
-            reason,
-            "secure_input" | "secure_text_field" | "blocked_app"
-        ) {
+        } else if matches!(reason, "secure_input" | "secure_text_field" | "blocked_app") {
             ScreenOcrOutcome::SensitiveBlocked
         } else {
             ScreenOcrOutcome::Failed
@@ -686,12 +679,9 @@ pub(crate) fn screen_capture_allowed() -> bool {
     false
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-
 
     #[test]
     #[cfg(target_os = "macos")]
@@ -707,8 +697,7 @@ mod tests {
         // CGWindowList 同一 pid 的窗口集合里。全程只取身份元数据，不读任何
         // 文字、不截屏。测试进程无辅助功能权限时显式留痕并跳过（映射验证
         // 本体不 silently pass——skip 信息会出现在测试日志里）。
-        let Some((pid, ax_window_id)) =
-            crate::host_document::screen_ocr_focused_window_identity()
+        let Some((pid, ax_window_id)) = crate::host_document::screen_ocr_focused_window_identity()
         else {
             eprintln!("[screen-ocr-test] SKIP: focused AX element unavailable");
             return;
@@ -728,22 +717,50 @@ mod tests {
     #[test]
     fn frontmost_window_picks_the_topmost_normal_layer_window_of_the_frozen_app() {
         let windows = [
-            WindowInfo { id: 101, owner_pid: 42, layer: 0 },
-            WindowInfo { id: 102, owner_pid: 42, layer: 0 },
-            WindowInfo { id: 900, owner_pid: 42, layer: 3 },
-            WindowInfo { id: 201, owner_pid: 7, layer: 0 },
+            WindowInfo {
+                id: 101,
+                owner_pid: 42,
+                layer: 0,
+            },
+            WindowInfo {
+                id: 102,
+                owner_pid: 42,
+                layer: 0,
+            },
+            WindowInfo {
+                id: 900,
+                owner_pid: 42,
+                layer: 3,
+            },
+            WindowInfo {
+                id: 201,
+                owner_pid: 7,
+                layer: 0,
+            },
         ];
         assert_eq!(choose_frontmost_window(&windows, 42), Some(101));
         // 同 app 切到另一窗口：最前窗口变成 102，与冻结的 101 不符 → 复核会拒绝。
         assert_eq!(choose_frontmost_window(&windows, 42), Some(101));
         let switched = [
-            WindowInfo { id: 102, owner_pid: 42, layer: 0 },
-            WindowInfo { id: 101, owner_pid: 42, layer: 0 },
+            WindowInfo {
+                id: 102,
+                owner_pid: 42,
+                layer: 0,
+            },
+            WindowInfo {
+                id: 101,
+                owner_pid: 42,
+                layer: 0,
+            },
         ];
         assert_eq!(choose_frontmost_window(&switched, 42), Some(102));
         // 前台 app 只有浮层/菜单层窗口 → 无法确认普通窗口目标 → fail closed。
         assert_eq!(choose_frontmost_window(&windows, 9), None);
-        assert_eq!(choose_frontmost_window(&windows, 6), None, "别家 app 的窗口不选");
+        assert_eq!(
+            choose_frontmost_window(&windows, 6),
+            None,
+            "别家 app 的窗口不选"
+        );
     }
 
     #[test]
@@ -795,12 +812,18 @@ mod tests {
         let slot = ScreenOcrSlotImpl::default();
         slot.finish(ScreenOcrOutcome::PermissionDenied);
         // 终态原因可被诊断读走，但正文路径拿不到任何文本。
-        assert_eq!(ScreenOcrSlot::outcome(&slot), Some(ScreenOcrOutcome::PermissionDenied));
+        assert_eq!(
+            ScreenOcrSlot::outcome(&slot),
+            Some(ScreenOcrOutcome::PermissionDenied)
+        );
         assert_eq!(ScreenOcrSlot::try_take(&slot), None);
         // finish 不覆盖既有终态，也不得让晚到的 complete 复活。
         slot.finish(ScreenOcrOutcome::Timeout);
         slot.complete("late".to_string());
-        assert_eq!(ScreenOcrSlot::outcome(&slot), Some(ScreenOcrOutcome::PermissionDenied));
+        assert_eq!(
+            ScreenOcrSlot::outcome(&slot),
+            Some(ScreenOcrOutcome::PermissionDenied)
+        );
         assert!(!slot.alive());
     }
 
@@ -812,7 +835,10 @@ mod tests {
         // 未就绪探测后 outcome 仍为 None：core 语义是 NotReady（不是某个失败）。
         assert_eq!(ScreenOcrSlot::outcome(&slot), None);
         ScreenOcrSlot::discard(&slot);
-        assert_eq!(ScreenOcrSlot::outcome(&slot), Some(ScreenOcrOutcome::Discarded));
+        assert_eq!(
+            ScreenOcrSlot::outcome(&slot),
+            Some(ScreenOcrOutcome::Discarded)
+        );
     }
 
     #[test]
@@ -900,9 +926,8 @@ mod tests {
                         kCTFontAttributeName,
                         &font,
                     );
-                    let ct_line = CTLineCreateWithAttributedString(
-                        attributed.as_concrete_TypeRef(),
-                    );
+                    let ct_line =
+                        CTLineCreateWithAttributedString(attributed.as_concrete_TypeRef());
                     if ct_line.is_null() {
                         return None;
                     }

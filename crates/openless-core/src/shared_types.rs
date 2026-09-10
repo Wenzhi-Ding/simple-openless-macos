@@ -1,75 +1,8 @@
-#![cfg_attr(target_os = "linux", allow(dead_code, unused_variables))]
 //! Shared value types used by every OpenLess host.
 
 use serde::{Deserialize, Serialize};
 
-use crate::android_types::{
-    default_android_insert_strategy, default_android_overlay_activation_mode,
-    default_android_overlay_cancel_swipe_direction, default_android_overlay_left_swipe_action,
-    default_android_overlay_size_dp, default_android_overlay_trigger,
-    normalize_android_insert_strategy, normalize_android_overlay_size_dp,
-};
-pub use crate::android_types::{
-    AndroidAccessibilityDiagnosis, AndroidAccessibilityRecoveryOutcome,
-    AndroidAccessibilityRecoveryResult, AndroidAccessibilityState, AndroidAccessibilityStatus,
-    AndroidInsertStrategy, AndroidOverlayActivationMode, AndroidOverlayCancelSwipeDirection,
-    AndroidOverlayLeftSwipeAction, AndroidOverlayPermissionState, AndroidOverlayStatus,
-    AndroidOverlayTrigger, AndroidShizukuState, AndroidShizukuStatus,
-};
-
-pub use crate::types::{HistorySource, PolishMode};
-
-/// 识别管线模式（issue #902）：`traditional` = 两段式 ASR + LLM 润色；
-/// `multimodal` = 单个多模态模型一步完成「音频 + 提示词 → 最终文本」。
-/// 两套配置在凭据库中完全隔离，运行时只读当前模式，切换不删除另一套配置。
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
-#[serde(rename_all = "lowercase")]
-pub enum PipelineMode {
-    #[default]
-    Traditional,
-    Multimodal,
-}
-
-pub fn effective_pipeline_mode(enabled: bool, configured: PipelineMode) -> PipelineMode {
-    if enabled {
-        configured
-    } else {
-        PipelineMode::Traditional
-    }
-}
-
-fn default_pipeline_mode() -> PipelineMode {
-    PipelineMode::Traditional
-}
-
-fn default_multimodal_pipeline_enabled() -> bool {
-    false
-}
-
-fn default_active_omni_provider() -> String {
-    "custom".into()
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
-#[serde(rename_all = "camelCase")]
-pub enum ChineseScriptPreference {
-    #[default]
-    Auto,
-    Simplified,
-    Traditional,
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
-#[serde(rename_all = "camelCase")]
-pub enum OutputLanguagePreference {
-    #[default]
-    Auto,
-    ZhCn,
-    ZhTw,
-    En,
-    Ja,
-    Ko,
-}
+pub use crate::types::HistorySource;
 
 /// 模拟粘贴时实际按下的快捷键。macOS 走 AX 直写 / Cmd+V，本枚举只在
 /// Windows / Linux 的 simulate_paste 路径生效。详见 issue #360：kitty 等
@@ -86,32 +19,10 @@ pub enum PasteShortcut {
     ShiftInsert,
 }
 
-/// Windows 听写文本插入策略。默认 TSF 输入法；SendInput 逐字模拟；Paste 走剪贴板 + 模拟粘贴键。
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
-#[serde(rename_all = "camelCase")]
-pub enum WindowsInsertionMode {
-    #[default]
-    Tsf,
-    SendInput,
-    Paste,
-}
-
-/// Windows SendInput 路径的换行模拟方式。仅 `WindowsInsertionMode::SendInput` 生效。
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
-#[serde(rename_all = "camelCase")]
-pub enum WindowsSendInputNewlineMode {
-    #[default]
-    Enter,
-    ShiftEnter,
-    CrLf,
-}
-
 /// macOS 逐字上屏时换行符怎么发。仅流式插入路径生效。
 ///
 /// 默认 `Auto`：按会话开始时冻结的前台应用选择。Terminal/TUI 使用 U+000A，
 /// 其它和未知应用安全回退为 Shift+Return。
-///
-/// 保留 `Return` 是因为风格市场里有靠换行发多条消息的风格包，那种效果需要真回车。
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "camelCase")]
 pub enum MacosNewlineMode {
@@ -122,20 +33,8 @@ pub enum MacosNewlineMode {
     ShiftReturn,
     /// U+000A：Terminal/TUI 中等价于 Ctrl+J 软换行。
     LineFeed,
-    /// Return：聊天框里等于发送 —— 想要「一段话拆成多条消息」的风格包用这个。
+    /// Return：聊天框里等于发送。
     Return,
-}
-
-/// Auto-update 渠道。决定后台 AutoUpdateGate 拉哪条 manifest。
-/// `Stable` = `latest-android-{arch}.json`（或桌面 plugin-updater 正式版 endpoints）。
-/// `Beta` = `latest-android-{arch}-beta.json`（或桌面 beta endpoints）。
-/// Settings 里手动「检查正式版 / 检查 Beta」按钮显式传 channel，不受此 pref 影响。
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
-#[serde(rename_all = "lowercase")]
-pub enum UpdateChannel {
-    #[default]
-    Stable,
-    Beta,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -148,17 +47,6 @@ pub enum ThemeMode {
 }
 
 pub use crate::types::HistoryInsertStatus as InsertStatus;
-
-/// 选区润色结果的交付方式：直接覆盖，或先在可编辑预览中确认。
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
-#[serde(rename_all = "camelCase")]
-pub enum SelectionPolishOutputMode {
-    #[default]
-    DirectReplace,
-    PreviewConfirm,
-}
-
-pub use crate::types::{SelectionVoiceIntentMode, SelectionVoiceManualIntent};
 
 /// 前台应用标签拆分结果：人读的应用名 +（macOS 的）bundle id。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -230,31 +118,6 @@ pub use crate::types::DictationSession;
 
 pub use crate::types::DictionaryEntry;
 
-pub use crate::types::{CorrectionRule, RuleSource};
-
-/// 一条等待用户确认的词条建议。
-///
-/// 只存在内存里，不落盘：建议是易逝的 —— 卡片消失就当没发生，用户下次改同一个词会再
-/// 产生一条。这也是不做「拒绝名单」的原因：一份用户看不见的名单，只会让他将来纳闷
-/// 「为什么这个词它不学了」。
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct PendingCorrection {
-    pub id: String,
-    /// 改之前那个（错的）写法。只用来在卡片上让用户看清改的是什么，不入库。
-    pub pattern: String,
-    /// 用户最后要的那个词 —— 点「好」之后进词汇表的就是它。
-    pub replacement: String,
-}
-
-/// 一张卡片上最多列几条。同一次听写里改好几个词会合并到一张卡；再多就该丢最老的了，
-/// 卡片撑得比屏幕还高没有意义。
-pub const MAX_PENDING_CORRECTIONS: usize = 5;
-
-/// Marker used to distinguish vocabulary entries accepted from the manual-edit
-/// suggestion flow from entries explicitly created in Settings.
-pub const LEARNED_VOCAB_NOTE: &str = "从手改中自动收集";
-
 /// 落字失败兜底卡片的内容。
 ///
 /// 文本没能落到目标 app 时（焦点在上屏途中离开、Secure Input、插入失败），把**完整**
@@ -276,17 +139,6 @@ pub struct InsertFallbackCardPayload {
 pub const INSERT_FALLBACK_REASON_PARTIAL_STREAM: &str = "partialStream";
 /// 插入没能完成（Secure Input、辅助功能掉权限、粘贴被拒等）。
 pub const INSERT_FALLBACK_REASON_INSERT_FAILED: &str = "insertFailed";
-
-/// 卡片自动消失的时间。
-///
-/// 到点就当没发生 —— 不记任何东西。用户下次改同一个词还会再问，这正是不要拒绝名单
-/// 换来的好处。
-pub const VOCAB_SUGGESTION_TTL_MS: u64 = 10_000;
-
-pub use crate::types::{VocabPreset, VocabPresetStore};
-
-pub use crate::style_packs::*;
-
 fn default_true() -> bool {
     true
 }
@@ -295,39 +147,11 @@ fn default_silence_auto_stop_seconds() -> f32 {
     3.0
 }
 
-fn resolve_windows_insertion_mode(
-    mode: WindowsInsertionMode,
-    legacy_sendinput_only: bool,
-) -> WindowsInsertionMode {
-    if mode != WindowsInsertionMode::Tsf {
-        mode
-    } else if legacy_sendinput_only {
-        WindowsInsertionMode::SendInput
-    } else {
-        WindowsInsertionMode::Tsf
-    }
-}
-
-fn resolve_windows_sendinput_insertion_only_legacy(
-    mode: WindowsInsertionMode,
-    legacy_sendinput_only: bool,
-) -> bool {
-    resolve_windows_insertion_mode(mode, legacy_sendinput_only) == WindowsInsertionMode::SendInput
-}
-
 #[derive(Debug, Clone, Serialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct UserPreferences {
     pub hotkey: HotkeyBinding,
     pub dictation_hotkey: ShortcutBinding,
-    pub default_mode: PolishMode,
-    pub enabled_modes: Vec<PolishMode>,
-    #[serde(default = "default_active_style_pack_id")]
-    pub active_style_pack_id: String,
-    #[serde(default)]
-    pub style_system_prompts: StyleSystemPrompts,
-    #[serde(default)]
-    pub custom_style_prompts: CustomStylePrompts,
     pub launch_at_login: bool,
     pub show_capsule: bool,
     /// 录音胶囊样式：'siri' = 流光 Siri 光效版（默认）；'classic' = Openless 经典药丸版。
@@ -355,17 +179,6 @@ pub struct UserPreferences {
     pub microphone_device_name: String,
     pub active_asr_provider: String, // "volcengine" | "apple-speech" | ...
     pub active_llm_provider: String, // "ark" | "openai" | ...
-    /// 识别管线模式（实验性，issue #902）。`multimodal` 时各语音管线改用
-    /// 单独隔离的多模态模型配置（`omni.*` 凭据命名空间），不再读 ASR/LLM 两套。
-    #[serde(default = "default_pipeline_mode")]
-    pub pipeline_mode: PipelineMode,
-    /// 「多模态识别管线」实验性功能总开关（高级设置）。关闭时一切行为与旧版一致。
-    #[serde(default = "default_multimodal_pipeline_enabled")]
-    pub multimodal_pipeline_enabled: bool,
-    /// 多模态（Omni）模型当前激活的 provider id（镜像凭据库 `omni.active`，
-    /// 供设置页初始化下拉；运行时权威仍在 CredentialsVault）。
-    #[serde(default = "default_active_omni_provider")]
-    pub active_omni_provider: String,
     /// LLM 思考模式开关。默认 false 以保持既有「尽量关闭思考」行为；
     /// Gemini 走原生 thinkingConfig，OpenAI-compatible 路径仅按 provider/channel
     /// 下发官方渠道级字段；OpenAI 官方渠道会跳过普通 chat 模型不支持的字段。详见 issue #402。
@@ -385,151 +198,25 @@ pub struct UserPreferences {
     /// 行为一致，不破坏既有用户。
     #[serde(default)]
     pub paste_shortcut: PasteShortcut,
-    /// Windows: 是否允许 TSF 失败后继续使用分批 Unicode SendInput / 剪贴板兜底。
-    /// Unicode SendInput 失败时才复制到剪贴板，避免文本丢失。
-    /// 默认开启以保持可用性；关闭后可验证文本是否真正由 TSF 上屏。
-    #[serde(default = "default_true")]
-    pub allow_non_tsf_insertion_fallback: bool,
-    /// Windows 听写插入策略：TSF / SendInput / 剪贴板粘贴。
-    #[serde(default)]
-    pub windows_insertion_mode: WindowsInsertionMode,
-    /// Windows SendInput 路径的换行模拟方式。
-    #[serde(default, rename = "windowsSendInputNewlineMode")]
-    pub windows_sendinput_newline_mode: WindowsSendInputNewlineMode,
     /// macOS 逐字上屏的换行模拟方式。
     #[serde(default)]
     pub macos_newline_mode: MacosNewlineMode,
-    /// 旧版 wire 兼容：`true` 等价于 `windows_insertion_mode = SendInput`。
-    #[serde(
-        default,
-        rename = "windowsSendInputInsertionOnly",
-        alias = "windowsSendinputInsertionOnly"
-    )]
-    pub windows_sendinput_insertion_only: bool,
-    /// Windows：非 TSF 插入方式（SendInput / 剪贴板粘贴）下是否在系统键盘列表（Win+Space）
-    /// 中显示 OpenLess TSF 输入法。默认 true 保持现有行为；关闭后用户级禁用语言配置文件，
-    /// 无需管理员权限。TSF 模式仍会强制启用 profile，但不会改写本偏好。
-    #[serde(default = "default_true", rename = "windowsShowOpenlessInKeyboardList")]
-    pub windows_show_openless_in_keyboard_list: bool,
-    /// 用户的工作语言（多选，原生名）。会作为前提注入 LLM polish/translate 的 system prompt 头部，
+    /// 用户的工作语言（多选，原生名）。会作为前提注入 LLM polish 的 system prompt 头部，
     /// 让模型知道该用户在哪些语言间工作。详见 issue #4。
     #[serde(default = "default_working_languages")]
     pub working_languages: Vec<String>,
-    /// 翻译输出的目标语言（单选，原生名）。空串 = 不启用翻译模式（Shift 组合键无效）。
-    /// 由前端从内置语言列表中选择，后端只接收最终的原生名字符串拼进 prompt。详见 issue #4。
-    #[serde(default)]
-    pub translation_target_language: String,
-    /// 中文输出字形偏好（不额外暴露为 UI 开关）：
-    /// - Simplified: 中文输出优先简体
-    /// - Traditional: 中文输出优先繁体
-    /// - Auto: 不额外约束
-    ///
-    /// 由前端「界面语言」选择同步驱动（简体/繁体），详见 issue #259。
-    #[serde(default)]
-    pub chinese_script_preference: ChineseScriptPreference,
-    /// 最终输出语言偏好（不额外暴露为 UI 开关）：
-    /// 由前端「界面语言」选择同步驱动：zh-CN/zh-TW/en/ja/ko，其他为 Auto。
-    #[serde(default)]
-    pub output_language_preference: OutputLanguagePreference,
-    /// 划词语音问答（QA）的全局快捷键。`None` = 关闭功能；`Some(...)` 时
-    /// coordinator 用 global-hotkey crate 注册组合键（modifier + 主键）。
-    /// 默认 Cmd+Shift+; (macOS) / Ctrl+Shift+; (Windows)。详见 issue #118。
-    #[serde(default = "default_qa_hotkey")]
-    pub qa_hotkey: Option<ShortcutBinding>,
-    /// 选区润色全局快捷键。Windows 默认右 Alt；其它平台默认关闭。
-    #[serde(default = "default_selection_polish_hotkey")]
-    pub selection_polish_hotkey: Option<ShortcutBinding>,
-    /// 选区书面润色独立使用的风格包；未设置时迁移为默认内置轻度润色包。
-    #[serde(default = "default_active_style_pack_id")]
-    pub selection_polish_style_pack_id: String,
-    /// 选区润色直接覆盖，或先在可编辑预览中确认。
-    #[serde(default)]
-    pub selection_polish_output_mode: SelectionPolishOutputMode,
-    /// 选区语音编辑（issue #987 桌面 MVP）。默认关闭。
-    #[serde(default)]
-    pub selection_voice_enabled: bool,
-    #[serde(default)]
-    pub selection_voice_intent_mode: SelectionVoiceIntentMode,
-    #[serde(default)]
-    pub selection_voice_manual_intent: SelectionVoiceManualIntent,
-    #[serde(default = "default_selection_voice_edit_keywords")]
-    pub selection_voice_edit_keywords: Vec<String>,
-    /// 是否把每次 QA 会话写进 history.json。默认 false：QA 默认临时不留痕。
-    /// 详见 issue #118。
-    #[serde(default)]
-    pub qa_save_history: bool,
     /// 自定义录音组合键。当 `hotkey.trigger == Custom` 时，coordinator 用
     /// `global-hotkey` crate 注册此组合键（支持 Toggle + Hold 模式）。
     /// `None` 且 trigger == Custom 表示用户选了自定义但还没录制。
     #[serde(default)]
     pub custom_combo_hotkey: Option<ComboBinding>,
-    #[serde(default = "default_translation_hotkey")]
-    pub translation_hotkey: ShortcutBinding,
-    /// 「切换风格」全局快捷键。`None` = 停用（不注册全局键）；`Some(...)` = 注册。
-    /// 默认 `Some(默认键)`，对老用户零行为变化，仅新增可清空（issue #576）。
-    #[serde(default = "default_switch_style_hotkey")]
-    pub switch_style_hotkey: Option<ShortcutBinding>,
     /// 「唤起 App」全局快捷键。`None` = 停用；`Some(...)` = 注册。默认 `Some(默认键)`。
     #[serde(default = "default_open_app_hotkey")]
     pub open_app_hotkey: Option<ShortcutBinding>,
-    /// 风格包直达快捷键：每条把一个全局组合键绑定到具体风格包 id（issue #759）。
-    /// 按 id 而非「已启用列表第 N 个」绑定——启停其它风格包不会让已配的键位移。
-    /// 默认空列表（不预设 Alt+1~9：macOS 上 Option+数字用于输入特殊字符，全局
-    /// 注册会吞掉正常输入）。绑定指向已停用的包时，触发即自动启用并激活。
-    #[serde(default)]
-    pub style_pack_hotkeys: Vec<StylePackHotkey>,
-    /// Less Computer：是否启用。默认关闭，需用户在高级设置开启。
-    #[serde(default)]
-    pub coding_agent_enabled: bool,
-    /// Agent 后端：`claude-code-cli`（默认）或 `opencode-cli`。
-    #[serde(default = "default_coding_agent_provider")]
-    pub coding_agent_provider: String,
-    /// Agent 模型（`None` = 运行时取便宜默认 sonnet）。
-    #[serde(default)]
-    pub coding_agent_model: Option<String>,
-    /// 权限模式：plan/default/acceptEdits/bypassPermissions。默认 acceptEdits（放行+护栏）。
-    #[serde(default = "default_coding_agent_permission_mode")]
-    pub coding_agent_permission_mode: String,
-    /// Agent 工作目录（`None` = 临时目录）。
-    #[serde(default)]
-    pub coding_agent_workdir: Option<String>,
-    /// Agent 可执行文件路径/命令（`None` 或空白 = 按后端取默认 `claude` / `opencode`）。
-    /// 供用户在「高级 → Less Computer」填自定义路径（例如未加入 PATH 的 opencode 二进制）。
-    #[serde(default)]
-    pub coding_agent_exe: Option<String>,
-    /// Less Computer 语音触发键。macOS 生效；支持单修饰键（左/右 Control、左/右 Option、Fn）
-    /// 和普通组合键。`None` = 停用。
-    #[serde(default = "default_coding_agent_voice_hotkey")]
-    pub coding_agent_voice_hotkey: Option<ShortcutBinding>,
-    /// 热键 1：语音 Agent 面板键。默认 Cmd/Ctrl+Shift+Enter。`None` = 停用。
-    #[serde(default = "default_coding_agent_panel_hotkey")]
-    pub coding_agent_panel_hotkey: Option<ShortcutBinding>,
-    /// 热键 2：快取用键（选中→Claude→回插）。默认 `None`（用户自配）。
-    #[serde(default)]
-    pub coding_agent_quick_hotkey: Option<ShortcutBinding>,
-    /// 局域网远程输入服务开关。桌面端启动 HTTPS+WS 服务，手机浏览器推 PCM 到电脑。
-    #[serde(default)]
-    pub remote_input_enabled: bool,
-    /// 局域网远程输入服务端口。
-    #[serde(default = "default_remote_input_port")]
-    pub remote_input_port: u16,
-    /// 当前远程输入 PIN。真实运行时 PIN 另有进程内/磁盘路径维护，此字段保留 wire 兼容。
-    #[serde(default)]
-    pub remote_input_pin: String,
-    /// 远程输入默认按钮模式。
-    #[serde(default = "default_remote_input_mode")]
-    pub remote_input_default_mode: String,
     /// 本地 Qwen3-ASR 当前激活的模型 id（"qwen3-asr-0.6b" / "qwen3-asr-1.7b"）。
     /// 仅在 active_asr_provider 为 local-qwen3 / local-qwen3-mlx / local-qwen3-c 时有意义。
     #[serde(default = "default_local_asr_model")]
     pub local_asr_active_model: String,
-    /// macOS 本地 Whisper 当前激活的模型 id。与 Qwen 偏好分开保存，避免在
-    /// 设置页测试 Whisper 时覆盖 Qwen 的模型选择。
-    #[serde(default = "default_local_whisper_model")]
-    pub local_whisper_active_model: String,
-    /// 本地模型下载源镜像（"huggingface" / "hf-mirror"）。
-    #[serde(default = "default_local_asr_mirror")]
-    pub local_asr_mirror: String,
     /// 本地 ASR 引擎在内存中的保留时长（秒）。0 = 说完话即释放；
     /// 较大值 = 上次使用后驻留 N 秒再释放；86400 = 一天 ≈ 永不释放。
     /// 默认 300（5 分钟）：兼顾连续听写不重加载、长时间不用释放 1.2GB+ RAM。
@@ -540,32 +227,6 @@ pub struct UserPreferences {
     /// 让用户选择一个普通磁盘目录即可隔离 OpenLess 模型文件。
     #[serde(default)]
     pub local_asr_models_base_dir: String,
-    /// Windows Foundry Local Whisper 当前激活的模型 alias。
-    #[serde(default = "default_foundry_local_asr_model")]
-    pub foundry_local_asr_model: String,
-    /// Windows Foundry Local native runtime 下载源："auto" / "nuget" / "ort-nightly"。
-    #[serde(default = "default_foundry_local_runtime_source")]
-    pub foundry_local_runtime_source: String,
-    /// Windows Foundry Local Whisper 语言 hint。空字符串 = 自动检测。
-    #[serde(default)]
-    pub foundry_local_asr_language_hint: String,
-    /// Windows Foundry Local Whisper 模型在 runtime 中保持加载多久。
-    #[serde(default = "default_local_asr_keep_loaded_secs")]
-    pub foundry_local_asr_keep_loaded_secs: u32,
-    /// Windows sherpa-onnx 本地 ASR 当前激活的模型 alias。
-    #[serde(default = "default_sherpa_onnx_model")]
-    pub sherpa_onnx_model: String,
-    /// Windows sherpa-onnx 语言 hint（BCP-47 / ISO 639-1 小写）。空 = 自动。
-    #[serde(default)]
-    pub sherpa_onnx_language_hint: String,
-    /// Windows sherpa-onnx 模型在 runtime 中保持加载多久（秒），语义与
-    /// foundry/qwen3 一致。
-    #[serde(default = "default_local_asr_keep_loaded_secs")]
-    pub sherpa_onnx_keep_loaded_secs: u32,
-    /// Auto-update 渠道。stable = 后台自动更新查正式版 manifest；beta = 查 Beta manifest。
-    /// 手动检查按钮显式指定 channel，与此 pref 解耦。
-    #[serde(default)]
-    pub update_channel: UpdateChannel,
     /// 历史记录保留天数。0 = 不按时间清理（仅受 200 条上限）。默认 7 天。
     /// 写入新条目时执行清理，避免后台轮询。
     #[serde(default = "default_history_retention_days")]
@@ -642,7 +303,6 @@ pub struct UserPreferences {
     #[serde(default)]
     pub conservative_layout: bool,
     /// 主窗口启动 + 后台每 60 分钟自动检查更新。默认 true。
-    /// Android 开启后自动检查并下载，校验后打开系统安装器；桌面仅自动检查 + 用户确认安装。
     /// 关闭后仅 Settings 手动「检查更新」按钮可用。
     #[serde(default = "default_true")]
     pub auto_update_check: bool,
@@ -661,57 +321,10 @@ pub struct UserPreferences {
     /// 这种「文本档案多 + 录音不占盘」组合下精确控制。
     #[serde(default)]
     pub audio_recording_max_entries: Option<u32>,
-    /// Style Pack Marketplace HTTP 基地址。空 = 本地开发默认 http://127.0.0.1:8090；
-    /// 用户在 Settings 里填生产 URL (如 https://api.openless-marketplace.com)。
-    #[serde(default)]
-    pub marketplace_base_url: String,
-    /// GitHub login 展示缓存。不用于认证；OAuth token 只存在 CredentialsVault。
-    #[serde(default)]
-    pub marketplace_dev_login: String,
-    /// Android: text insertion strategy for cross-app dictation results.
-    #[serde(default = "default_android_insert_strategy")]
-    pub android_insert_strategy: AndroidInsertStrategy,
-    /// Android: when to show the floating overlay control.
-    #[serde(default = "default_android_overlay_trigger")]
-    pub android_overlay_trigger: AndroidOverlayTrigger,
-    /// Android: how the floating overlay enters the armed interaction state.
-    #[serde(default = "default_android_overlay_activation_mode")]
-    pub android_overlay_activation_mode: AndroidOverlayActivationMode,
-    /// Android: action performed by left swiping while the overlay is armed.
-    #[serde(default = "default_android_overlay_left_swipe_action")]
-    pub android_overlay_left_swipe_action: AndroidOverlayLeftSwipeAction,
-    /// Android: vertical swipe direction that cancels recording.
-    #[serde(default = "default_android_overlay_cancel_swipe_direction")]
-    pub android_overlay_cancel_swipe_direction: AndroidOverlayCancelSwipeDirection,
-    /// Android: floating overlay control diameter in dp.
-    #[serde(default = "default_android_overlay_size_dp")]
-    pub android_overlay_size_dp: u32,
-}
-
-impl UserPreferences {
-    pub fn preserve_style_preferences_from(&mut self, current: &Self) {
-        self.default_mode = current.default_mode;
-        self.enabled_modes = current.enabled_modes.clone();
-        self.active_style_pack_id = current.active_style_pack_id.clone();
-        self.style_system_prompts = current.style_system_prompts.clone();
-        self.custom_style_prompts = current.custom_style_prompts.clone();
-    }
 }
 
 fn default_local_asr_model() -> String {
     "qwen3-asr-0.6b".into()
-}
-
-fn default_local_whisper_model() -> String {
-    crate::local_asr_catalog::WHISPER_MODEL_ID.into()
-}
-
-fn default_remote_input_port() -> u16 {
-    8443
-}
-
-fn default_remote_input_mode() -> String {
-    "toggle".into()
 }
 
 fn default_history_retention_days() -> u32 {
@@ -722,36 +335,12 @@ fn default_polish_context_window_minutes() -> u32 {
     5
 }
 
-fn default_local_asr_mirror() -> String {
-    "huggingface".into()
-}
-
 fn default_local_asr_keep_loaded_secs() -> u32 {
     300
 }
 
-fn default_foundry_local_asr_model() -> String {
-    crate::local_asr_catalog::FOUNDRY_DEFAULT_MODEL_ALIAS.into()
-}
-
-fn default_foundry_local_runtime_source() -> String {
-    "auto".into()
-}
-
-fn default_sherpa_onnx_model() -> String {
-    crate::local_asr_catalog::SHERPA_DEFAULT_MODEL_ALIAS.into()
-}
-
 fn default_active_asr_provider() -> String {
-    #[cfg(target_os = "windows")]
-    {
-        crate::local_asr_catalog::FOUNDRY_PROVIDER_ID.into()
-    }
-    // 减法改造:非 Windows 默认走全本地 sherpa-onnx SenseVoice,不再默认云端。
-    #[cfg(not(target_os = "windows"))]
-    {
-        "sherpa-onnx-local".into()
-    }
+    crate::local_asr_catalog::LOCAL_QWEN3_MLX_PROVIDER_ID.into()
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -759,14 +348,6 @@ fn default_active_asr_provider() -> String {
 struct UserPreferencesWire {
     hotkey: HotkeyBinding,
     dictation_hotkey: Option<ShortcutBinding>,
-    default_mode: PolishMode,
-    enabled_modes: Vec<PolishMode>,
-    #[serde(default)]
-    active_style_pack_id: Option<String>,
-    #[serde(default)]
-    style_system_prompts: StyleSystemPrompts,
-    #[serde(default)]
-    custom_style_prompts: CustomStylePrompts,
     launch_at_login: bool,
     show_capsule: bool,
     #[serde(default)]
@@ -783,12 +364,6 @@ struct UserPreferencesWire {
     microphone_device_name: String,
     active_asr_provider: String,
     active_llm_provider: String,
-    #[serde(default = "default_pipeline_mode")]
-    pipeline_mode: PipelineMode,
-    #[serde(default = "default_multimodal_pipeline_enabled")]
-    multimodal_pipeline_enabled: bool,
-    #[serde(default = "default_active_omni_provider")]
-    active_omni_provider: String,
     #[serde(default)]
     llm_thinking_enabled: bool,
     #[serde(default = "default_true")]
@@ -796,107 +371,17 @@ struct UserPreferencesWire {
     restore_clipboard_after_paste: bool,
     #[serde(default)]
     paste_shortcut: PasteShortcut,
-    allow_non_tsf_insertion_fallback: bool,
-    #[serde(default)]
-    windows_insertion_mode: WindowsInsertionMode,
-    #[serde(
-        default,
-        rename = "windowsSendInputNewlineMode",
-        alias = "windowsSendinputNewlineMode"
-    )]
-    windows_sendinput_newline_mode: WindowsSendInputNewlineMode,
     #[serde(default)]
     macos_newline_mode: MacosNewlineMode,
-    #[serde(
-        default,
-        rename = "windowsSendInputInsertionOnly",
-        alias = "windowsSendinputInsertionOnly"
-    )]
-    windows_sendinput_insertion_only: bool,
-    #[serde(default = "default_true", rename = "windowsShowOpenlessInKeyboardList")]
-    windows_show_openless_in_keyboard_list: bool,
     working_languages: Vec<String>,
-    translation_target_language: String,
-    chinese_script_preference: ChineseScriptPreference,
-    #[serde(default)]
-    output_language_preference: OutputLanguagePreference,
-    qa_hotkey: Option<ShortcutBinding>,
-    /// Outer `None` means the field was absent in a pre-Selection-Polish file;
-    /// `Some(None)` means the user explicitly disabled it.
-    #[serde(default, deserialize_with = "deserialize_selection_polish_hotkey")]
-    selection_polish_hotkey: Option<Option<ShortcutBinding>>,
-    #[serde(default = "default_active_style_pack_id")]
-    selection_polish_style_pack_id: String,
-    #[serde(default)]
-    selection_polish_output_mode: SelectionPolishOutputMode,
-    #[serde(default)]
-    selection_voice_enabled: bool,
-    #[serde(default)]
-    selection_voice_intent_mode: SelectionVoiceIntentMode,
-    #[serde(default)]
-    selection_voice_manual_intent: SelectionVoiceManualIntent,
-    #[serde(default = "default_selection_voice_edit_keywords")]
-    selection_voice_edit_keywords: Vec<String>,
-    qa_save_history: bool,
     custom_combo_hotkey: Option<ComboBinding>,
-    translation_hotkey: Option<ShortcutBinding>,
-    switch_style_hotkey: Option<ShortcutBinding>,
     open_app_hotkey: Option<ShortcutBinding>,
-    #[serde(default)]
-    style_pack_hotkeys: Vec<StylePackHotkey>,
-    #[serde(default)]
-    coding_agent_enabled: bool,
-    #[serde(default = "default_coding_agent_provider")]
-    coding_agent_provider: String,
-    #[serde(default)]
-    coding_agent_model: Option<String>,
-    #[serde(default = "default_coding_agent_permission_mode")]
-    coding_agent_permission_mode: String,
-    #[serde(default)]
-    coding_agent_workdir: Option<String>,
-    #[serde(default)]
-    coding_agent_exe: Option<String>,
-    #[serde(default = "default_coding_agent_voice_hotkey")]
-    coding_agent_voice_hotkey: Option<ShortcutBinding>,
-    #[serde(default = "default_coding_agent_panel_hotkey")]
-    coding_agent_panel_hotkey: Option<ShortcutBinding>,
-    #[serde(default)]
-    coding_agent_quick_hotkey: Option<ShortcutBinding>,
-    #[serde(default)]
-    remote_input_enabled: bool,
-    #[serde(default = "default_remote_input_port")]
-    remote_input_port: u16,
-    #[serde(default)]
-    remote_input_pin: String,
-    #[serde(default = "default_remote_input_mode")]
-    remote_input_default_mode: String,
     #[serde(default = "default_local_asr_model")]
     local_asr_active_model: String,
-    /// `None` 保留“旧配置没有该字段”的信息，供本地 ASR 模型偏好迁移使用。
-    #[serde(default)]
-    local_whisper_active_model: Option<String>,
-    #[serde(default = "default_local_asr_mirror")]
-    local_asr_mirror: String,
     #[serde(default = "default_local_asr_keep_loaded_secs")]
     local_asr_keep_loaded_secs: u32,
     #[serde(default)]
     local_asr_models_base_dir: String,
-    #[serde(default = "default_foundry_local_asr_model")]
-    foundry_local_asr_model: String,
-    #[serde(default = "default_foundry_local_runtime_source")]
-    foundry_local_runtime_source: String,
-    #[serde(default)]
-    foundry_local_asr_language_hint: String,
-    #[serde(default = "default_local_asr_keep_loaded_secs")]
-    foundry_local_asr_keep_loaded_secs: u32,
-    #[serde(default = "default_sherpa_onnx_model")]
-    sherpa_onnx_model: String,
-    #[serde(default)]
-    sherpa_onnx_language_hint: String,
-    #[serde(default = "default_local_asr_keep_loaded_secs")]
-    sherpa_onnx_keep_loaded_secs: u32,
-    #[serde(default)]
-    update_channel: UpdateChannel,
     #[serde(default = "default_history_retention_days")]
     history_retention_days: u32,
     #[serde(default = "default_polish_context_window_minutes")]
@@ -929,61 +414,6 @@ struct UserPreferencesWire {
     record_audio_for_debug: bool,
     #[serde(default)]
     audio_recording_max_entries: Option<u32>,
-    #[serde(default)]
-    marketplace_base_url: String,
-    #[serde(default)]
-    marketplace_dev_login: String,
-    #[serde(default = "default_android_insert_strategy")]
-    android_insert_strategy: AndroidInsertStrategy,
-    #[serde(default = "default_android_overlay_trigger")]
-    android_overlay_trigger: AndroidOverlayTrigger,
-    #[serde(default = "default_android_overlay_activation_mode")]
-    android_overlay_activation_mode: AndroidOverlayActivationMode,
-    #[serde(default = "default_android_overlay_left_swipe_action")]
-    android_overlay_left_swipe_action: AndroidOverlayLeftSwipeAction,
-    #[serde(default = "default_android_overlay_cancel_swipe_direction")]
-    android_overlay_cancel_swipe_direction: AndroidOverlayCancelSwipeDirection,
-    #[serde(default = "default_android_overlay_size_dp")]
-    android_overlay_size_dp: u32,
-}
-
-fn deserialize_selection_polish_hotkey<'de, D>(
-    deserializer: D,
-) -> Result<Option<Option<ShortcutBinding>>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    // A nested Option normally collapses an explicit JSON `null` and a missing
-    // field into the same value. Keep the outer Option as a presence marker so
-    // users can actually disable this shortcut and legacy files can migrate.
-    Option::<ShortcutBinding>::deserialize(deserializer).map(Some)
-}
-
-/// 将旧版共用的 `localAsrActiveModel` 迁移到彼此独立的 Qwen / Whisper 偏好。
-///
-/// 旧字段长期被两套 provider 共用，因此不能只按字符串复制：旧值是 Qwen 时
-/// Whisper 应回到默认值；旧值误存为 Whisper 时则把它迁移到 Whisper，并让
-/// Qwen 回到默认值。新字段显式存在时优先使用它，但只接受 Whisper 模型 id。
-fn migrate_local_asr_models(
-    legacy_model: String,
-    whisper_model: Option<String>,
-) -> (String, String) {
-    let legacy_id = crate::local_asr_catalog::LocalAsrModelId::from_wire_id(&legacy_model);
-    let qwen_model = legacy_id
-        .filter(|id| id.is_qwen())
-        .map(|id| id.as_str().to_string())
-        .unwrap_or_else(default_local_asr_model);
-    let migrated_whisper = match whisper_model {
-        Some(model) => crate::local_asr_catalog::LocalAsrModelId::from_wire_id(&model)
-            .filter(|id| id.is_whisper())
-            .map(|id| id.as_str().to_string())
-            .unwrap_or_else(default_local_whisper_model),
-        None => legacy_id
-            .filter(|id| id.is_whisper())
-            .map(|id| id.as_str().to_string())
-            .unwrap_or_else(default_local_whisper_model),
-    };
-    (qwen_model, migrated_whisper)
 }
 
 impl Default for UserPreferencesWire {
@@ -992,11 +422,6 @@ impl Default for UserPreferencesWire {
         Self {
             hotkey: prefs.hotkey,
             dictation_hotkey: None,
-            default_mode: prefs.default_mode,
-            enabled_modes: prefs.enabled_modes,
-            active_style_pack_id: Some(prefs.active_style_pack_id),
-            style_system_prompts: prefs.style_system_prompts,
-            custom_style_prompts: prefs.custom_style_prompts,
             launch_at_login: prefs.launch_at_login,
             show_capsule: prefs.show_capsule,
             capsule_style: prefs.capsule_style,
@@ -1007,65 +432,18 @@ impl Default for UserPreferencesWire {
             microphone_device_name: prefs.microphone_device_name,
             active_asr_provider: prefs.active_asr_provider,
             active_llm_provider: prefs.active_llm_provider,
-            pipeline_mode: prefs.pipeline_mode,
-            multimodal_pipeline_enabled: prefs.multimodal_pipeline_enabled,
-            active_omni_provider: prefs.active_omni_provider,
             llm_thinking_enabled: prefs.llm_thinking_enabled,
             use_system_proxy: prefs.use_system_proxy,
             restore_clipboard_after_paste: prefs.restore_clipboard_after_paste,
             paste_shortcut: prefs.paste_shortcut,
-            allow_non_tsf_insertion_fallback: prefs.allow_non_tsf_insertion_fallback,
-            windows_insertion_mode: prefs.windows_insertion_mode,
-            windows_sendinput_newline_mode: prefs.windows_sendinput_newline_mode,
             macos_newline_mode: prefs.macos_newline_mode,
-            windows_sendinput_insertion_only: prefs.windows_sendinput_insertion_only,
-            windows_show_openless_in_keyboard_list: prefs.windows_show_openless_in_keyboard_list,
             working_languages: prefs.working_languages,
-            translation_target_language: prefs.translation_target_language,
-            chinese_script_preference: prefs.chinese_script_preference,
-            output_language_preference: prefs.output_language_preference,
-            qa_hotkey: prefs.qa_hotkey,
-            selection_polish_hotkey: None,
-            selection_polish_style_pack_id: prefs.selection_polish_style_pack_id,
-            selection_polish_output_mode: prefs.selection_polish_output_mode,
-            selection_voice_enabled: prefs.selection_voice_enabled,
-            selection_voice_intent_mode: prefs.selection_voice_intent_mode,
-            selection_voice_manual_intent: prefs.selection_voice_manual_intent,
-            selection_voice_edit_keywords: prefs.selection_voice_edit_keywords,
-            qa_save_history: prefs.qa_save_history,
             custom_combo_hotkey: prefs.custom_combo_hotkey,
-            translation_hotkey: None,
-            // 默认携带默认键（Some），保证缺字段时仍是启用状态；None 专表「用户主动停用」。
-            switch_style_hotkey: prefs.switch_style_hotkey,
             open_app_hotkey: prefs.open_app_hotkey,
-            style_pack_hotkeys: prefs.style_pack_hotkeys,
-            coding_agent_enabled: prefs.coding_agent_enabled,
-            coding_agent_provider: prefs.coding_agent_provider,
-            coding_agent_model: prefs.coding_agent_model,
-            coding_agent_permission_mode: prefs.coding_agent_permission_mode,
-            coding_agent_workdir: prefs.coding_agent_workdir,
-            coding_agent_exe: prefs.coding_agent_exe,
-            coding_agent_voice_hotkey: prefs.coding_agent_voice_hotkey,
-            coding_agent_panel_hotkey: prefs.coding_agent_panel_hotkey,
-            coding_agent_quick_hotkey: prefs.coding_agent_quick_hotkey,
-            remote_input_enabled: prefs.remote_input_enabled,
-            remote_input_port: prefs.remote_input_port,
-            remote_input_pin: prefs.remote_input_pin,
-            remote_input_default_mode: prefs.remote_input_default_mode,
             local_asr_active_model: prefs.local_asr_active_model,
             // 新字段必须保持 None：旧配置反序列化时需要区分“字段缺失”和显式值。
-            local_whisper_active_model: None,
-            local_asr_mirror: prefs.local_asr_mirror,
             local_asr_keep_loaded_secs: prefs.local_asr_keep_loaded_secs,
             local_asr_models_base_dir: prefs.local_asr_models_base_dir,
-            foundry_local_asr_model: prefs.foundry_local_asr_model,
-            foundry_local_runtime_source: prefs.foundry_local_runtime_source,
-            foundry_local_asr_language_hint: prefs.foundry_local_asr_language_hint,
-            foundry_local_asr_keep_loaded_secs: prefs.foundry_local_asr_keep_loaded_secs,
-            sherpa_onnx_model: prefs.sherpa_onnx_model,
-            sherpa_onnx_language_hint: prefs.sherpa_onnx_language_hint,
-            sherpa_onnx_keep_loaded_secs: prefs.sherpa_onnx_keep_loaded_secs,
-            update_channel: prefs.update_channel,
             history_retention_days: prefs.history_retention_days,
             polish_context_window_minutes: prefs.polish_context_window_minutes,
             start_minimized: prefs.start_minimized,
@@ -1082,14 +460,6 @@ impl Default for UserPreferencesWire {
             history_max_entries: prefs.history_max_entries,
             record_audio_for_debug: prefs.record_audio_for_debug,
             audio_recording_max_entries: prefs.audio_recording_max_entries,
-            marketplace_base_url: prefs.marketplace_base_url,
-            marketplace_dev_login: prefs.marketplace_dev_login,
-            android_insert_strategy: prefs.android_insert_strategy,
-            android_overlay_trigger: prefs.android_overlay_trigger,
-            android_overlay_activation_mode: prefs.android_overlay_activation_mode,
-            android_overlay_left_swipe_action: prefs.android_overlay_left_swipe_action,
-            android_overlay_cancel_swipe_direction: prefs.android_overlay_cancel_swipe_direction,
-            android_overlay_size_dp: prefs.android_overlay_size_dp,
         }
     }
 }
@@ -1105,49 +475,17 @@ impl<'de> Deserialize<'de> for UserPreferences {
             None => default_dictation_hotkey_from_legacy(&wire.hotkey, &wire.custom_combo_hotkey)
                 .map_err(serde::de::Error::custom)?,
         };
-        let selection_polish_hotkey_was_missing = wire.selection_polish_hotkey.is_none();
-        let mut selection_polish_hotkey = wire
-            .selection_polish_hotkey
-            .unwrap_or_else(default_selection_polish_hotkey);
-        if selection_polish_hotkey_was_missing {
-            // 1.3.15 新增的选区润色默认键（Windows = 右 Alt）不能抢占/顶掉用户已有按键：
-            // - 老用户从未自定义录音键（仍为历史默认 Right Control）：默认关闭新功能，
-            //   避免升级后右 Alt 被全局热键占用影响既有使用习惯；
-            // - 默认键与录音键重叠（字符串可能不等但物理同键，如 legacy rightAlt
-            //   派生出 RightOption 而默认是 RightAlt）：同样关闭，否则升级后任何
-            //   设置保存都会被热键冲突校验整体拒绝，改动全部丢失（#904）。
-            let legacy_default_user = cfg!(target_os = "windows")
-                && is_right_control_modifier_shortcut(&dictation_hotkey);
-            let default_taken_by_dictation =
-                selection_polish_hotkey.as_ref().is_some_and(|binding| {
-                    crate::shortcut_types::bindings_overlap(binding, &dictation_hotkey)
-                });
-            if legacy_default_user || default_taken_by_dictation {
-                selection_polish_hotkey = None;
-            }
-        }
         let streaming_insert_default_migrated = wire.streaming_insert_default_migrated;
         let streaming_insert = if streaming_insert_default_migrated {
             wire.streaming_insert
         } else {
             true
         };
-        let (local_asr_active_model, local_whisper_active_model) =
-            migrate_local_asr_models(wire.local_asr_active_model, wire.local_whisper_active_model);
+        let local_asr_active_model = wire.local_asr_active_model;
 
         Ok(Self {
             hotkey: wire.hotkey,
             dictation_hotkey,
-            default_mode: wire.default_mode,
-            enabled_modes: wire.enabled_modes,
-            active_style_pack_id: wire
-                .active_style_pack_id
-                .filter(|id| !id.trim().is_empty())
-                .unwrap_or_else(|| builtin_style_pack_id(wire.default_mode).to_string()),
-            style_system_prompts: wire
-                .style_system_prompts
-                .with_legacy_custom_prompts(&wire.custom_style_prompts),
-            custom_style_prompts: wire.custom_style_prompts,
             launch_at_login: wire.launch_at_login,
             show_capsule: wire.show_capsule,
             capsule_style: wire.capsule_style,
@@ -1158,77 +496,17 @@ impl<'de> Deserialize<'de> for UserPreferences {
             microphone_device_name: wire.microphone_device_name,
             active_asr_provider: wire.active_asr_provider,
             active_llm_provider: wire.active_llm_provider,
-            pipeline_mode: wire.pipeline_mode,
-            multimodal_pipeline_enabled: wire.multimodal_pipeline_enabled,
-            active_omni_provider: wire.active_omni_provider,
             llm_thinking_enabled: wire.llm_thinking_enabled,
             use_system_proxy: wire.use_system_proxy,
             restore_clipboard_after_paste: wire.restore_clipboard_after_paste,
             paste_shortcut: wire.paste_shortcut,
-            allow_non_tsf_insertion_fallback: wire.allow_non_tsf_insertion_fallback,
-            windows_insertion_mode: resolve_windows_insertion_mode(
-                wire.windows_insertion_mode,
-                wire.windows_sendinput_insertion_only,
-            ),
-            windows_sendinput_newline_mode: wire.windows_sendinput_newline_mode,
             macos_newline_mode: wire.macos_newline_mode,
-            windows_sendinput_insertion_only: resolve_windows_sendinput_insertion_only_legacy(
-                wire.windows_insertion_mode,
-                wire.windows_sendinput_insertion_only,
-            ),
-            windows_show_openless_in_keyboard_list: wire.windows_show_openless_in_keyboard_list,
             working_languages: wire.working_languages,
-            translation_target_language: wire.translation_target_language,
-            chinese_script_preference: wire.chinese_script_preference,
-            output_language_preference: wire.output_language_preference,
-            qa_hotkey: wire.qa_hotkey,
-            selection_polish_hotkey,
-            selection_polish_style_pack_id: wire.selection_polish_style_pack_id,
-            selection_polish_output_mode: wire.selection_polish_output_mode,
-            selection_voice_enabled: wire.selection_voice_enabled,
-            selection_voice_intent_mode: wire.selection_voice_intent_mode,
-            selection_voice_manual_intent: wire.selection_voice_manual_intent,
-            selection_voice_edit_keywords: wire.selection_voice_edit_keywords,
-            qa_save_history: wire.qa_save_history,
-            coding_agent_enabled: wire.coding_agent_enabled,
-            coding_agent_provider: wire.coding_agent_provider,
-            coding_agent_model: wire.coding_agent_model,
-            coding_agent_permission_mode: wire.coding_agent_permission_mode,
-            coding_agent_workdir: wire.coding_agent_workdir,
-            coding_agent_exe: wire.coding_agent_exe,
-            coding_agent_voice_hotkey: wire.coding_agent_voice_hotkey,
-            coding_agent_panel_hotkey: wire.coding_agent_panel_hotkey,
-            coding_agent_quick_hotkey: wire.coding_agent_quick_hotkey,
-            remote_input_enabled: wire.remote_input_enabled,
-            remote_input_port: wire.remote_input_port,
-            remote_input_pin: wire.remote_input_pin,
-            remote_input_default_mode: wire.remote_input_default_mode,
             custom_combo_hotkey: wire.custom_combo_hotkey,
-            translation_hotkey: wire
-                .translation_hotkey
-                .unwrap_or_else(default_translation_hotkey),
-            // 直传 Option：None = 用户主动停用，不再用 unwrap_or_else 塌缩成默认键
-            // （那正是 #576「无法关闭」的根因）。缺字段时 wire 的 serde struct-default
-            // 会落到 Some(默认键)，保证老用户/新用户仍是启用。
-            switch_style_hotkey: wire.switch_style_hotkey,
             open_app_hotkey: wire.open_app_hotkey,
-            style_pack_hotkeys: wire.style_pack_hotkeys,
             local_asr_active_model,
-            local_whisper_active_model,
-            local_asr_mirror: wire.local_asr_mirror,
             local_asr_keep_loaded_secs: wire.local_asr_keep_loaded_secs,
             local_asr_models_base_dir: wire.local_asr_models_base_dir,
-            foundry_local_asr_model: wire.foundry_local_asr_model,
-            foundry_local_runtime_source:
-                crate::local_asr_catalog::normalize_foundry_runtime_source(
-                    &wire.foundry_local_runtime_source,
-                ),
-            foundry_local_asr_language_hint: wire.foundry_local_asr_language_hint,
-            foundry_local_asr_keep_loaded_secs: wire.foundry_local_asr_keep_loaded_secs,
-            sherpa_onnx_model: wire.sherpa_onnx_model,
-            sherpa_onnx_language_hint: wire.sherpa_onnx_language_hint,
-            sherpa_onnx_keep_loaded_secs: wire.sherpa_onnx_keep_loaded_secs,
-            update_channel: wire.update_channel,
             history_retention_days: wire.history_retention_days,
             polish_context_window_minutes: wire.polish_context_window_minutes,
             start_minimized: wire.start_minimized,
@@ -1245,18 +523,6 @@ impl<'de> Deserialize<'de> for UserPreferences {
             history_max_entries: wire.history_max_entries,
             record_audio_for_debug: wire.record_audio_for_debug,
             audio_recording_max_entries: wire.audio_recording_max_entries,
-            marketplace_base_url: wire.marketplace_base_url,
-            marketplace_dev_login: wire.marketplace_dev_login,
-            android_insert_strategy: normalize_android_insert_strategy(
-                wire.android_insert_strategy,
-            ),
-            android_overlay_trigger: wire.android_overlay_trigger.normalized(),
-            android_overlay_activation_mode: wire.android_overlay_activation_mode,
-            android_overlay_left_swipe_action: wire.android_overlay_left_swipe_action,
-            android_overlay_cancel_swipe_direction: wire.android_overlay_cancel_swipe_direction,
-            android_overlay_size_dp: normalize_android_overlay_size_dp(
-                wire.android_overlay_size_dp,
-            ),
         })
     }
 }
@@ -1275,13 +541,10 @@ impl UserPreferences {
     /// 失败——据此精确剔除坏字段，保留其余全部有效设置（热键、模型选择、风格等都能
     /// 活下来），最后再走一次正常反序列化。无法当作对象解析时才彻底回落默认。
     pub fn salvage_from_json_bytes(bytes: &[u8]) -> Self {
-        let Ok(serde_json::Value::Object(mut map)) =
-            serde_json::from_slice::<serde_json::Value>(bytes)
+        let Ok(serde_json::Value::Object(map)) = serde_json::from_slice::<serde_json::Value>(bytes)
         else {
             return Self::default();
         };
-
-        normalize_preference_aliases(&mut map);
 
         let mut cleaned = serde_json::Map::new();
         for (key, value) in map {
@@ -1313,40 +576,6 @@ fn preference_field_is_valid(key: &str, value: &serde_json::Value) -> bool {
     serde_json::from_value::<UserPreferencesWire>(probe).is_ok()
 }
 
-fn normalize_preference_aliases(map: &mut serde_json::Map<String, serde_json::Value>) {
-    for (canonical, alias) in [
-        ("windowsSendInputNewlineMode", "windowsSendinputNewlineMode"),
-        (
-            "windowsSendInputInsertionOnly",
-            "windowsSendinputInsertionOnly",
-        ),
-    ] {
-        let Some(alias_value) = map.remove(alias) else {
-            continue;
-        };
-        let canonical_valid = map
-            .get(canonical)
-            .map(|value| preference_field_is_valid(canonical, value));
-        let alias_valid = preference_field_is_valid(canonical, &alias_value);
-
-        match canonical_valid {
-            None => {
-                map.insert(canonical.to_string(), alias_value);
-            }
-            Some(true) => log::warn!(
-                "[prefs] salvage dropping duplicate legacy alias {alias}; canonical {canonical} wins"
-            ),
-            Some(false) if alias_valid => {
-                log::warn!(
-                    "[prefs] salvage replacing invalid canonical {canonical} with valid legacy alias {alias}"
-                );
-                map.insert(canonical.to_string(), alias_value);
-            }
-            Some(false) => {}
-        }
-    }
-}
-
 fn salvage_without_incomplete_legacy_hotkey(
     mut map: serde_json::Map<String, serde_json::Value>,
 ) -> Option<UserPreferences> {
@@ -1375,71 +604,6 @@ fn salvage_without_incomplete_legacy_hotkey(
 
     map.remove("hotkey");
     serde_json::from_value::<UserPreferences>(serde_json::Value::Object(map)).ok()
-}
-
-fn default_qa_hotkey() -> Option<ShortcutBinding> {
-    Some(ShortcutBinding::default_qa())
-}
-
-fn default_selection_polish_hotkey() -> Option<ShortcutBinding> {
-    #[cfg(target_os = "windows")]
-    {
-        // Windows 用右 Alt；其它平台默认关闭，避免与历史听写默认键冲突。
-        Some(ShortcutBinding {
-            primary: "RightAlt".into(),
-            modifiers: Vec::new(),
-        })
-    }
-    #[cfg(not(target_os = "windows"))]
-    {
-        None
-    }
-}
-
-fn default_selection_voice_edit_keywords() -> Vec<String> {
-    // Pre-#987 defaults were edit imperatives; interrogative routing treats these
-    // as extra question cues — empty default avoids misrouting e.g. 「改成」.
-    Vec::new()
-}
-
-fn is_right_control_modifier_shortcut(binding: &ShortcutBinding) -> bool {
-    binding.modifiers.is_empty() && binding.primary.eq_ignore_ascii_case("RightControl")
-}
-
-fn default_coding_agent_provider() -> String {
-    "claude-code-cli".to_string()
-}
-
-fn default_coding_agent_permission_mode() -> String {
-    "acceptEdits".to_string()
-}
-
-pub(crate) fn default_coding_agent_voice_hotkey() -> Option<ShortcutBinding> {
-    Some(ShortcutBinding {
-        primary: "LeftControl".into(),
-        modifiers: Vec::new(),
-    })
-}
-
-pub(crate) fn default_coding_agent_panel_hotkey() -> Option<ShortcutBinding> {
-    Some(ShortcutBinding {
-        primary: "Enter".into(),
-        modifiers: vec!["cmd".into(), "shift".into()],
-    })
-}
-
-fn default_translation_hotkey() -> ShortcutBinding {
-    ShortcutBinding {
-        primary: "Shift".into(),
-        modifiers: Vec::new(),
-    }
-}
-
-fn default_switch_style_hotkey() -> Option<ShortcutBinding> {
-    Some(ShortcutBinding {
-        primary: "S".into(),
-        modifiers: default_app_shortcut_modifiers(),
-    })
 }
 
 fn default_open_app_hotkey() -> Option<ShortcutBinding> {
@@ -1493,16 +657,6 @@ impl Default for UserPreferences {
                 &None,
             )
             .expect("default legacy hotkey is not custom"),
-            default_mode: PolishMode::Structured,
-            enabled_modes: vec![
-                PolishMode::Raw,
-                PolishMode::Light,
-                PolishMode::Structured,
-                PolishMode::Formal,
-            ],
-            active_style_pack_id: default_active_style_pack_id(),
-            style_system_prompts: StyleSystemPrompts::default(),
-            custom_style_prompts: CustomStylePrompts::default(),
             launch_at_login: false,
             show_capsule: true,
             capsule_style: CapsuleStyle::Siri,
@@ -1513,63 +667,17 @@ impl Default for UserPreferences {
             microphone_device_name: String::new(),
             active_asr_provider: default_active_asr_provider(),
             active_llm_provider: "local-llama".into(),
-            pipeline_mode: PipelineMode::Traditional,
-            multimodal_pipeline_enabled: false,
-            active_omni_provider: "custom".into(),
             llm_thinking_enabled: false,
             use_system_proxy: false,
             restore_clipboard_after_paste: true,
             paste_shortcut: PasteShortcut::default(),
-            allow_non_tsf_insertion_fallback: true,
-            windows_insertion_mode: WindowsInsertionMode::default(),
-            windows_sendinput_newline_mode: WindowsSendInputNewlineMode::default(),
             macos_newline_mode: MacosNewlineMode::default(),
-            windows_sendinput_insertion_only: false,
-            windows_show_openless_in_keyboard_list: true,
             working_languages: default_working_languages(),
-            translation_target_language: String::new(),
-            chinese_script_preference: ChineseScriptPreference::Auto,
-            output_language_preference: OutputLanguagePreference::Auto,
-            qa_hotkey: default_qa_hotkey(),
-            selection_polish_hotkey: default_selection_polish_hotkey(),
-            selection_polish_style_pack_id: default_active_style_pack_id(),
-            selection_polish_output_mode: SelectionPolishOutputMode::default(),
-            selection_voice_enabled: false,
-            selection_voice_intent_mode: SelectionVoiceIntentMode::default(),
-            selection_voice_manual_intent: SelectionVoiceManualIntent::default(),
-            selection_voice_edit_keywords: default_selection_voice_edit_keywords(),
-            qa_save_history: false,
             custom_combo_hotkey: None,
-            translation_hotkey: default_translation_hotkey(),
-            switch_style_hotkey: default_switch_style_hotkey(),
             open_app_hotkey: default_open_app_hotkey(),
-            style_pack_hotkeys: Vec::new(),
-            coding_agent_enabled: false,
-            coding_agent_provider: default_coding_agent_provider(),
-            coding_agent_model: None,
-            coding_agent_permission_mode: default_coding_agent_permission_mode(),
-            coding_agent_workdir: None,
-            coding_agent_exe: None,
-            coding_agent_voice_hotkey: default_coding_agent_voice_hotkey(),
-            coding_agent_panel_hotkey: default_coding_agent_panel_hotkey(),
-            coding_agent_quick_hotkey: None,
-            remote_input_enabled: false,
-            remote_input_port: default_remote_input_port(),
-            remote_input_pin: String::new(),
-            remote_input_default_mode: default_remote_input_mode(),
             local_asr_active_model: default_local_asr_model(),
-            local_whisper_active_model: default_local_whisper_model(),
-            local_asr_mirror: default_local_asr_mirror(),
             local_asr_keep_loaded_secs: default_local_asr_keep_loaded_secs(),
             local_asr_models_base_dir: String::new(),
-            foundry_local_asr_model: default_foundry_local_asr_model(),
-            foundry_local_runtime_source: default_foundry_local_runtime_source(),
-            foundry_local_asr_language_hint: String::new(),
-            foundry_local_asr_keep_loaded_secs: default_local_asr_keep_loaded_secs(),
-            sherpa_onnx_model: default_sherpa_onnx_model(),
-            sherpa_onnx_language_hint: String::new(),
-            sherpa_onnx_keep_loaded_secs: default_local_asr_keep_loaded_secs(),
-            update_channel: UpdateChannel::default(),
             history_retention_days: default_history_retention_days(),
             polish_context_window_minutes: default_polish_context_window_minutes(),
             start_minimized: false,
@@ -1586,15 +694,6 @@ impl Default for UserPreferences {
             history_max_entries: None,
             record_audio_for_debug: false,
             audio_recording_max_entries: None,
-            marketplace_base_url: String::new(),
-            marketplace_dev_login: String::new(),
-            android_insert_strategy: default_android_insert_strategy(),
-            android_overlay_trigger: default_android_overlay_trigger(),
-            android_overlay_activation_mode: default_android_overlay_activation_mode(),
-            android_overlay_left_swipe_action: default_android_overlay_left_swipe_action(),
-            android_overlay_cancel_swipe_direction: default_android_overlay_cancel_swipe_direction(
-            ),
-            android_overlay_size_dp: default_android_overlay_size_dp(),
         }
     }
 }
@@ -1606,32 +705,7 @@ pub struct ShortcutBinding {
     pub modifiers: Vec<String>,
 }
 
-/// 风格包直达快捷键：`binding` 按下即激活 `pack_id` 对应的风格包（issue #759）。
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct StylePackHotkey {
-    pub pack_id: String,
-    pub binding: ShortcutBinding,
-}
-
 impl ShortcutBinding {
-    pub fn default_qa() -> Self {
-        #[cfg(target_os = "macos")]
-        {
-            Self {
-                primary: ";".into(),
-                modifiers: vec!["cmd".into(), "shift".into()],
-            }
-        }
-        #[cfg(not(target_os = "macos"))]
-        {
-            Self {
-                primary: ";".into(),
-                modifiers: vec!["ctrl".into(), "shift".into()],
-            }
-        }
-    }
-
     pub fn display_label(&self) -> String {
         let mut parts: Vec<String> = Vec::new();
         let modifier_order = ["cmd", "ctrl", "alt", "shift", "super"];
@@ -1641,56 +715,6 @@ impl ShortcutBinding {
             }
         }
         parts.push(display_primary(&self.primary));
-        parts.join("+")
-    }
-}
-
-/// 划词语音问答的全局快捷键绑定。原生名字符串：
-/// - `primary`：主键（如 `";"`、`"."`、`"A"`、`"F1"`）。
-/// - `modifiers`：修饰键集合，元素来自 `{"cmd","ctrl","alt","shift","super"}`。
-///   小写名简单序列化即可，前端 / 后端解析时统一 lowercase。
-///
-/// 默认 `Cmd+Shift+;` (macOS) / `Ctrl+Shift+;` (Windows)。
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct QaHotkeyBinding {
-    pub primary: String,
-    pub modifiers: Vec<String>,
-}
-
-impl Default for QaHotkeyBinding {
-    fn default() -> Self {
-        #[cfg(target_os = "macos")]
-        {
-            Self {
-                primary: ";".into(),
-                modifiers: vec!["cmd".into(), "shift".into()],
-            }
-        }
-        #[cfg(not(target_os = "macos"))]
-        {
-            Self {
-                primary: ";".into(),
-                modifiers: vec!["ctrl".into(), "shift".into()],
-            }
-        }
-    }
-}
-
-impl QaHotkeyBinding {
-    /// 渲染成给前端展示的可读标签。
-    /// 顺序与人类阅读习惯一致：`Cmd+Shift+;`、`Ctrl+Alt+Shift+.`。
-    pub fn display_label(&self) -> String {
-        let mut parts: Vec<String> = Vec::new();
-        // 固定输出顺序：Ctrl/Cmd → Alt/Option → Shift → Super
-        let modifier_order = ["cmd", "ctrl", "alt", "shift", "super"];
-        for tag in modifier_order {
-            if self.modifiers.iter().any(|m| m.eq_ignore_ascii_case(tag)) {
-                parts.push(modifier_display(tag).to_string());
-            }
-        }
-        let key_label = display_primary(&self.primary);
-        parts.push(key_label);
         parts.join("+")
     }
 }
@@ -1709,43 +733,20 @@ pub struct ComboBinding {
 }
 
 impl ComboBinding {
-    /// 渲染成给前端展示的可读标签。复用 QaHotkeyBinding 的格式化逻辑。
     pub fn display_label(&self) -> String {
-        let qa = QaHotkeyBinding {
+        ShortcutBinding {
             primary: self.primary.clone(),
             modifiers: self.modifiers.clone(),
-        };
-        qa.display_label()
+        }
+        .display_label()
     }
 }
 
 fn modifier_display(tag: &str) -> &'static str {
     match tag {
-        "cmd" => {
-            #[cfg(target_os = "macos")]
-            {
-                "Cmd"
-            }
-            #[cfg(target_os = "windows")]
-            {
-                "Ctrl"
-            }
-            #[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
-            {
-                "Super"
-            }
-        }
+        "cmd" => "Cmd",
         "ctrl" => "Ctrl",
-        "alt" => {
-            #[cfg(target_os = "macos")]
-            {
-                "Option"
-            }
-            #[cfg(not(target_os = "macos"))]
-            {
-                "Alt"
-            }
-        }
+        "alt" => "Option",
         "shift" => "Shift",
         "super" => "Super",
         _ => "",
@@ -1820,7 +821,7 @@ pub enum HotkeyAdapterKind {
     MacEventTap,
     WindowsLowLevel,
     Fcitx5,
-    /// Mobile platforms do not expose desktop global hotkey adapters.
+    /// No supported native hotkey adapter is available.
     Unavailable,
 }
 
@@ -1894,9 +895,6 @@ fn legacy_trigger_code(trigger: HotkeyTrigger) -> &'static str {
         HotkeyTrigger::LeftCommand => "MetaLeft",
         HotkeyTrigger::LeftShift => "ShiftLeft",
         HotkeyTrigger::RightShift => "ShiftRight",
-        #[cfg(target_os = "windows")]
-        HotkeyTrigger::Fn => "ControlRight",
-        #[cfg(not(target_os = "windows"))]
         HotkeyTrigger::Fn => "Fn",
         HotkeyTrigger::MediaPlayPause => "MediaPlayPause",
         HotkeyTrigger::Custom => "",
@@ -1989,98 +987,25 @@ pub struct HotkeyCapability {
 
 impl HotkeyCapability {
     pub fn current() -> Self {
-        #[cfg(any(target_os = "android", target_os = "ios"))]
-        {
-            return Self {
-                adapter: HotkeyAdapterKind::Unavailable,
-                available_triggers: Vec::new(),
-                requires_accessibility_permission: false,
-                supports_modifier_only_trigger: false,
-                supports_side_specific_modifiers: false,
-                explicit_fallback_available: false,
-                status_hint: Some(
-                    "移动端不支持全局热键；请使用应用内录音按钮或悬浮窗（需授权）。".into(),
-                ),
-            };
-        }
-
-        #[cfg(target_os = "macos")]
-        {
-            Self {
-                adapter: HotkeyAdapterKind::MacEventTap,
-                available_triggers: vec![
-                    HotkeyTrigger::RightOption,
-                    HotkeyTrigger::LeftOption,
-                    HotkeyTrigger::RightControl,
-                    HotkeyTrigger::LeftControl,
-                    HotkeyTrigger::RightCommand,
-                    HotkeyTrigger::LeftCommand,
-                    HotkeyTrigger::LeftShift,
-                    HotkeyTrigger::RightShift,
-                    HotkeyTrigger::Fn,
-                    HotkeyTrigger::Custom,
-                ],
-                requires_accessibility_permission: true,
-                supports_modifier_only_trigger: true,
-                supports_side_specific_modifiers: true,
-                explicit_fallback_available: false,
-                status_hint: Some("授权辅助功能后，通常需要完全退出并重新打开 OpenLess。".into()),
-            }
-        }
-
-        #[cfg(target_os = "windows")]
-        {
-            Self {
-                adapter: HotkeyAdapterKind::WindowsLowLevel,
-                // Windows 没有 Command 键：leftCommand/rightCommand 会被映射到 Win 键，
-                // 而单按 Win 会弹出开始菜单，实际无法作为录音热键使用。故不在 Windows
-                // 的常用单键预设里提供 Command 选项（issue #784）。
-                available_triggers: vec![
-                    HotkeyTrigger::RightControl,
-                    HotkeyTrigger::RightAlt,
-                    HotkeyTrigger::LeftControl,
-                    HotkeyTrigger::LeftShift,
-                    HotkeyTrigger::RightShift,
-                    HotkeyTrigger::MediaPlayPause,
-                    HotkeyTrigger::Custom,
-                ],
-                requires_accessibility_permission: false,
-                supports_modifier_only_trigger: true,
-                supports_side_specific_modifiers: true,
-                explicit_fallback_available: false,
-                status_hint: Some(
-                    "默认建议使用“右Ctrl + 单击”；若更习惯按住说话，可在录音设置里切回“按住”。若无响应，可在权限页查看 hook 安装状态。"
-                        .into(),
-                ),
-            }
-        }
-
-        #[cfg(all(
-            not(target_os = "macos"),
-            not(target_os = "windows"),
-            not(any(target_os = "android", target_os = "ios"))
-        ))]
-        {
-            Self {
-                adapter: HotkeyAdapterKind::Fcitx5,
-                available_triggers: vec![
-                    HotkeyTrigger::RightAlt,
-                    HotkeyTrigger::RightControl,
-                    HotkeyTrigger::LeftControl,
-                    HotkeyTrigger::LeftCommand,
-                    HotkeyTrigger::LeftShift,
-                    HotkeyTrigger::RightShift,
-                    HotkeyTrigger::Custom,
-                ],
-                requires_accessibility_permission: false,
-                supports_modifier_only_trigger: true,
-                supports_side_specific_modifiers: true,
-                explicit_fallback_available: false,
-                status_hint: Some(
-                    "Linux 使用 fcitx5 插件监听热键和提交文字。鼠标/侧别组合键需 evdev 读取 /dev/input/event*；若无权限请将用户加入 input 组（sudo usermod -aG input $USER）后重新登录。"
-                        .into(),
-                ),
-            }
+        Self {
+            adapter: HotkeyAdapterKind::MacEventTap,
+            available_triggers: vec![
+                HotkeyTrigger::RightOption,
+                HotkeyTrigger::LeftOption,
+                HotkeyTrigger::RightControl,
+                HotkeyTrigger::LeftControl,
+                HotkeyTrigger::RightCommand,
+                HotkeyTrigger::LeftCommand,
+                HotkeyTrigger::LeftShift,
+                HotkeyTrigger::RightShift,
+                HotkeyTrigger::Fn,
+                HotkeyTrigger::Custom,
+            ],
+            requires_accessibility_permission: true,
+            supports_modifier_only_trigger: true,
+            supports_side_specific_modifiers: true,
+            explicit_fallback_available: false,
+            status_hint: Some("授权辅助功能后，通常需要完全退出并重新打开 OpenLess。".into()),
         }
     }
 }
@@ -2107,24 +1032,6 @@ pub struct HotkeyStatus {
     pub last_error: Option<HotkeyInstallError>,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub enum WindowsImeInstallState {
-    Installed,
-    NotInstalled,
-    RegistrationBroken,
-    NotWindows,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct WindowsImeStatus {
-    pub state: WindowsImeInstallState,
-    pub using_tsf_backend: bool,
-    pub message: String,
-    pub dll_path: Option<String>,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct PlatformCapabilities {
@@ -2141,56 +1048,16 @@ pub struct PlatformCapabilities {
 
 impl PlatformCapabilities {
     pub fn current() -> Self {
-        #[cfg(target_os = "android")]
-        {
-            Self {
-                platform: "android".to_string(),
-                supports_ime_input: false,
-                supports_overlay: true,
-                supports_desktop_hotkey: false,
-                supports_tray: false,
-                supports_local_asr: false,
-                supports_local_qwen3_mlx: false,
-                supports_in_app_dictation: true,
-                supports_auto_update: true,
-            }
-        }
-
-        #[cfg(all(
-            any(target_os = "android", target_os = "ios"),
-            not(target_os = "android")
-        ))]
-        {
-            Self {
-                platform: "mobile".to_string(),
-                supports_ime_input: false,
-                supports_overlay: false,
-                supports_desktop_hotkey: false,
-                supports_tray: false,
-                supports_local_asr: false,
-                supports_local_qwen3_mlx: false,
-                supports_in_app_dictation: false,
-                supports_auto_update: false,
-            }
-        }
-
-        #[cfg(not(any(target_os = "android", target_os = "ios")))]
-        {
-            Self {
-                platform: "desktop".to_string(),
-                supports_ime_input: cfg!(target_os = "windows"),
-                supports_overlay: true,
-                supports_desktop_hotkey: true,
-                supports_tray: true,
-                supports_local_asr: cfg!(any(
-                    target_os = "macos",
-                    target_os = "linux",
-                    target_os = "windows"
-                )),
-                supports_local_qwen3_mlx: cfg!(all(target_os = "macos", target_arch = "aarch64")),
-                supports_in_app_dictation: false,
-                supports_auto_update: true,
-            }
+        Self {
+            platform: "macos".to_string(),
+            supports_ime_input: false,
+            supports_overlay: true,
+            supports_desktop_hotkey: true,
+            supports_tray: true,
+            supports_local_asr: true,
+            supports_local_qwen3_mlx: true,
+            supports_in_app_dictation: false,
+            supports_auto_update: false,
         }
     }
 }
@@ -2242,24 +1109,10 @@ impl Default for HotkeyBinding {
         // 实际生效的快捷键跟用户当年选的 trigger 对不上。
         // 现在 keys=None 时 effective_codes() 走 legacy_trigger_code(trigger) 路径，
         // 跟 trigger 自动同步。
-        #[cfg(target_os = "windows")]
-        {
-            Self {
-                trigger: HotkeyTrigger::RightControl,
-                mode: HotkeyMode::Toggle,
-                keys: None,
-            }
-        }
-
-        // 减法改造:非 Windows 默认右 Command + Toggle(按一下开始、再按一下结束),
-        // 对齐 my_typeless 的交互要求。
-        #[cfg(not(target_os = "windows"))]
-        {
-            Self {
-                trigger: HotkeyTrigger::RightCommand,
-                mode: HotkeyMode::Toggle,
-                keys: None,
-            }
+        Self {
+            trigger: HotkeyTrigger::RightCommand,
+            mode: HotkeyMode::Toggle,
+            keys: None,
         }
     }
 }
@@ -2296,13 +1149,6 @@ pub struct CapsulePayload {
     pub elapsed_ms: u64,
     pub message: Option<String>,
     pub inserted_chars: Option<u32>,
-    /// 当前 session 是否处于翻译模式（用户按过 Shift）。前端用它在胶囊顶部
-    /// 渲染"正在翻译"标签，让用户立刻知道这次输出会走翻译管线。详见 issue #4。
-    pub translation: bool,
-    /// 当前是否是 Less Computer（语音 Agent 操控电脑）会话。前端据此把处理态文案
-    /// 从 "thinking" 换成 "using"——告诉用户 Agent 正在操作电脑而非单纯思考。
-    #[serde(default)]
-    pub operating: bool,
     /// 预备态：胶囊已经"乐观显示"出来（按下热键即弹出并播入场动画），但麦克风还没
     /// 真正开始 capture 第一帧 PCM。为 true 时前端渲染"待命"光效（柔和呼吸、不接真实
     /// 电平），并暗示用户先别急着开口；`level_handler` 首次触发（PCM 真的流入）后翻成
@@ -2313,29 +1159,6 @@ pub struct CapsulePayload {
     /// 录音即生效，胶囊 webview 无需额外请求。
     #[serde(default)]
     pub capsule_style: CapsuleStyle,
-    /// 选区润色专用的轻量反馈。它与原有语音/QA 会话共用同一扇不抢焦点的 capsule
-    /// 窗口，但前端据此切换为一行状态提示，避免改变既有语音光效与文案。
-    #[serde(default)]
-    pub selection_polish: bool,
-}
-
-/// Snapshot of credentials read from vault — only what the UI needs to know
-/// (whether keys are set; never the values themselves).
-#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct CredentialsStatus {
-    pub active_asr_provider: String,
-    pub active_llm_provider: String,
-    /// 当前识别管线模式（"traditional" | "multimodal"），前端据此决定
-    /// 配置页渲染哪套卡片、概览页按哪套判定「已配置」。
-    pub pipeline_mode: PipelineMode,
-    pub asr_configured: bool,
-    pub llm_configured: bool,
-    /// 多模态（omni）模型是否已配置。仅 `pipeline_mode == multimodal` 时有意义。
-    pub omni_configured: bool,
-    // 兼容旧前端字段（逐步迁移中）
-    pub volcengine_configured: bool,
-    pub ark_configured: bool,
 }
 
 /// Today's metrics shown on the Overview tab.
@@ -2346,19 +1169,6 @@ pub struct TodayMetrics {
     pub segments_today: u64,
     pub avg_latency_ms: u64,
     pub total_duration_ms: u64,
-}
-
-/// 划词追问浮窗里一条对话消息。多轮提问会累积成 Vec<QaChatMessage>，
-/// 整段送给 LLM 维持上下文。详见 issue #118 v2。
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct QaChatMessage {
-    /// "user" | "assistant" — 直接对应 OpenAI 消息 role 字段。
-    pub role: String,
-    pub content: String,
-    /// 仅用于前端安全展示选区原文；LLM 通道只读取 `role` / `content`。
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub selection_text: Option<String>,
 }
 
 #[cfg(test)]
@@ -2453,74 +1263,6 @@ mod split_front_app_label_tests {
 }
 
 #[cfg(test)]
-mod translation_effective_tests {
-    use super::translation_effective;
-
-    fn langs(list: &[&str]) -> Vec<String> {
-        list.iter().map(|s| s.to_string()).collect()
-    }
-
-    #[test]
-    fn requires_the_modifier() {
-        assert!(!translation_effective(
-            false,
-            "English",
-            &langs(&["简体中文"])
-        ));
-    }
-
-    #[test]
-    fn unset_target_language_is_not_translation() {
-        // 用户没在翻译页选目标语言就按 Shift：此前胶囊照样显示「正在翻译」，
-        // 而后端走的是普通润色。
-        assert!(!translation_effective(true, "", &langs(&["简体中文"])));
-        assert!(!translation_effective(true, "   ", &langs(&["简体中文"])));
-    }
-
-    #[test]
-    fn target_equal_to_the_only_working_language_is_a_no_op() {
-        // 工作语言只有中文、目标也是中文 —— 源语言必定就是目标语言，翻译是空操作。
-        assert!(!translation_effective(
-            true,
-            "简体中文",
-            &langs(&["简体中文"])
-        ));
-        // 前后空白不该让它逃过判定。
-        assert!(!translation_effective(
-            true,
-            " 简体中文 ",
-            &langs(&["简体中文"])
-        ));
-    }
-
-    #[test]
-    fn simplified_to_traditional_still_translates() {
-        // 简体/繁体是语言列表里两个独立条目，简→繁是真实转换，不能按「同一种中文」拦掉。
-        assert!(translation_effective(
-            true,
-            "繁体中文",
-            &langs(&["简体中文"])
-        ));
-    }
-
-    #[test]
-    fn multiple_working_languages_are_never_blocked() {
-        // 中/英双语用户把目标设成英文是正常用法（说中文出英文），源语言无法预先判定，
-        // 不能因为目标语言出现在工作语言里就拦。
-        assert!(translation_effective(
-            true,
-            "English",
-            &langs(&["简体中文", "English"])
-        ));
-    }
-
-    #[test]
-    fn empty_working_languages_still_translates() {
-        assert!(translation_effective(true, "English", &[]));
-    }
-}
-
-#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -2540,77 +1282,31 @@ mod tests {
     }
 
     #[test]
-    fn multimodal_mode_requires_the_experiment_switch() {
-        assert_eq!(
-            effective_pipeline_mode(false, PipelineMode::Traditional),
-            PipelineMode::Traditional
-        );
-        assert_eq!(
-            effective_pipeline_mode(false, PipelineMode::Multimodal),
-            PipelineMode::Traditional
-        );
-        assert_eq!(
-            effective_pipeline_mode(true, PipelineMode::Traditional),
-            PipelineMode::Traditional
-        );
-        assert_eq!(
-            effective_pipeline_mode(true, PipelineMode::Multimodal),
-            PipelineMode::Multimodal
-        );
-    }
-
-    #[test]
-    fn obsolete_selection_voice_hotkey_is_ignored_and_not_serialized() {
-        let prefs: UserPreferences = serde_json::from_str(
-            r#"{
-                "selectionVoiceEnabled": true,
-                "selectionVoiceHotkey": { "primary": "E", "modifiers": ["ctrl", "shift"] }
-            }"#,
-        )
-        .unwrap();
-
-        assert!(prefs.selection_voice_enabled);
-        assert!(!serde_json::to_string(&prefs)
-            .unwrap()
-            .contains("selectionVoiceHotkey"));
-    }
-
-    #[test]
-    fn local_asr_model_preferences_migrate_without_cross_provider_overwrite() {
-        let old_qwen: UserPreferences =
-            serde_json::from_str(r#"{"localAsrActiveModel":"qwen3-asr-1.7b"}"#).unwrap();
-        assert_eq!(old_qwen.local_asr_active_model, "qwen3-asr-1.7b");
-        assert_eq!(
-            old_qwen.local_whisper_active_model,
-            default_local_whisper_model()
-        );
-
-        let old_whisper: UserPreferences =
-            serde_json::from_str(r#"{"localAsrActiveModel":"whisper-small"}"#).unwrap();
-        assert_eq!(
-            old_whisper.local_asr_active_model,
-            default_local_asr_model()
-        );
-        assert_eq!(old_whisper.local_whisper_active_model, "whisper-small");
-
-        let separated: UserPreferences = serde_json::from_str(
+    fn removed_pipeline_and_whisper_fields_are_ignored_as_legacy_unknowns() {
+        let preferences: UserPreferences = serde_json::from_str(
             r#"{
                 "localAsrActiveModel":"qwen3-asr-1.7b",
-                "localWhisperActiveModel":"whisper-medium"
+                "localWhisperActiveModel":"whisper-medium",
+                "pipelineMode":"multimodal",
+                "multimodalPipelineEnabled":true
             }"#,
         )
         .unwrap();
-        assert_eq!(separated.local_asr_active_model, "qwen3-asr-1.7b");
-        assert_eq!(separated.local_whisper_active_model, "whisper-medium");
+        assert_eq!(preferences.local_asr_active_model, "qwen3-asr-1.7b");
+
+        let serialized = serde_json::to_value(preferences).unwrap();
+        assert!(serialized.get("localWhisperActiveModel").is_none());
+        assert!(serialized.get("pipelineMode").is_none());
+        assert!(serialized.get("multimodalPipelineEnabled").is_none());
     }
 
     #[test]
     fn salvage_preserves_valid_fields_when_one_value_is_invalid() {
-        // 模拟「某次重构改了枚举变体名」后的旧文件：defaultMode 是新版本已不存在的值，
+        // 模拟「某次重构改了字段类型」后的旧文件：historyRetentionDays 是非法值，
         // 但 dictationHotkey / activeAsrProvider 仍然合法。抢救必须保住合法字段，
         // 只把非法字段回落默认——而不是整份丢光。
         let json = br#"{
-            "defaultMode": "totally-removed-mode",
+            "historyRetentionDays": "not-a-number",
             "dictationHotkey": { "primary": "LeftOption", "modifiers": [] },
             "activeAsrProvider": "bailian-qwen3-realtime"
         }"#;
@@ -2623,241 +1319,104 @@ mod tests {
         assert_eq!(salvaged.active_asr_provider, "bailian-qwen3-realtime");
         // 非法字段回落到默认，而不是让整份解析失败。
         assert_eq!(
-            salvaged.default_mode,
-            UserPreferences::default().default_mode
+            salvaged.history_retention_days,
+            UserPreferences::default().history_retention_days
         );
     }
 
     #[test]
-    fn salvage_normalizes_duplicate_legacy_aliases_without_resetting_other_fields() {
-        let json = br#"{
-            "windowsSendInputInsertionOnly": false,
-            "windowsSendinputInsertionOnly": true,
-            "windowsSendInputNewlineMode": "removed-mode",
-            "windowsSendinputNewlineMode": "shiftEnter",
-            "activeAsrProvider": "preserved-provider"
+    fn legacy_style_fields_in_preferences_json_are_ignored_on_load() {
+        // 风格系统已删除；旧 preferences.json 里残留的风格字段必须被静默跳过
+        // （serde 对未知字段默认忽略），不影响其余设置的加载。
+        let json = r#"{
+            "defaultMode": "structured",
+            "enabledModes": ["raw", "light", "structured", "formal"],
+            "activeStylePackId": "custom.meeting",
+            "styleSystemPrompts": {"raw": "r", "light": "l", "structured": "s", "formal": "f"},
+            "customStylePrompts": {"raw": "", "light": "更像微信消息", "structured": "", "formal": ""},
+            "selectionPolishStylePackId": "builtin.light",
+            "switchStyleHotkey": {"primary": "S", "modifiers": ["cmd", "shift"]},
+            "stylePackHotkeys": [{"packId": "imported.demo", "binding": {"primary": "1", "modifiers": ["alt"]}}],
+            "microphoneDeviceName": "External Mic"
         }"#;
 
-        assert!(serde_json::from_slice::<UserPreferences>(json).is_err());
-
-        let salvaged = UserPreferences::salvage_from_json_bytes(json);
-        assert!(!salvaged.windows_sendinput_insertion_only);
-        assert_eq!(
-            salvaged.windows_sendinput_newline_mode,
-            WindowsSendInputNewlineMode::ShiftEnter
-        );
-        assert_eq!(salvaged.active_asr_provider, "preserved-provider");
+        let prefs: UserPreferences = serde_json::from_str(json).unwrap();
+        assert_eq!(prefs.microphone_device_name, "External Mic");
+        // 序列化结果不再包含任何风格字段。
+        let saved = serde_json::to_string(&prefs).unwrap();
+        for legacy_key in [
+            "defaultMode",
+            "enabledModes",
+            "activeStylePackId",
+            "styleSystemPrompts",
+            "customStylePrompts",
+            "switchStyleHotkey",
+            "stylePackHotkeys",
+        ] {
+            assert!(
+                !saved.contains(legacy_key),
+                "serialized preferences must not contain {legacy_key}"
+            );
+        }
     }
 
     #[test]
-    fn non_tsf_insertion_fallback_defaults_to_enabled() {
-        let prefs = UserPreferences::default();
+    fn legacy_android_preferences_are_ignored_without_losing_surviving_fields() {
+        let json = r#"{
+            "androidInsertStrategy": "accessibility",
+            "androidOverlayTrigger": "always",
+            "androidOverlayActivationMode": "long_press",
+            "androidOverlayCancelSwipeDirection": "down",
+            "androidOverlaySizeDp": 96,
+            "microphoneDeviceName": "External Mic",
+            "historyRetentionDays": 30
+        }"#;
 
-        assert!(prefs.allow_non_tsf_insertion_fallback);
+        let prefs: UserPreferences = serde_json::from_str(json).unwrap();
+        assert_eq!(prefs.microphone_device_name, "External Mic");
+        assert_eq!(prefs.history_retention_days, 30);
+
+        let saved = serde_json::to_string(&prefs).unwrap();
+        for legacy_key in [
+            "androidInsertStrategy",
+            "androidOverlayTrigger",
+            "androidOverlayActivationMode",
+            "androidOverlayCancelSwipeDirection",
+            "androidOverlaySizeDp",
+        ] {
+            assert!(!saved.contains(legacy_key));
+        }
     }
 
     #[test]
-    fn missing_non_tsf_insertion_fallback_pref_defaults_to_enabled() {
-        let prefs: UserPreferences = serde_json::from_str("{}").unwrap();
-
-        assert!(prefs.allow_non_tsf_insertion_fallback);
-    }
-
-    #[test]
-    fn windows_sendinput_insertion_only_defaults_to_disabled() {
-        let prefs = UserPreferences::default();
-        assert!(!prefs.windows_sendinput_insertion_only);
-        assert_eq!(prefs.windows_insertion_mode, WindowsInsertionMode::Tsf);
-
-        let prefs: UserPreferences = serde_json::from_str("{}").unwrap();
-        assert!(!prefs.windows_sendinput_insertion_only);
-        assert_eq!(prefs.windows_insertion_mode, WindowsInsertionMode::Tsf);
-    }
-
-    #[cfg(target_os = "windows")]
-    #[test]
-    fn missing_selection_polish_hotkey_preserves_legacy_right_control_dictation() {
-        let prefs: UserPreferences = serde_json::from_str(
-            r#"{"dictationHotkey":{"primary":"RightControl","modifiers":[]}}"#,
-        )
-        .unwrap();
-        assert!(prefs.selection_polish_hotkey.is_none());
-        assert_eq!(prefs.dictation_hotkey.primary, "RightControl");
-    }
-
-    #[cfg(target_os = "windows")]
-    #[test]
-    fn legacy_right_alt_dictation_upgrade_disables_selection_polish_instead_of_colliding() {
-        // #904：录音键自定义为右 Alt 的旧配置升级时，默认注入的选区润色键（右 Alt）
-        // 与录音键相同会形成持久冲突，把后续所有设置保存挡死。迁移必须改为停用新功能。
-        let prefs: UserPreferences = serde_json::from_str(
+    fn removed_windows_preferences_are_ignored_as_unknown_fields() {
+        let preferences: UserPreferences = serde_json::from_str(
             r#"{
-                "hotkey": { "trigger": "rightAlt", "mode": "hold", "keys": null },
-                "dictationHotkey": { "primary": "RightAlt", "modifiers": [] }
+                "windowsInsertionMode":"sendInput",
+                "windowsSendInputInsertionOnly":true,
+                "windowsSendinputInsertionOnly":true,
+                "windowsSendInputNewlineMode":"shiftEnter",
+                "windowsSendinputNewlineMode":"shiftEnter",
+                "windowsShowOpenlessInKeyboardList":false,
+                "allowNonTsfInsertionFallback":false,
+                "activeAsrProvider":"preserved-provider"
             }"#,
         )
         .unwrap();
-        assert!(prefs.selection_polish_hotkey.is_none());
-        assert_eq!(prefs.dictation_hotkey.primary, "RightAlt");
-    }
+        assert_eq!(preferences.active_asr_provider, "preserved-provider");
 
-    #[cfg(target_os = "windows")]
-    #[test]
-    fn legacy_right_alt_trigger_upgrade_disables_selection_polish_by_overlap() {
-        // #904 变体：旧文件没有 dictationHotkey，只带 legacy hotkey.trigger=rightAlt，
-        // 派生出的录音键 primary 是 "RightOption"，与默认注入的 "RightAlt" 字符串不相等
-        // 但物理同键（bindings_overlap=true）。迁移必须按重叠判定，不能按 == 字符串比较。
-        let prefs: UserPreferences = serde_json::from_str(
-            r#"{
-                "hotkey": { "trigger": "rightAlt", "mode": "hold", "keys": null }
-            }"#,
-        )
-        .unwrap();
-        assert!(prefs.selection_polish_hotkey.is_none());
-        assert_eq!(prefs.dictation_hotkey.primary, "RightOption");
-    }
-
-    #[cfg(target_os = "windows")]
-    #[test]
-    fn new_preferences_keep_the_existing_dictation_default_and_use_right_alt_for_selection_polish()
-    {
-        let prefs = UserPreferences::default();
-        assert_eq!(prefs.dictation_hotkey.primary, "RightControl");
-        assert_eq!(
-            prefs.selection_polish_hotkey,
-            Some(ShortcutBinding {
-                primary: "RightAlt".into(),
-                modifiers: Vec::new(),
-            })
-        );
-    }
-
-    #[cfg(target_os = "windows")]
-    #[test]
-    fn explicit_selection_polish_setting_does_not_rewrite_dictation_binding() {
-        let prefs: UserPreferences = serde_json::from_str(
-            r#"{"dictationHotkey":{"primary":"RightControl","modifiers":[]},"selectionPolishHotkey":null}"#,
-        )
-        .unwrap();
-        assert!(prefs.selection_polish_hotkey.is_none());
-        assert_eq!(prefs.dictation_hotkey.primary, "RightControl");
-    }
-
-    #[test]
-    fn windows_sendinput_insertion_only_deserializes_frontend_wire_key() {
-        let prefs: UserPreferences =
-            serde_json::from_str(r#"{"windowsSendInputInsertionOnly": true}"#).unwrap();
-        assert!(prefs.windows_sendinput_insertion_only);
-        assert_eq!(
-            prefs.windows_insertion_mode,
-            WindowsInsertionMode::SendInput
-        );
-    }
-
-    #[test]
-    fn windows_sendinput_insertion_only_deserializes_legacy_wrong_camel_key() {
-        let prefs: UserPreferences =
-            serde_json::from_str(r#"{"windowsSendinputInsertionOnly": true}"#).unwrap();
-        assert!(prefs.windows_sendinput_insertion_only);
-        assert_eq!(
-            prefs.windows_insertion_mode,
-            WindowsInsertionMode::SendInput
-        );
-    }
-
-    #[test]
-    fn windows_insertion_mode_deserializes_explicit_paste() {
-        let prefs: UserPreferences =
-            serde_json::from_str(r#"{"windowsInsertionMode":"paste"}"#).unwrap();
-        assert_eq!(prefs.windows_insertion_mode, WindowsInsertionMode::Paste);
-        assert!(!prefs.windows_sendinput_insertion_only);
-    }
-
-    #[test]
-    fn windows_sendinput_newline_mode_defaults_to_enter() {
-        let prefs: UserPreferences = serde_json::from_str("{}").unwrap();
-        assert_eq!(
-            prefs.windows_sendinput_newline_mode,
-            WindowsSendInputNewlineMode::Enter
-        );
-    }
-
-    #[test]
-    fn windows_sendinput_newline_mode_deserializes_shift_enter() {
-        let prefs: UserPreferences =
-            serde_json::from_str(r#"{"windowsSendInputNewlineMode":"shiftEnter"}"#).unwrap();
-        assert_eq!(
-            prefs.windows_sendinput_newline_mode,
-            WindowsSendInputNewlineMode::ShiftEnter
-        );
-    }
-
-    #[test]
-    fn windows_sendinput_newline_mode_serializes_frontend_wire_key() {
-        let prefs = UserPreferences {
-            windows_insertion_mode: WindowsInsertionMode::SendInput,
-            windows_sendinput_newline_mode: WindowsSendInputNewlineMode::ShiftEnter,
-            ..UserPreferences::default()
-        };
-        let json = serde_json::to_string(&prefs).unwrap();
-        assert!(json.contains(r#""windowsSendInputNewlineMode":"shiftEnter""#));
-        assert!(!json.contains("windowsSendinputNewlineMode"));
-    }
-
-    #[test]
-    fn windows_sendinput_insertion_only_serializes_frontend_wire_key() {
-        let enabled = UserPreferences {
-            windows_insertion_mode: WindowsInsertionMode::SendInput,
-            windows_sendinput_insertion_only: true,
-            ..UserPreferences::default()
-        };
-        let json = serde_json::to_string(&enabled).unwrap();
-        assert!(json.contains(r#""windowsSendInputInsertionOnly":true"#));
-        assert!(!json.contains("windowsSendinputInsertionOnly"));
-    }
-
-    #[test]
-    fn windows_sendinput_insertion_only_pref_round_trips_explicit_true() {
-        let enabled = UserPreferences {
-            windows_insertion_mode: WindowsInsertionMode::SendInput,
-            windows_sendinput_insertion_only: true,
-            ..UserPreferences::default()
-        };
-        let json = serde_json::to_string(&enabled).unwrap();
-        assert!(json.contains(r#""windowsSendInputInsertionOnly":true"#));
-        assert!(json.contains(r#""windowsInsertionMode":"sendInput""#));
-        let restored: UserPreferences = serde_json::from_str(&json).unwrap();
-        assert!(restored.windows_sendinput_insertion_only);
-        assert_eq!(
-            restored.windows_insertion_mode,
-            WindowsInsertionMode::SendInput
-        );
-    }
-
-    #[test]
-    fn windows_show_openless_in_keyboard_list_defaults_to_enabled() {
-        let prefs = UserPreferences::default();
-        assert!(prefs.windows_show_openless_in_keyboard_list);
-
-        let prefs: UserPreferences = serde_json::from_str("{}").unwrap();
-        assert!(prefs.windows_show_openless_in_keyboard_list);
-    }
-
-    #[test]
-    fn windows_show_openless_in_keyboard_list_deserializes_frontend_wire_key() {
-        let prefs: UserPreferences =
-            serde_json::from_str(r#"{"windowsShowOpenlessInKeyboardList": false}"#).unwrap();
-        assert!(!prefs.windows_show_openless_in_keyboard_list);
-    }
-
-    #[test]
-    fn windows_show_openless_in_keyboard_list_serializes_frontend_wire_key() {
-        let hidden = UserPreferences {
-            windows_show_openless_in_keyboard_list: false,
-            ..UserPreferences::default()
-        };
-        let json = serde_json::to_string(&hidden).unwrap();
-        assert!(json.contains(r#""windowsShowOpenlessInKeyboardList":false"#));
+        let serialized = serde_json::to_value(preferences).unwrap();
+        for removed_key in [
+            "windowsInsertionMode",
+            "windowsSendInputInsertionOnly",
+            "windowsSendinputInsertionOnly",
+            "windowsSendInputNewlineMode",
+            "windowsSendinputNewlineMode",
+            "windowsShowOpenlessInKeyboardList",
+            "allowNonTsfInsertionFallback",
+        ] {
+            assert!(serialized.get(removed_key).is_none(), "{removed_key}");
+        }
     }
 
     #[test]
@@ -2905,180 +1464,49 @@ mod tests {
     }
 
     #[test]
-    fn action_hotkeys_default_to_enabled() {
+    fn open_app_hotkey_defaults_to_enabled() {
         // issue #576：默认仍开启（Some 默认键），对老用户零行为变化。
         let prefs = UserPreferences::default();
-        assert!(prefs.switch_style_hotkey.is_some());
         assert!(prefs.open_app_hotkey.is_some());
     }
 
     #[test]
-    fn missing_action_hotkeys_default_to_enabled() {
+    fn missing_open_app_hotkey_defaults_to_enabled() {
         // 老用户/缺字段：wire 的 struct-default 落到 Some(默认键)，不应被当成停用。
         let prefs: UserPreferences = serde_json::from_str("{}").unwrap();
-        assert!(prefs.switch_style_hotkey.is_some());
         assert!(prefs.open_app_hotkey.is_some());
     }
 
     #[test]
-    fn disabled_action_hotkeys_round_trip_as_null() {
+    fn disabled_open_app_hotkey_round_trips_as_null() {
         // issue #576：用户清空（None=停用）后存盘→读回必须仍是 None，
         // 不能像旧逻辑那样被 unwrap_or_else 塌缩回默认键。
         let disabled = UserPreferences {
-            switch_style_hotkey: None,
             open_app_hotkey: None,
             ..Default::default()
         };
         let json = serde_json::to_string(&disabled).unwrap();
         assert!(
-            json.contains("\"switchStyleHotkey\":null"),
+            json.contains("\"openAppHotkey\":null"),
             "停用应序列化成 null，实际: {json}"
         );
         let restored: UserPreferences = serde_json::from_str(&json).unwrap();
-        assert!(restored.switch_style_hotkey.is_none());
         assert!(restored.open_app_hotkey.is_none());
     }
 
     #[test]
-    fn style_pack_hotkeys_default_empty_and_round_trip() {
-        // issue #759：老 preferences.json 没有该字段 → 空列表，不报错。
-        let prefs: UserPreferences = serde_json::from_str("{}").unwrap();
-        assert!(prefs.style_pack_hotkeys.is_empty());
-
-        // 带绑定的存盘→读回保持原样（camelCase 字段名）。
-        let configured = UserPreferences {
-            style_pack_hotkeys: vec![StylePackHotkey {
-                pack_id: "imported.demo".into(),
-                binding: ShortcutBinding {
-                    primary: "1".into(),
-                    modifiers: vec!["alt".into()],
-                },
-            }],
-            ..Default::default()
-        };
-        let json = serde_json::to_string(&configured).unwrap();
-        assert!(
-            json.contains("\"stylePackHotkeys\":[{\"packId\":\"imported.demo\""),
-            "应序列化为 camelCase，实际: {json}"
-        );
-        let restored: UserPreferences = serde_json::from_str(&json).unwrap();
-        assert_eq!(restored.style_pack_hotkeys, configured.style_pack_hotkeys);
-    }
-
-    #[test]
-    fn explicit_action_hotkey_binding_round_trips() {
+    fn explicit_open_app_hotkey_binding_round_trips() {
         // 旧 preferences.json 里带实际绑定 → 读回应保留为 Some（启用）。
         let prefs: UserPreferences = serde_json::from_str(
-            r#"{"switchStyleHotkey":{"primary":"S","modifiers":["cmd","shift"]}}"#,
+            r#"{"openAppHotkey":{"primary":"O","modifiers":["cmd","shift"]}}"#,
         )
         .unwrap();
-        let binding = prefs.switch_style_hotkey.expect("应保留为 Some");
-        assert_eq!(binding.primary, "S");
+        let binding = prefs.open_app_hotkey.expect("应保留为 Some");
+        assert_eq!(binding.primary, "O");
         assert_eq!(
             binding.modifiers,
             vec!["cmd".to_string(), "shift".to_string()]
         );
-    }
-
-    #[test]
-    fn missing_custom_style_prompts_defaults_to_empty() {
-        let prefs: UserPreferences = serde_json::from_str("{}").unwrap();
-
-        assert_eq!(prefs.custom_style_prompts, CustomStylePrompts::default());
-        assert!(!prefs.custom_style_prompts.has_for_mode(PolishMode::Raw));
-    }
-
-    #[test]
-    fn style_pack_workflow_prompts_are_selected_independently() {
-        let mut pack = builtin_style_pack_for_mode(PolishMode::Light);
-        pack.prompt = "ASR prompt marker".into();
-        pack.selection_prompt = "selected-text prompt marker".into();
-
-        assert_eq!(
-            style_pack_prompt(&pack, StylePromptKind::DictationAsr),
-            "ASR prompt marker"
-        );
-        assert_eq!(
-            style_pack_prompt(&pack, StylePromptKind::Selection),
-            "selected-text prompt marker"
-        );
-    }
-
-    #[test]
-    fn empty_selection_prompt_uses_non_asr_fallback_without_touching_asr_prompt() {
-        let mut pack = builtin_style_pack_for_mode(PolishMode::Light);
-        pack.prompt = "ASR prompt marker".into();
-        pack.selection_prompt.clear();
-
-        let selection_prompt = style_pack_prompt(&pack, StylePromptKind::Selection);
-        assert!(selection_prompt.contains("不是语音识别（ASR）转写"));
-        assert_eq!(
-            style_pack_prompt(&pack, StylePromptKind::DictationAsr),
-            "ASR prompt marker"
-        );
-    }
-
-    #[test]
-    fn custom_style_prompts_round_trip_explicit_values() {
-        let prefs: UserPreferences = serde_json::from_str(
-            r#"{
-                "customStylePrompts": {
-                    "raw": "保留我的口头禅",
-                    "light": "更像微信消息",
-                    "structured": "按项目符号整理",
-                    "formal": "像正式周报"
-                }
-            }"#,
-        )
-        .unwrap();
-
-        assert_eq!(prefs.custom_style_prompts.raw, "保留我的口头禅");
-        assert_eq!(prefs.custom_style_prompts.light, "更像微信消息");
-        assert_eq!(prefs.custom_style_prompts.structured, "按项目符号整理");
-        assert_eq!(prefs.custom_style_prompts.formal, "像正式周报");
-        assert!(prefs.custom_style_prompts.has_for_mode(PolishMode::Formal));
-    }
-
-    #[test]
-    fn missing_active_style_pack_id_uses_legacy_default_mode() {
-        let prefs: UserPreferences = serde_json::from_str(
-            r#"{
-                "defaultMode": "structured"
-            }"#,
-        )
-        .unwrap();
-
-        assert_eq!(prefs.default_mode, PolishMode::Structured);
-        assert_eq!(prefs.active_style_pack_id, BUILTIN_STYLE_PACK_STRUCTURED_ID);
-    }
-
-    #[test]
-    fn explicit_active_style_pack_id_is_preserved() {
-        let prefs: UserPreferences = serde_json::from_str(
-            r#"{
-                "defaultMode": "formal",
-                "activeStylePackId": "custom.meeting"
-            }"#,
-        )
-        .unwrap();
-
-        assert_eq!(prefs.default_mode, PolishMode::Formal);
-        assert_eq!(prefs.active_style_pack_id, "custom.meeting");
-    }
-
-    #[test]
-    fn legacy_custom_style_prompts_are_not_appended_twice() {
-        let base = StyleSystemPrompts::default();
-        let legacy = CustomStylePrompts {
-            light: "更像微信消息".into(),
-            ..CustomStylePrompts::default()
-        };
-
-        let once = base.clone().with_legacy_custom_prompts(&legacy);
-        let twice = once.clone().with_legacy_custom_prompts(&legacy);
-
-        assert_eq!(once.light, twice.light);
-        assert_eq!(twice.light.matches("# 用户自定义附加要求").count(), 1);
     }
 
     /// issue #360: 默认值必须是 CtrlV，跟历史行为一致；老配置文件没有
@@ -3210,15 +1638,6 @@ mod tests {
         assert_eq!(binding.display_label(), "右 Control");
     }
 
-    #[cfg(target_os = "windows")]
-    #[test]
-    fn legacy_fn_trigger_uses_windows_control_right_alias() {
-        let binding: HotkeyBinding =
-            serde_json::from_str(r#"{"trigger":"fn","mode":"toggle"}"#).unwrap();
-
-        assert_eq!(binding.effective_codes(), vec!["ControlRight".to_string()]);
-    }
-
     #[test]
     fn hotkey_binding_supports_combo_side_keys_mouse_and_double_click_mode() {
         let binding = HotkeyBinding {
@@ -3255,6 +1674,7 @@ mod tests {
     }
 
     /// PR #826：新增的模型/耗时字段必须向后兼容——旧 history.json 完全没有这些 key。
+    /// 风格系统删除后，旧记录里的 `mode` / `stylePackId` 残留标签也必须被静默跳过。
     #[test]
     fn dictation_session_deserializes_legacy_json_without_model_fields() {
         let legacy = r#"{
@@ -3263,6 +1683,7 @@ mod tests {
             "rawTranscript": "你好",
             "finalText": "你好。",
             "mode": "light",
+            "stylePackId": "builtin.light",
             "appBundleId": null,
             "appName": null,
             "insertStatus": "inserted",
@@ -3290,9 +1711,6 @@ mod tests {
             raw_transcript: "你好".into(),
             asr_transcript: None,
             final_text: "你好。".into(),
-            mode: PolishMode::Light,
-            style_pack_id: None,
-            translation_active: false,
             polish_source: None,
             app_bundle_id: None,
             app_name: None,
@@ -3305,9 +1723,9 @@ mod tests {
             asr_model: Some("fun-asr-realtime".into()),
             llm_provider: Some("ark".into()),
             llm_model: Some("deepseek-v3-2".into()),
-            pipeline_mode: None,
             asr_ms: Some(230),
             polish_ms: Some(1450),
+            pipeline_mode: None,
             polish_diagnostics: Some(crate::polish_diagnostics::PolishDiagnostics {
                 stage: crate::polish_diagnostics::PolishDiagnosticsStage::Succeeded,
                 outcome: crate::polish_diagnostics::PolishDiagnosticsOutcome::Succeeded,
@@ -3344,21 +1762,72 @@ mod tests {
         assert_eq!(json["polishMs"], 1450);
         // 诊断字段按 camelCase 序列化，前端 types.ts 镜像直接可读。
         assert_eq!(json["polishDiagnostics"]["stage"], "succeeded");
-        assert_eq!(json["polishDiagnostics"]["model"], "gemma-4-E2B-it-Q4_0.gguf");
+        assert_eq!(
+            json["polishDiagnostics"]["model"],
+            "gemma-4-E2B-it-Q4_0.gguf"
+        );
         assert_eq!(json["polishDiagnostics"]["template"], "gemma4Canonical");
         assert_eq!(json["polishDiagnostics"]["promptTokens"], 9);
         assert_eq!(json["polishDiagnostics"]["messages"][0]["role"], "user");
         assert_eq!(json["polishDiagnostics"]["cursor"]["status"], "included");
         // 旧 JSON（无 polishDiagnostics 字段）反序列化为 None。
+        // 旧 JSON 里残留的风格（mode）与翻译（translationActive）字段静默跳过。
         let legacy: DictationSession = serde_json::from_value(serde_json::json!({
             "id": "old",
             "createdAt": "2026-07-01T00:00:00Z",
             "rawTranscript": "旧记录",
             "finalText": "旧记录",
             "mode": "light",
+            "translationActive": true,
             "insertStatus": "inserted"
         }))
         .expect("legacy rows must deserialize");
         assert!(legacy.polish_diagnostics.is_none());
+    }
+
+    /// 风格系统 / 翻译功能 / 风格市场已删除：旧 preferences.json 里残留的
+    /// 风格、翻译与市场字段必须被 serde 静默跳过，其余设置完整加载。
+    #[test]
+    fn legacy_preferences_with_style_translation_and_marketplace_fields_still_load() {
+        let legacy = serde_json::json!({
+            "hotkey": { "trigger": "rightCommand", "mode": "toggle", "keys": null },
+            "microphoneDeviceName": "USB Mic",
+            // 风格系统残留
+            "polishMode": "light",
+            "stylePackId": "builtin.light",
+            "stylePacks": [{ "id": "custom", "name": "自定义" }],
+            "activeStylePackId": "builtin.light",
+            // 翻译功能残留
+            "translationTargetLanguage": "English",
+            "translationHotkey": { "primary": "Shift", "modifiers": [] },
+            "chineseScriptPreference": "simplified",
+            "outputLanguagePreference": "zhCn",
+            // 风格市场残留
+            "marketplaceBaseUrl": "https://api.example.com",
+            "marketplaceDevLogin": "octocat"
+        });
+
+        let preferences: UserPreferences =
+            serde_json::from_value(legacy).expect("legacy preferences must deserialize");
+
+        assert_eq!(preferences.microphone_device_name, "USB Mic");
+        assert_eq!(preferences.hotkey.trigger, HotkeyTrigger::RightCommand);
+        // 序列化结果不得再携带已删除字段。
+        let serialized = serde_json::to_value(&preferences).expect("serialize");
+        for key in [
+            "translationTargetLanguage",
+            "translationHotkey",
+            "chineseScriptPreference",
+            "outputLanguagePreference",
+            "marketplaceBaseUrl",
+            "marketplaceDevLogin",
+            "polishMode",
+            "stylePackId",
+        ] {
+            assert!(
+                serialized.get(key).is_none(),
+                "deleted field {key} must not serialize"
+            );
+        }
     }
 }

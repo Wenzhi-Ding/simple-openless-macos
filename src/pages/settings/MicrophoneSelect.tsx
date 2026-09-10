@@ -10,7 +10,7 @@ import {
 } from '../../lib/ipc';
 import type { MicrophoneDevice } from '../../lib/types';
 import { SelectLite, type SelectOption } from '../../components/ui/SelectLite';
-import { useMobileLayout } from '../../lib/useMobileLayout';
+import { useNarrowLayout } from '../../lib/useResponsiveLayout';
 
 interface MicrophoneSelectProps {
   devices: MicrophoneDevice[];
@@ -23,7 +23,7 @@ interface MicrophoneSelectProps {
 
 export function MicrophoneSelect({ devices, selectedName, onSelect, onOpen }: MicrophoneSelectProps) {
   const { t } = useTranslation();
-  const mobile = useMobileLayout();
+  const narrow = useNarrowLayout();
   const [open, setOpen] = useState(false);
   const [level, setLevel] = useState(0);
   // 串行化 start/stop —— 避免快速开合下监听器与 Rust 端状态错位。
@@ -122,7 +122,7 @@ export function MicrophoneSelect({ devices, selectedName, onSelect, onOpen }: Mi
         setOpen(next);
         if (next) onOpen?.();
       }}
-      style={{ width: mobile ? '100%' : 200, maxWidth: '100%', minWidth: 0 }}
+      style={{ width: narrow ? '100%' : 200, maxWidth: '100%', minWidth: 0 }}
     />
   );
 }

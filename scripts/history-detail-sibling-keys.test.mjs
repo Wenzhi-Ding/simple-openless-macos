@@ -39,8 +39,8 @@ function readKeyExpressions(source) {
   }
 }
 
-// 详情面板 = 右栏那张 Card。取「桌面端总是渲染 / 移动端展开才渲染」的条件到 Card 收尾之间。
-const detailStart = historyTsx.indexOf('{(!mobile || mobileDetailOpen) && (');
+// 详情面板 = 右栏那张 Card。取「桌面端总是渲染 / 窄窗口展开才渲染」的条件到 Card 收尾之间。
+const detailStart = historyTsx.indexOf('{(!narrow || narrowDetailOpen) && (');
 if (detailStart === -1) {
   throw new Error('未定位到历史详情面板（右栏 Card）的起始位置，契约测试需要同步更新');
 }

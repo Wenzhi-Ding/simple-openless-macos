@@ -8,18 +8,18 @@ const coordinatorCapsule = await read('src-tauri/src/coordinator/capsule_focus.r
 const coordinatorHotkeys = await read('src-tauri/src/coordinator/hotkey_loops.rs');
 const tauriCoordinatorHost = await read('src-tauri/src/tauri_coordinator_host.rs');
 const coreAdapters = await read('src-tauri/src/core_adapters.rs');
-const dictionaryCommand = await read('src-tauri/src/commands/dictionary.rs');
-const stylePacksCommand = await read('src-tauri/src/commands/style_packs.rs');
 const hostDocumentMacos = await read('src-tauri/src/host_document/macos.rs');
+const hotwords = await read('src-tauri/src/hotwords.rs');
+const tauriLib = await read('src-tauri/src/lib.rs');
+const commandsModule = await read('src-tauri/src/commands/mod.rs');
+const dictionaryCommand = await read('src-tauri/src/commands/dictionary.rs');
+const capabilities = await read('src-tauri/capabilities/default.json');
 const historyCommand = await read('src-tauri/src/commands/history.rs');
 const appShell = await read('src/App.tsx');
+const frontendIpcShared = await read('src/lib/ipc/shared.ts');
+const coreLib = await read('crates/openless-core/src/lib.rs');
 const localAsrCore = await read('crates/openless-core/src/local_asr_service.rs');
-const credentialCore = await read('crates/openless-core/src/credentials.rs');
-const androidNativeBridge = await read('src-tauri/src/android/native_bridge.rs');
-const androidKotlinBridge = await read('android/kotlin/OpenLessNative.kt');
-const androidOverlayService = await read('android/kotlin/OpenLessOverlayService.kt');
-const mobileHotkey = await read('src-tauri/src/mobile_stubs/hotkey.rs');
-const mobileSelection = await read('src-tauri/src/mobile_stubs/selection.rs');
+const localAsrDomain = await read('crates/openless-core/src/domains.rs');
 const coordinatorBusinessSources = [
   coordinator,
   coordinatorDictation,
@@ -31,6 +31,10 @@ assert.doesNotMatch(
   /\.emit\(\s*["']local-asr-token["']/,
   'local-asr-token must be derived from typed Core events by the centralized Tauri bridge',
 );
+const frontendContractVersion = frontendIpcShared.match(/BACKEND_CONTRACT_VERSION\s*=\s*["']([^"']+)/)?.[1];
+const coreContractVersion = coreLib.match(/BACKEND_CONTRACT_VERSION:\s*&str\s*=\s*["']([^"']+)/)?.[1];
+assert.ok(frontendContractVersion && coreContractVersion, 'both frontend and Core contract versions must be declared');
+assert.equal(frontendContractVersion, coreContractVersion, 'frontend startup handshake must match the Core backend contract version');
 assert.match(
   coordinatorDictation,
   /\.dispatch_dictation_hotkey_edge\(edge\)/,
@@ -106,50 +110,62 @@ assert.match(
   /hotkey_status: Arc<Mutex<HotkeyStatus>>/,
   'Coordinator and the platform adapter must share one hotkey status slot',
 );
-for (const method of [
-  'accept_pending_correction',
-  'reject_pending_correction',
-  'dismiss_pending_corrections',
-]) {
-  assert.match(
-    dictionaryCommand,
-    new RegExp(`core\\.${method}\\(`),
-    `vocabulary suggestion command must delegate ${method} to Core`,
-  );
-}
-assert.match(
-  dictionaryCommand,
-  /refresh_vocab_suggestion_presentation/,
-  'the Tauri command may only pass Core suggestion presence to the host presentation seam',
-);
 assert.doesNotMatch(
-  dictionaryCommand,
-  /coord\.(?:accept_pending_correction|reject_pending_correction|dismiss_vocab_suggestions)\(/,
-  'Tauri Coordinator must not own vocabulary suggestion mutations',
-);
-assert.match(
-  stylePacksCommand,
-  /core\.preview_style_pack_runtime\(&style_pack\)/,
-  'style-pack runtime diagnostics must be assembled by Core',
-);
-const stylePackPreviewCommand = stylePacksCommand.match(
-  /pub fn preview_style_pack_runtime\([^]*?\r?\n\}\r?\n/,
-)?.[0];
-assert.ok(stylePackPreviewCommand, 'style-pack preview command must remain present');
-assert.doesNotMatch(
-  stylePackPreviewCommand,
-  /CoordinatorState/,
-  'style-pack commands must not reach back into Coordinator for business diagnostics',
+  coreAdapters,
+  /SelectionRuntimeAdapter|TauriSelectionRuntime|TauriEditObservationAdapter|EditObservationAdapter/,
+  'Tauri must not retain selection or edit-learning runtime adapters',
 );
 assert.doesNotMatch(
   coordinatorBusinessSources,
-  /\bActiveAsr\b|CredentialsVault|ProviderScope|build_active_omni_provider|build_tauri_omni_provider|(?:fn|const)\s+(?:asr_vocab_phrases|prioritize_vocab_for_asr|FRESH_VOCAB_SEATS)\b/,
-  'Coordinator must not own ASR provider, credential, active-session, or vocabulary policy',
+  /selection_polish|vocab_card_visible|pending_correction/,
+  'Coordinator must not retain selection or vocabulary-suggestion presentation state',
 );
 assert.doesNotMatch(
   hostDocumentMacos,
   /\b(?:edit_is_within_typed_text|is_vocab_worthy|learned_rule)\b/,
-  'the macOS edit watcher must report EditPair and leave learning policy to Core',
+  'the macOS host must not retain edit-learning policy',
+);
+assert.doesNotMatch(
+  hotwords,
+  /hotwords\.txt|OPENLESS_HOTWORDS|std::env::var|HOME|std::fs::read_to_string/,
+  'hotword correction must use only the per-session frozen word list',
+);
+assert.match(
+  hotwords,
+  /pub fn correct\(text: &str, hotwords: &\[String\]\)/,
+  'hotword correction must accept the session word list explicitly',
+);
+assert.doesNotMatch(
+  tauriLib,
+  /selection_polish|selection_polish_preview|accept_pending_correction|reject_pending_correction|dismiss_pending_corrections/,
+  'the Tauri invoke handler must not expose removed selection or learning commands',
+);
+assert.doesNotMatch(
+  commandsModule,
+  /mod selection_polish/,
+  'the command module must not restore selection polish commands',
+);
+assert.match(
+  commandsModule,
+  /mod dictionary;/,
+  'the command module must retain the manual vocabulary IPC surface',
+);
+for (const command of ['list_vocab', 'add_vocab', 'remove_vocab', 'set_vocab_enabled']) {
+  assert.match(
+    dictionaryCommand,
+    new RegExp(`pub fn ${command}\\b`),
+    `manual vocabulary command ${command} must remain available`,
+  );
+}
+assert.doesNotMatch(
+  dictionaryCommand,
+  /pending_correction|correction_rule|vocab_presets|suggestion/,
+  'manual vocabulary commands must not restore learning, correction rules, or presets',
+);
+assert.doesNotMatch(
+  capabilities,
+  /selection-polish-preview/,
+  'the capability must not grant access to a removed preview window',
 );
 assert.match(
   historyCommand,
@@ -166,20 +182,20 @@ assert.match(
   /export function App\([^]*?getStartupSnapshot\(\)[^]*?return <ReadyApp \{\.\.\.props\} \/>/,
   'every Tauri webview route must mount behind the shared readiness handshake',
 );
-const localAsrActivation = localAsrCore.match(/    fn activate\([^]*?(?=\r?\n    fn )/)?.[0];
-assert.ok(localAsrActivation, 'Core must own local ASR activation');
-assert.match(localAsrActivation, /Self::validate_activation_provider\(&request\.target, &provider_type\)/,
-  'activation must validate the native provider before preparation');
-assert.match(localAsrActivation, /\.prepare\([^]*?\.preload_lease\([^]*?preferences\.update\(/,
-  'activation must prepare and preload before committing preferences');
-assert.match(localAsrActivation, /release_activation_lease\([^]*?\.await[^]*?restore_activation_runtime\([^]*?\.await/,
-  'activation cleanup failures must await restoration before returning');
-assert.match(localAsrActivation, /preferences\.get\(\)\.active_asr_provider[^]*?restore_activation_preferences[^]*?restore_activation_runtime/,
-  'concurrent preference changes must roll back both preferences and native runtime');
 assert.match(
-  credentialCore,
-  /ChannelMutation::ActivateLocalAsr \{ id, provider_type \} => \{[^]*?allocate_channel_id[^]*?channel\.enabled = true[^]*?channels\.insert\(0, channel\)[^]*?ChannelMutationResult::Activated\(id\)/,
-  'Core metadata must create or enable and promote the activated channel in the same mutation',
+  localAsrDomain,
+  /pub trait LocalAsrApi[^]*?fn runtime_status[^]*?fn prepare[^]*?fn cancel_prepare[^]*?fn release/,
+  'Core must own the fixed local ASR lifecycle contract',
+);
+assert.doesNotMatch(
+  localAsrCore,
+  /fn activate|validate_activation_provider|preload_lease|restore_activation_runtime/,
+  'fixed Qwen local ASR must not retain selectable activation or rollback machinery',
+);
+assert.doesNotMatch(
+  coreAdapters,
+  /CredentialStore|InMemoryCredentialStore|credentials:changed/,
+  'the local-only host must not retain credential storage or credential status events',
 );
 for (const legacyDictationFacade of [
   'start_dictation',
@@ -194,80 +210,12 @@ for (const legacyDictationFacade of [
     `Coordinator must not expose the legacy ${legacyDictationFacade} facade; production entry points use openless-core`,
   );
 }
-assert.match(
-  androidNativeBridge,
-  /nativeBackendSnapshot[\s\S]*?android_backend_snapshot_response\(CORE_BACKEND\.get\(\)\.map\(Arc::as_ref\)\)/,
-  'Android JNI must expose the typed Core startup handshake',
-);
-assert.match(
-  androidKotlinBridge,
-  /BACKEND_CONTRACT_VERSION = "2\.0\.0"[\s\S]*?requireBackendContract\(\)[\s\S]*?contractVersion/,
-  'Android Kotlin must reject a backend contract version other than 2.0.0',
-);
-assert.match(
-  androidOverlayService,
-  /onCreate\(\)[\s\S]*?OpenLessNative\.requireBackendContract\(\)[\s\S]*?stopSelf\(\)/,
-  'Android overlay startup must execute the JNI contract handshake before accepting actions',
-);
-assert.match(
-  mobileHotkey,
-  /pub fn next_press_id\(\) -> u64/,
-  'the mobile hotkey stub must preserve the Core press-identity shape',
-);
-assert.match(
-  mobileSelection,
-  /capture_selection_insertion_target[^]*?reactivate_selection_insertion_target[^]*?true/,
-  'mobile dictation insertion must provide a no-op target restore without enabling Selection Polish',
-);
 assert.doesNotMatch(coreAdapters, /\b(?:streamed_text|stream_failed)\b|starts_with\(/,
   'Host insertion adapter must not retain final reconciliation policy');
-assert.match(coreAdapters, /fn preload_lease\([^]*?preload_for_lease\(\s*lease\.target,\s*model_dir,\s*provider_type,\s*Some\(lease\.generation\),?\s*\)/,
-  'native preload must receive the Core activation generation');
-console.log("retained shared host/history/style/activation contracts passed");
-const providersCommand = await read("src-tauri/src/commands/providers.rs");
 assert.match(
-  providersCommand,
-  /\.provider\s*\n?\s*\.validate\(/,
-  'Tauri provider validation command must delegate to Core ProviderApi',
+  coreAdapters,
+  /impl openless_core::ModelRuntimeAdapter for TauriLocalAsrRuntimeAdapter[^]*?fn prepare\([^]*?ensure_loaded_with_progress[^]*?fn preload\([^]*?status_snapshot[^]*?runtime_ready/,
+  'native fixed-Qwen adapter must prepare and preload through the shared runtime',
 );
-assert.match(
-  providersCommand,
-  /\.provider\s*\n?\s*\.list_models\(/,
-  'Tauri provider model-list command must delegate to Core ProviderApi',
-);
-for (const forbiddenProviderBusinessToken of [
-  /CredentialsVault/,
-  /ProviderScope/,
-  /ProviderConfig/,
-  /reqwest::/,
-  /validate_provider_service/,
-  /list_provider_models_service/,
-  /tokio::time::timeout/,
-  /build_active_omni_provider/,
-]) {
-  assert.doesNotMatch(
-    providersCommand,
-    forbiddenProviderBusinessToken,
-    'Tauri provider commands must not recreate Core credential/protocol business logic',
-  );
-}
-const providerSection = await read("src/pages/settings/ProvidersSection.tsx");
-const channelList = await read("src/pages/settings/ChannelList.tsx");
-const providerLabels = await read("src/pages/settings/shared.tsx");
-const providerUiSources = `${providerSection}\n${channelList}\n${providerLabels}`;
-assert.match(
-  providerUiSources,
-  /listProviderDescriptors/,
-  'React provider UI must consume Core ProviderDescriptor',
-);
-assert.doesNotMatch(
-  providerUiSources,
-  /\b(?:ASR_PRESETS|LLM_PRESETS|OMNI_PRESETS|LOCAL_ASR_PROVIDER_IDS)\b/,
-  'React must retain labels only, not provider defaults or capability tables',
-);
-assert.doesNotMatch(
-  providerUiSources,
-  /https:\/\/(?:api\.openai\.com|api\.deepseek\.com|dashscope\.aliyuncs\.com|ark\.cn-beijing\.volces\.com)/,
-  'React must not hard-code provider endpoints owned by Core descriptors',
-);
+console.log("retained shared host/history/activation contracts passed");
 console.log('shared-backend-wire-contract.test.mjs passed');

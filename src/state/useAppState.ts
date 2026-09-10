@@ -5,9 +5,7 @@ import { useState } from 'react';
 export type AppTab =
   | 'overview'
   | 'history'
-  | 'vocab'
-  | 'style'
-  | 'localAsr';
+  | 'vocab';
 
 export interface AppState {
   currentTab: AppTab;

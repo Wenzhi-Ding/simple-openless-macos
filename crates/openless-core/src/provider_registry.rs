@@ -16,7 +16,6 @@ use crate::ports::{
     DictationEngine, EngineFailure, EngineProgressSink, EngineResult, RecordingProgressSink,
     TextPolisher, TextStreamSink, TranscriptionEngine, TranscriptionSession, VoiceCapture,
 };
-use crate::shared_types::PipelineMode;
 use crate::types::SessionId;
 
 #[derive(Default)]
@@ -132,9 +131,7 @@ impl TextPolisher for TextPolisherRouter {
         let provider = match self.resolve(&context.llm.provider_type) {
             Ok(provider) => provider,
             Err(error) => {
-                return Box::pin(async move {
-                    crate::ports::PolishAttempt::plain(Err(error))
-                })
+                return Box::pin(async move { crate::ports::PolishAttempt::plain(Err(error)) })
             }
         };
         {
@@ -200,11 +197,9 @@ impl Drop for ActivePolisherRegistration {
     }
 }
 
-/// Routes traditional sessions to the shared ASR + polish pipeline and
-/// multimodal sessions to the selected Omni implementation.
+/// Pins the fixed ASR + polish pipeline for each active session.
 pub struct DictationEngineRouter {
     traditional: Arc<dyn DictationEngine>,
-    omni: RwLock<HashMap<String, Arc<dyn DictationEngine>>>,
     active: Arc<RwLock<HashMap<SessionId, Arc<RoutedDictationSession>>>>,
 }
 
@@ -218,45 +213,12 @@ impl DictationEngineRouter {
     pub fn new(traditional: Arc<dyn DictationEngine>) -> Self {
         Self {
             traditional,
-            omni: RwLock::new(HashMap::new()),
             active: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
-    pub fn register_omni(
-        &self,
-        provider_id: impl Into<String>,
-        provider: Arc<dyn DictationEngine>,
-    ) -> Result<Option<Arc<dyn DictationEngine>>, BackendError> {
-        let provider_id = normalize_provider_id(provider_id.into())?;
-        Ok(self
-            .omni
-            .write()
-            .expect("Omni provider registry lock poisoned")
-            .insert(provider_id, provider))
-    }
-
-    pub fn remove_omni(&self, provider_id: &str) -> Option<Arc<dyn DictationEngine>> {
-        self.omni
-            .write()
-            .expect("Omni provider registry lock poisoned")
-            .remove(provider_id.trim())
-    }
-
-    fn resolve(
-        &self,
-        context: &DictationContext,
-    ) -> Result<Arc<dyn DictationEngine>, BackendError> {
-        match context.pipeline_mode {
-            PipelineMode::Traditional => Ok(Arc::clone(&self.traditional)),
-            PipelineMode::Multimodal => self
-                .omni
-                .read()
-                .expect("Omni provider registry lock poisoned")
-                .get(context.omni.provider_type.trim())
-                .cloned()
-                .ok_or_else(|| missing_provider("Omni", &context.omni.provider_type)),
-        }
+    fn resolve(&self) -> Arc<dyn DictationEngine> {
+        Arc::clone(&self.traditional)
     }
 }
 
@@ -267,10 +229,7 @@ impl DictationEngine for DictationEngineRouter {
         context: Arc<DictationContext>,
         progress: Arc<dyn EngineProgressSink>,
     ) -> BoxFuture<'static, Result<(), BackendError>> {
-        let engine = match self.resolve(&context) {
-            Ok(engine) => engine,
-            Err(error) => return Box::pin(async move { Err(error) }),
-        };
+        let engine = self.resolve();
         let routed = Arc::new(RoutedDictationSession {
             engine: Arc::clone(&engine),
             started: AtomicBool::new(false),
@@ -322,10 +281,7 @@ impl DictationEngine for DictationEngineRouter {
         context: Arc<DictationContext>,
         partials: Arc<dyn TextStreamSink>,
     ) -> BoxFuture<'static, Result<Arc<dyn TranscriptionSession>, BackendError>> {
-        let engine = match self.resolve(&context) {
-            Ok(engine) => engine,
-            Err(error) => return Box::pin(async move { Err(error) }),
-        };
+        let engine = self.resolve();
         engine.start_transcription(session_id, context, partials)
     }
 
@@ -337,10 +293,7 @@ impl DictationEngine for DictationEngineRouter {
         progress: Arc<dyn RecordingProgressSink>,
         cancel: crate::CancellationToken,
     ) -> BoxFuture<'static, Result<VoiceCapture, BackendError>> {
-        let engine = match self.resolve(&context) {
-            Ok(engine) => engine,
-            Err(error) => return Box::pin(async move { Err(error) }),
-        };
+        let engine = self.resolve();
         engine.start_voice_capture(session_id, context, partials, progress, cancel)
     }
 
@@ -506,9 +459,7 @@ fn missing_provider(kind: &str, provider_id: &str) -> BackendError {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::{AtomicUsize, Ordering};
-
-    use crate::ports::{EngineProgress, TextStreamChunk, TranscriptOutput};
+    use crate::ports::{TextStreamChunk, TranscriptOutput};
 
     use super::*;
 
@@ -516,18 +467,6 @@ mod tests {
 
     impl TextStreamSink for NoopTextSink {
         fn publish(&self, _chunk: TextStreamChunk) -> Result<(), BackendError> {
-            Ok(())
-        }
-    }
-
-    struct NoopProgress;
-
-    impl EngineProgressSink for NoopProgress {
-        fn publish(
-            &self,
-            _session_id: SessionId,
-            _progress: EngineProgress,
-        ) -> Result<(), BackendError> {
             Ok(())
         }
     }
@@ -582,75 +521,10 @@ mod tests {
         ) -> BoxFuture<'static, crate::ports::PolishAttempt> {
             let tag = self.0;
             Box::pin(async move {
-                crate::ports::PolishAttempt::plain(Ok(crate::ports::PolishOutput::text(
-                    format!("{tag}:{raw_text}"),
-                )))
+                crate::ports::PolishAttempt::plain(Ok(crate::ports::PolishOutput::text(format!(
+                    "{tag}:{raw_text}"
+                ))))
             })
-        }
-
-        fn cancel(&self, _session_id: SessionId) -> BoxFuture<'static, Result<(), BackendError>> {
-            Box::pin(async { Ok(()) })
-        }
-    }
-
-    struct TaggedDictationEngine {
-        tag: &'static str,
-        starts: AtomicUsize,
-        updates: AtomicUsize,
-    }
-
-    impl TaggedDictationEngine {
-        fn new(tag: &'static str) -> Self {
-            Self {
-                tag,
-                starts: AtomicUsize::new(0),
-                updates: AtomicUsize::new(0),
-            }
-        }
-    }
-
-    impl DictationEngine for TaggedDictationEngine {
-        fn start(
-            &self,
-            _session_id: SessionId,
-            _context: Arc<DictationContext>,
-            _progress: Arc<dyn EngineProgressSink>,
-        ) -> BoxFuture<'static, Result<(), BackendError>> {
-            self.starts.fetch_add(1, Ordering::Relaxed);
-            Box::pin(async { Ok(()) })
-        }
-
-        fn finish(
-            &self,
-            _session_id: SessionId,
-            _progress: Arc<dyn EngineProgressSink>,
-        ) -> BoxFuture<'static, Result<EngineResult, EngineFailure>> {
-            let tag = self.tag.to_string();
-            Box::pin(async move {
-                Ok(EngineResult {
-                    raw_text: tag.clone(),
-                    asr_transcript: None,
-                    polished_text: tag,
-                    polish_source: None,
-                    duration_ms: 0,
-                    polish_failed: false,
-                    asr_ms: None,
-                    polish_ms: None,
-                    has_audio_recording: None,
-                    asr_call_label: None,
-                    llm_call_label: None,
-                    polish_diagnostics: None,
-                })
-            })
-        }
-
-        fn update_context(
-            &self,
-            _session_id: SessionId,
-            _context: Arc<DictationContext>,
-        ) -> BoxFuture<'static, Result<(), BackendError>> {
-            self.updates.fetch_add(1, Ordering::Relaxed);
-            Box::pin(async { Ok(()) })
         }
 
         fn cancel(&self, _session_id: SessionId) -> BoxFuture<'static, Result<(), BackendError>> {
@@ -659,20 +533,12 @@ mod tests {
     }
 
     #[allow(clippy::field_reassign_with_default)]
-    fn context_with_providers(
-        asr: &str,
-        llm: &str,
-        omni: &str,
-        pipeline_mode: PipelineMode,
-    ) -> DictationContext {
+    fn context_with_providers(asr: &str, llm: &str) -> DictationContext {
         let mut context = DictationContext::default();
         context.asr.provider_id = asr.to_string();
         context.asr.provider_type = asr.to_string();
         context.llm.provider_id = llm.to_string();
         context.llm.provider_type = llm.to_string();
-        context.omni.provider_id = omni.to_string();
-        context.omni.provider_type = omni.to_string();
-        context.pipeline_mode = pipeline_mode;
         context
     }
 
@@ -686,12 +552,7 @@ mod tests {
         polisher
             .register("llm-a", Arc::new(TaggedPolisher("llm-a")))
             .unwrap();
-        let context = Arc::new(context_with_providers(
-            "asr-a",
-            "llm-a",
-            "omni",
-            PipelineMode::Traditional,
-        ));
+        let context = Arc::new(context_with_providers("asr-a", "llm-a"));
         let session_id = SessionId::new();
 
         let session = transcription
@@ -728,12 +589,7 @@ mod tests {
         polisher
             .register("llm-protocol", Arc::new(TaggedPolisher("llm-protocol")))
             .unwrap();
-        let mut context = context_with_providers(
-            "asr-channel",
-            "llm-channel",
-            "omni-channel",
-            PipelineMode::Traditional,
-        );
+        let mut context = context_with_providers("asr-channel", "llm-channel");
         context.asr.provider_type = "asr-protocol".to_string();
         context.llm.provider_type = "llm-protocol".to_string();
         let context = Arc::new(context);
@@ -763,91 +619,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn engine_router_pins_the_selected_omni_adapter_for_the_session() {
-        let traditional = Arc::new(TaggedDictationEngine::new("traditional"));
-        let router = DictationEngineRouter::new(traditional);
-        let original = Arc::new(TaggedDictationEngine::new("omni-original"));
-        router.register_omni("omni", original.clone()).unwrap();
-        let context = context_with_providers("asr", "llm", "omni", PipelineMode::Multimodal);
-        let session_id = SessionId::new();
-        router
-            .start(session_id, Arc::new(context), Arc::new(NoopProgress))
-            .await
-            .unwrap();
-        let replacement = Arc::new(TaggedDictationEngine::new("omni-replacement"));
-        router.register_omni("omni", replacement.clone()).unwrap();
-        let mut updated = context_with_providers(
-            "changed-asr",
-            "changed-llm",
-            "changed-omni",
-            PipelineMode::Traditional,
-        );
-        updated.polish.translation_active = true;
-        router
-            .update_context(session_id, Arc::new(updated))
-            .await
-            .unwrap();
-
-        let result = router
-            .finish(session_id, Arc::new(NoopProgress))
-            .await
-            .unwrap();
-        assert_eq!(result.polished_text, "omni-original");
-        assert_eq!(original.starts.load(Ordering::Relaxed), 1);
-        assert_eq!(original.updates.load(Ordering::Relaxed), 1);
-        assert_eq!(replacement.updates.load(Ordering::Relaxed), 0);
-    }
-
-    #[tokio::test]
-    async fn duplicate_start_keeps_the_original_session_route() {
-        let traditional = Arc::new(TaggedDictationEngine::new("traditional"));
-        let router = DictationEngineRouter::new(traditional.clone());
-        let replacement = Arc::new(TaggedDictationEngine::new("replacement"));
-        router.register_omni("omni", replacement.clone()).unwrap();
-        let session_id = SessionId::new();
-
-        router
-            .start(
-                session_id,
-                Arc::new(context_with_providers(
-                    "asr",
-                    "llm",
-                    "omni",
-                    PipelineMode::Traditional,
-                )),
-                Arc::new(NoopProgress),
-            )
-            .await
-            .unwrap();
-
-        let error = router
-            .start(
-                session_id,
-                Arc::new(context_with_providers(
-                    "asr",
-                    "llm",
-                    "omni",
-                    PipelineMode::Multimodal,
-                )),
-                Arc::new(NoopProgress),
-            )
-            .await
-            .expect_err("duplicate session must be rejected");
-        assert_eq!(error.code, BackendErrorCode::Busy);
-
-        let result = router
-            .finish(session_id, Arc::new(NoopProgress))
-            .await
-            .expect("the original session route must remain active");
-        assert_eq!(result.polished_text, "traditional");
-        assert_eq!(traditional.starts.load(Ordering::Relaxed), 1);
-        assert_eq!(replacement.starts.load(Ordering::Relaxed), 0);
-    }
-
-    #[tokio::test]
     async fn missing_selected_provider_is_an_explicit_unsupported_error() {
         let router = TranscriptionRouter::default();
-        let context = context_with_providers("missing", "llm", "omni", PipelineMode::Traditional);
+        let context = context_with_providers("missing", "llm");
         let error = router
             .start(SessionId::new(), Arc::new(context), Arc::new(NoopTextSink))
             .await

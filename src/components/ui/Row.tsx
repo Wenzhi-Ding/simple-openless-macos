@@ -1,7 +1,7 @@
 // Row — two-column row used in the Settings modal sub-sections.
 
 import type { ReactNode } from 'react';
-import { useLayoutStack, useConservativeLayout } from '../../lib/useMobileLayout';
+import { useLayoutStack, useConservativeLayout } from '../../lib/useResponsiveLayout';
 
 interface RowProps {
   label: string;

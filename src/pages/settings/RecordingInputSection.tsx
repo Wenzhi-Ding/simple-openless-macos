@@ -7,12 +7,7 @@ import { useTranslation } from 'react-i18next';
 import { ShortcutRecorder } from '../../components/ShortcutRecorder';
 import { playRecordStartCue } from '../../lib/audioCue';
 import { defaultDictationHotkey } from '../../lib/hotkey';
-import { emitSaved } from '../../lib/savedEvent';
 import { isHotkeyModeMigrationNoticeActive } from '../../lib/hotkeyMigration';
-import {
-  showWindowsOpenlessKeyboardListToggle,
-  showWindowsSendInputNewlineMode,
-} from '../../lib/windowsKeyboardListToggle';
 import {
   isTauri,
   listMicrophoneDevices,
@@ -23,11 +18,7 @@ import type {
   CapsuleStyle,
   HotkeyMode,
   MicrophoneDevice,
-  PasteShortcut,
   PlatformCapabilities,
-  UserPreferences,
-  WindowsInsertionMode,
-  WindowsSendInputNewlineMode,
   MacosNewlineMode,
 } from '../../lib/types';
 import { useHotkeySettings } from '../../state/HotkeySettingsContext';
@@ -35,7 +26,6 @@ import { SelectLite } from '../../components/ui/SelectLite';
 import { Card, Collapsible } from '../_atoms';
 import { SectionTitle, SettingRow, Toggle, inputStyle, segmentedTrackStyle } from './shared';
 import { MicrophoneSelect } from './MicrophoneSelect';
-import { detectOS } from '../../components/WindowChrome';
 
 /** 「静音后自动停止」的可选静音时长（秒），见 issue #860。 */
 const silenceAutoStopOptions = [1, 1.5, 2, 3, 4, 5];
@@ -57,7 +47,6 @@ async function autostartDisable(): Promise<void> {
 
 export function RecordingInputSection() {
   const { t } = useTranslation();
-  const os = detectOS();
   const { prefs, capability, updatePrefs: savePrefs, refresh } = useHotkeySettings();
   const [platformCaps, setPlatformCaps] = useState<PlatformCapabilities | null>(null);
   const [microphoneDevices, setMicrophoneDevices] = useState<MicrophoneDevice[]>([]);
@@ -67,18 +56,6 @@ export function RecordingInputSection() {
   useEffect(() => {
     void getPlatformCapabilities().then(setPlatformCaps);
   }, []);
-
-  // 兼容旧 Windows 配置：Shift+Insert 仍保留在跨平台类型/后端中供 Linux 使用，
-  // 但 Windows 已不再提供该选项；进入设置时迁移为 Ctrl+V，避免下拉框无匹配值。
-  useEffect(() => {
-    if (os !== 'win' || prefs?.pasteShortcut !== 'shiftInsert') return;
-    void savePrefs(current => {
-      if (current.pasteShortcut !== 'shiftInsert') return current;
-      return { ...current, pasteShortcut: 'ctrlV' };
-    }).catch(error => {
-      console.warn('[settings] migrate Windows paste shortcut failed', error);
-    });
-  }, [os, prefs?.pasteShortcut, savePrefs]);
 
   const loadMicrophoneDevices = useCallback(async (
     signal?: { cancelled: boolean },
@@ -133,16 +110,6 @@ export function RecordingInputSection() {
     };
   }, [loadMicrophoneDevices]);
 
-  const saveKeyboardListAffectingPrefs = useCallback(async (nextPrefs: UserPreferences) => {
-    try {
-      await savePrefs(nextPrefs);
-    } catch (error) {
-      console.error('[settings] keyboard list visibility pref save failed', error);
-      emitSaved('failed', t('settings.recording.windowsShowOpenlessInKeyboardListError'));
-      await refresh();
-    }
-  }, [savePrefs, refresh, t]);
-
   if (!prefs || !capability) {
     return (
       <Card>
@@ -151,13 +118,9 @@ export function RecordingInputSection() {
     );
   }
 
-  const isAndroid = platformCaps?.platform === 'android';
   const showDesktopHotkey = platformCaps?.supportsDesktopHotkey === true;
-  const showDesktopInsert = showDesktopHotkey && os !== 'linux';
+  const showDesktopInsert = showDesktopHotkey;
   const showDesktopStartup = showDesktopHotkey;
-  const effectivePasteShortcut = os === 'win' && prefs.pasteShortcut === 'shiftInsert'
-    ? 'ctrlV'
-    : prefs.pasteShortcut;
 
   const onModeChange = (mode: HotkeyMode) =>
     savePrefs({ ...prefs, hotkey: { ...prefs.hotkey, mode } });
@@ -171,23 +134,8 @@ export function RecordingInputSection() {
     savePrefs({ ...prefs, microphoneDeviceName });
   const onRestoreClipboardChange = (restoreClipboardAfterPaste: boolean) =>
     savePrefs({ ...prefs, restoreClipboardAfterPaste });
-  const onPasteShortcutChange = (pasteShortcut: PasteShortcut) =>
-    savePrefs({ ...prefs, pasteShortcut });
-  const onAllowNonTsfFallbackChange = (allowNonTsfInsertionFallback: boolean) =>
-    savePrefs({ ...prefs, allowNonTsfInsertionFallback });
-  const onWindowsInsertionModeChange = (windowsInsertionMode: WindowsInsertionMode) =>
-    void saveKeyboardListAffectingPrefs({
-      ...prefs,
-      windowsInsertionMode,
-      windowsSendInputInsertionOnly: windowsInsertionMode === 'sendInput',
-    });
-  const onWindowsSendInputNewlineModeChange = (windowsSendInputNewlineMode: WindowsSendInputNewlineMode) =>
-    savePrefs({ ...prefs, windowsSendInputNewlineMode });
   const onMacosNewlineModeChange = (macosNewlineMode: MacosNewlineMode) =>
     savePrefs({ ...prefs, macosNewlineMode });
-  const onWindowsShowOpenlessInKeyboardListChange = (
-    windowsShowOpenlessInKeyboardList: boolean,
-  ) => void saveKeyboardListAffectingPrefs({ ...prefs, windowsShowOpenlessInKeyboardList });
   const onStartMinimizedChange = (startMinimized: boolean) =>
     savePrefs({ ...prefs, startMinimized });
 
@@ -401,12 +349,9 @@ export function RecordingInputSection() {
             )}
           </div>
         </SettingRow>
-        {os !== 'linux' && !isAndroid && (
         <SettingRow label={t('settings.recording.capsuleLabel')} desc={t('settings.recording.capsuleDesc')}>
           <Toggle on={prefs.showCapsule} onToggle={onShowCapsuleChange} />
         </SettingRow>
-        )}
-        {os !== 'linux' && !isAndroid && (
         <SettingRow label={t('settings.recording.capsuleStyleLabel')}>
           <SelectLite
             value={prefs.capsuleStyle ?? 'siri'}
@@ -422,11 +367,9 @@ export function RecordingInputSection() {
             style={{ maxWidth: 220, minWidth: 200 }}
           />
         </SettingRow>
-        )}
         <SettingRow label={t('settings.recording.muteDuringRecordingLabel')} desc={t('settings.recording.muteDuringRecordingDesc')}>
           <Toggle on={prefs.muteDuringRecording} onToggle={onMuteDuringRecordingChange} />
         </SettingRow>
-        {os !== 'linux' && (
           <SettingRow
             label={t('settings.recording.audioCueLabel')}
             desc={t('settings.recording.audioCueDesc')}
@@ -453,80 +396,14 @@ export function RecordingInputSection() {
               </button>
             </div>
           </SettingRow>
-        )}
-        {os === 'linux' && (
-        <SettingRow label={t('settings.advanced.streamingInsertLabel')}>
-          <Toggle
-            on={!!prefs.streamingInsert}
-            onToggle={(next) => void savePrefs({ ...prefs, streamingInsert: next })}
-          />
-        </SettingRow>
-        )}
       </Card>
 
-      {/* ─── 插入与剪贴板（折叠，仅 macOS / Windows） ──────────────── */}
+      {/* ─── 插入与剪贴板（macOS） ─────────────────────────────────── */}
       {showDesktopInsert && (
       <Collapsible title={t('settings.recording.insertGroupTitle')}>
         <SettingRow label={t('settings.recording.restoreClipboardLabel')} desc={t('settings.recording.restoreClipboardDesc')}>
           <Toggle on={prefs.restoreClipboardAfterPaste} onToggle={onRestoreClipboardChange} />
         </SettingRow>
-        {capability.adapter !== 'macEventTap' && (
-          <SettingRow label={t('settings.recording.pasteShortcutLabel')} desc={t('settings.recording.pasteShortcutDesc')}>
-            <SelectLite
-              value={effectivePasteShortcut}
-              onChange={next => onPasteShortcutChange(next as PasteShortcut)}
-              options={[
-                { value: 'ctrlV', label: t('settings.recording.pasteShortcutCtrlV') },
-                { value: 'ctrlShiftV', label: t('settings.recording.pasteShortcutCtrlShiftV') },
-                // 这个「粘贴与剪贴板」组只在 Windows 出现（showDesktopInsert 已排除 Linux，mac 走
-                // macEventTap 不显示本行）。Shift+Insert 是 xterm/urxvt 等 X11 终端的粘贴组合，
-                // 放在 Windows 上纯属误导，故不再作为选项（issue #786）。
-              ]}
-              ariaLabel={t('settings.recording.pasteShortcutLabel')}
-              style={{ ...inputStyle, maxWidth: 220 }}
-            />
-          </SettingRow>
-        )}
-        {capability.adapter === 'windowsLowLevel' && (
-          <SettingRow
-            label={t('settings.recording.windowsInsertionModeLabel')}
-            desc={t('settings.recording.windowsInsertionModeDesc')}
-          >
-            <SelectLite
-              value={prefs.windowsInsertionMode ?? (prefs.windowsSendInputInsertionOnly ? 'sendInput' : 'tsf')}
-              onChange={next => onWindowsInsertionModeChange(next as WindowsInsertionMode)}
-              options={[
-                { value: 'tsf', label: t('settings.recording.windowsInsertionModeTsf') },
-                { value: 'sendInput', label: t('settings.recording.windowsInsertionModeSendInput') },
-                { value: 'paste', label: t('settings.recording.windowsInsertionModePaste') },
-              ]}
-              ariaLabel={t('settings.recording.windowsInsertionModeLabel')}
-              style={{ ...inputStyle, maxWidth: 260 }}
-            />
-          </SettingRow>
-        )}
-        {capability.adapter === 'windowsLowLevel'
-          && showWindowsSendInputNewlineMode(
-            prefs.windowsInsertionMode,
-            prefs.windowsSendInputInsertionOnly,
-          ) && (
-          <SettingRow
-            label={t('settings.recording.windowsSendInputNewlineModeLabel')}
-            desc={t('settings.recording.windowsSendInputNewlineModeDesc')}
-          >
-            <SelectLite
-              value={prefs.windowsSendInputNewlineMode ?? 'enter'}
-              onChange={next => onWindowsSendInputNewlineModeChange(next as WindowsSendInputNewlineMode)}
-              options={[
-                { value: 'enter', label: t('settings.recording.windowsSendInputNewlineModeEnter') },
-                { value: 'shiftEnter', label: t('settings.recording.windowsSendInputNewlineModeShiftEnter') },
-                { value: 'crlf', label: t('settings.recording.windowsSendInputNewlineModeCrLf') },
-              ]}
-              ariaLabel={t('settings.recording.windowsSendInputNewlineModeLabel')}
-              style={{ ...inputStyle, maxWidth: 260 }}
-            />
-          </SettingRow>
-        )}
         {capability.adapter === 'macEventTap' && prefs.streamingInsert && (
           <SettingRow
             label={t('settings.recording.macosNewlineModeLabel')}
@@ -543,29 +420,6 @@ export function RecordingInputSection() {
               ]}
               ariaLabel={t('settings.recording.macosNewlineModeLabel')}
               style={{ ...inputStyle, maxWidth: 260 }}
-            />
-          </SettingRow>
-        )}
-        {capability.adapter === 'windowsLowLevel'
-          && showWindowsOpenlessKeyboardListToggle(
-            prefs.windowsInsertionMode,
-            prefs.windowsSendInputInsertionOnly,
-          ) && (
-          <SettingRow
-            label={t('settings.recording.windowsShowOpenlessInKeyboardListLabel')}
-            desc={t('settings.recording.windowsShowOpenlessInKeyboardListDesc')}
-          >
-            <Toggle
-              on={prefs.windowsShowOpenlessInKeyboardList}
-              onToggle={(next) => void onWindowsShowOpenlessInKeyboardListChange(next)}
-            />
-          </SettingRow>
-        )}
-        {capability.adapter === 'windowsLowLevel' && (
-          <SettingRow label={t('settings.recording.allowNonTsfFallbackLabel')}>
-            <Toggle
-              on={prefs.allowNonTsfInsertionFallback}
-              onToggle={onAllowNonTsfFallbackChange}
             />
           </SettingRow>
         )}
@@ -599,8 +453,7 @@ export function RecordingInputSection() {
   );
 }
 
-// 不存进 prefs：autostart 状态由 OS 持有（mac LaunchAgent plist / linux .desktop /
-// windows HKCU\Run），prefs 缓存反而会与 OS 真相不一致。issue #194。
+// 不存进 prefs：autostart 状态由 macOS LaunchAgent 持有，prefs 缓存反而会与 OS 真相不一致。
 // 切换写入期间禁用开关（aria-busy）防连点乱序；写完回读系统实际状态作为
 // 展示值 —— 展示永远跟随 OS 真相，而不是乐观值。
 function AutostartRow() {

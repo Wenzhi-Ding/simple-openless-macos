@@ -2,7 +2,6 @@
 // Applies via html[data-ol-theme] + CSS variables — no React re-render for color changes.
 
 import { getSettings, isTauri } from './ipc';
-import { syncWindowsCaptionTheme } from './platform';
 import type { ThemeMode } from './types';
 
 export type ThemePreference = ThemeMode;
@@ -75,7 +74,6 @@ export function applyThemeMode(resolved: ResolvedTheme): void {
     delete root.dataset.olTheme;
   }
   root.style.colorScheme = resolved;
-  void syncWindowsCaptionTheme(resolved === 'dark');
 }
 
 export function applyThemeFromPreference(pref: ThemePreference): void {

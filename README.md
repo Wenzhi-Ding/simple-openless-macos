@@ -1,16 +1,19 @@
 # OpenLess — macOS 纯本地语音输入
 
-基于 [Open-Less/openless](https://github.com/Open-Less/openless) 精简的个人本地实现，使用 Tauri 2、Rust、React。唯一产品源码直接位于本仓库根目录；上游参考资料保留在 `upstream/`。
+基于 [Open-Less/openless](https://github.com/Open-Less/openless) 精简的 macOS arm64 本地实现，使用 Tauri 2、Rust、React；不支持 Android/iOS。唯一产品源码直接位于本仓库根目录；上游参考资料保留在 `upstream/`。
 
 ## 使用与功能
 
 启动 `/Applications/OpenLess.app`，默认按一下右 Command 开始录音，再按一下结束并上屏。
 
-- 识别固定为 **Qwen3-ASR 1.7B（MLX）**，润色固定为 **Gemma 4 E2B（llama.cpp，Q4_0）**；无模型选择、自动回退或下载入口。
+- 识别固定为 **Qwen3-ASR 1.7B（MLX）**，润色固定为 **Gemma 4 E4B（llama.cpp，Q4_0）**；无模型选择、自动回退或下载入口。
 - 启动时独立预载两个模型；概览卡显示后端真实加载状态，预载与实际听写/润色共享实例。
-- 保留热词、历史与录音回放、上屏、选区润色，以及本地光标和屏幕 OCR 上下文。
+- 保留手动词表、历史与录音回放、上屏，以及本地光标和屏幕 OCR 上下文；不提供选中文字后的独立润色入口。
 - 产品运行不使用云识别、云润色、更新服务或远程输入，不恢复已删除的联网功能。
-- 已知限制：Gemma 对纯英文输入可能产生中文输出；模型质量不能仅凭“已加载”状态判断。
+- 只有代码维护的固定轻度润色模板（`crates/openless-core/src/prompts.rs`）：保留原意、语气、语言及数字写法，仅去无意义口癖重复、补标点与纠正明显错字；不翻译、不扩写、不回答正文。听写和历史重新润色共用此模板；风格系统（风格页面、模式选择、风格库与风格快捷键）与翻译功能（目标语言、Shift 翻译修饰键、翻译快捷键）均已删除，旧偏好/历史文件中的风格与翻译字段读取时静默忽略，并有回归测试保证旧文件可正常加载。
+- 词表中的词只由用户手动添加、启用、禁用或删除；应用不会从手改、历史、光标或屏幕内容中自动发现新词。已有词条会继续统计使用次数，并同时用于识别后的同音纠正和本地润色参考。
+- 手动词表、光标、屏幕与历史仅作不可信专名纠错参考，保留安全信封、长度限制和实际调用诊断。
+- 已知限制：真实 E4B 固定模板文本测试中，阿拉伯数字、英文、中英混合、金额/版本样例通过，但“明天十点”仍生成“明天10点”；模板规则不是模型保真保证，不据单个英文样例声称彻底解决语言漂移。
 
 ## 权限与隐私
 
@@ -32,9 +35,11 @@ macOS 权限面板统一展示麦克风、辅助功能、屏幕录制的实际�
 | `crates/openless-core/` | 听写、上下文、历史、诊断与回归测试 |
 | `src-tauri/src/` | macOS 宿主、ASR、LLM、OCR 与权限 |
 | `models/qwen3-asr-1.7b/` | 当前识别模型的工作区来源 |
-| `models/llm/gemma-4-E2B-it-Q4_0.gguf` | 当前润色模型的工作区来源及测试资源 |
+| `models/llm/gemma-4-E4B-it-Q4_0.gguf` | 当前润色模型的工作区来源及测试资源 |
 | `src-tauri/resources/qwen3-mlx/` | 打包用独立 Python runtime 与 worker |
 | `scripts/` | 构建及测试入口 |
+
+E4B 权重来源为 [ggml-org/gemma-4-E4B-it-GGUF](https://huggingface.co/ggml-org/gemma-4-E4B-it-GGUF/tree/b8093469224f83f5c38f691eb906c380e9e63114)（固定 revision `b8093469224f83f5c38f691eb906c380e9e63114`），文件 `gemma-4-E4B-it-Q4_0.gguf`，4,590,807,392 bytes，SHA-256 `a555b900214b477d8880e7832e0b8925e139b0159640036b09fe472b6f2097f2`。仅使用该主 GGUF 的文本推理，不使用 mmproj、音频/视觉编码器或 MTP；架构仍是 Qwen3 ASR → Gemma 文本润色，屏幕图像由本地 Vision OCR 转为文字。保留旧 E2B 文件但不自动回退，已有 E2B 历史诊断按原模型名继续可读。
 
 运行时模型、热词与历史位于 `~/Library/Application Support/OpenLess/`；工作区模型不等于用户数据目录，Tauri 当前仅将 Qwen3 runtime/worker 作为资源打包。当前两模型及内嵌 runtime 已随源码提升至根目录；不要另行移动、转换或删除。当前实现不依赖根目录 Python 虚拟环境。
 

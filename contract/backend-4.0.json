@@ -1,0 +1,217 @@
+{
+  "contractVersion": "4.0.0",
+  "startupSnapshot": {
+    "fields": ["contractVersion", "backend"],
+    "backendFields": [
+      "running",
+      "dictation",
+      "vocabularyRevision",
+      "historyRevision",
+      "preferencesRevision"
+    ]
+  },
+  "backendEvent": {
+    "fields": ["sequence", "sessionId", "kind"],
+    "kinds": [
+      "backend_started",
+      "backend_stopping",
+      "dictation_state_changed",
+      "transcript_delta",
+      "polish_delta",
+      "dictation_completed",
+      "recording_control_requested",
+      "insert_fallback",
+      "preferences_changed",
+      "history_changed",
+      "vocabulary_changed",
+      "permission_changed",
+      "hotkey_status_changed",
+      "notification",
+      "local_asr_prepare_progress",
+      "local_asr_engine_changed",
+      "microphone_devices_changed"
+    ],
+    "samples": {
+      "backend_started": {
+        "sequence": 7,
+        "sessionId": "00000000-0000-0000-0000-000000000000",
+        "kind": { "type": "backend_started" }
+      },
+      "backend_stopping": {
+        "sequence": 7,
+        "sessionId": "00000000-0000-0000-0000-000000000000",
+        "kind": { "type": "backend_stopping" }
+      },
+      "dictation_state_changed": {
+        "sequence": 7,
+        "sessionId": "00000000-0000-0000-0000-000000000000",
+        "kind": {
+          "type": "dictation_state_changed",
+          "payload": {
+            "phase": "recording",
+            "sessionId": "00000000-0000-0000-0000-000000000000",
+            "elapsedMs": 123,
+            "level": 0.5,
+            "message": "recording",
+            "recordingReady": true
+          }
+        }
+      },
+      "transcript_delta": {
+        "sequence": 7,
+        "sessionId": "00000000-0000-0000-0000-000000000000",
+        "kind": {
+          "type": "transcript_delta",
+          "payload": { "text": "partial", "offset": 2, "isFinal": false }
+        }
+      },
+      "polish_delta": {
+        "sequence": 7,
+        "sessionId": "00000000-0000-0000-0000-000000000000",
+        "kind": {
+          "type": "polish_delta",
+          "payload": { "text": "polished", "offset": 3, "isFinal": true }
+        }
+      },
+      "dictation_completed": {
+        "sequence": 7,
+        "sessionId": "00000000-0000-0000-0000-000000000000",
+        "kind": {
+          "type": "dictation_completed",
+          "payload": {
+            "sessionId": "00000000-0000-0000-0000-000000000000",
+            "rawText": "raw",
+            "polishedText": "polished",
+            "polishSource": "local-llama",
+            "durationMs": 456,
+            "inserted": "copiedFallback"
+          }
+        }
+      },
+      "recording_control_requested": {
+        "sequence": 7,
+        "sessionId": "00000000-0000-0000-0000-000000000000",
+        "kind": {
+          "type": "recording_control_requested",
+          "payload": {
+            "sessionId": "00000000-0000-0000-0000-000000000000",
+            "action": "cancel"
+          }
+        }
+      },
+      "insert_fallback": {
+        "sequence": 7,
+        "sessionId": "00000000-0000-0000-0000-000000000000",
+        "kind": {
+          "type": "insert_fallback",
+          "payload": { "reason": "insert_failed", "copiedText": "copied" }
+        }
+      },
+      "preferences_changed": {
+        "sequence": 7,
+        "sessionId": "00000000-0000-0000-0000-000000000000",
+        "kind": { "type": "preferences_changed", "payload": { "revision": 11 } }
+      },
+      "history_changed": {
+        "sequence": 7,
+        "sessionId": "00000000-0000-0000-0000-000000000000",
+        "kind": { "type": "history_changed", "payload": { "revision": 12 } }
+      },
+      "vocabulary_changed": {
+        "sequence": 7,
+        "sessionId": "00000000-0000-0000-0000-000000000000",
+        "kind": { "type": "vocabulary_changed", "payload": { "revision": 13 } }
+      },
+      "permission_changed": {
+        "sequence": 7,
+        "sessionId": "00000000-0000-0000-0000-000000000000",
+        "kind": {
+          "type": "permission_changed",
+          "payload": { "microphone": "granted", "accessibility": "denied" }
+        }
+      },
+      "hotkey_status_changed": {
+        "sequence": 7,
+        "sessionId": "00000000-0000-0000-0000-000000000000",
+        "kind": {
+          "type": "hotkey_status_changed",
+          "payload": {
+            "adapter": "macEventTap",
+            "state": "failed",
+            "message": "not installed",
+            "lastError": { "code": "fixture_error", "message": "fixture failure" }
+          }
+        }
+      },
+      "notification": {
+        "sequence": 7,
+        "sessionId": "00000000-0000-0000-0000-000000000000",
+        "kind": {
+          "type": "notification",
+          "payload": { "level": "warning", "message": "attention" }
+        }
+      },
+      "local_asr_prepare_progress": {
+        "sequence": 7,
+        "sessionId": "00000000-0000-0000-0000-000000000000",
+        "kind": {
+          "type": "local_asr_prepare_progress",
+          "payload": {
+            "runtime": "qwen3_mlx",
+            "phase": "load",
+            "modelAlias": "qwen3-asr-1.7b",
+            "label": "loading",
+            "percent": 0.5,
+            "error": "fixture error"
+          }
+        }
+      },
+      "local_asr_engine_changed": {
+        "sequence": 7,
+        "sessionId": "00000000-0000-0000-0000-000000000000",
+        "kind": {
+          "type": "local_asr_engine_changed",
+          "payload": {
+            "providerId": "local-qwen3-mlx",
+            "available": true,
+            "loaded": false,
+            "activeModel": "qwen3-asr-1.7b",
+            "modelId": "qwen3-asr-1.7b",
+            "keepLoadedSecs": 300,
+            "operation": "prepare",
+            "error": "fixture error",
+            "lastError": "previous error",
+            "lastPrepareMs": 101,
+            "lastTranscribeMs": 202,
+            "lastAudioMs": 303
+          }
+        }
+      },
+      "microphone_devices_changed": {
+        "sequence": 7,
+        "sessionId": "00000000-0000-0000-0000-000000000000",
+        "kind": { "type": "microphone_devices_changed" }
+      }
+    }
+  },
+  "enums": {
+    "historySource": ["voice", "selection_polish"],
+    "historyInsertStatus": ["inserted", "pasteSent", "copiedFallback", "failed", "notRequested"],
+    "dictationPhase": ["idle", "starting", "recording", "transcribing", "polishing", "inserting", "completed", "cancelled", "failed"],
+    "dictationInsertStatus": ["inserted", "pasteSent", "copiedFallback", "notRequested"],
+    "recordingControlAction": ["stop", "cancel"],
+    "insertOutcome": ["inserted", "pasteSent", "copiedFallback"],
+    "permissionState": ["unknown", "granted", "denied", "restricted", "no_device", "unsupported"],
+    "notificationLevel": ["info", "success", "warning", "error"],
+    "hotkeyAdapterKind": ["macEventTap", "windowsLowLevel", "fcitx5", "unavailable"],
+    "hotkeyStatusState": ["starting", "installed", "failed"],
+    "localAsrRuntime": ["qwen3_mlx"],
+    "localAsrPreparePhase": ["runtime", "model", "load", "finished", "failed"]
+  },
+  "compatibility": {
+    "historySourceAliases": {
+      "selection_voice_edit": "selection_polish"
+    },
+    "unknownPreferenceFields": "ignored"
+  }
+}

@@ -23,9 +23,7 @@ import type {
   CapsuleState,
   CapsuleStyle,
   InsertFallbackCardPayload,
-  PendingCorrection,
 } from '../lib/types';
-import { VocabSuggestionCard } from './VocabSuggestionCard';
 import { InsertFallbackCard } from './InsertFallbackCard';
 import {
   applyTranscriptEvent,
@@ -51,9 +49,6 @@ const CAPSULE_KEYFRAMES = `
   @keyframes siri-orb-in {
     from { opacity: 0; }
     to   { opacity: 1; }
-  }
-  @keyframes selection-polish-spinner {
-    to { transform: rotate(360deg); }
   }
   /* 经典药丸（Openless 默认风格）专属：
      - cap-shine：转写/润色中"thinking" 文字的蓝光扫过；
@@ -191,106 +186,6 @@ const errorGlowTextStyle: CSSProperties = {
   textOverflow: 'ellipsis',
 };
 
-interface SelectionPolishNoticeProps {
-  state: CapsuleState;
-  message?: string;
-}
-
-/**
- * 选区润色专用的一行无交互提示。它处在同一扇 Windows no-activate + mouse-passthrough
- * capsule 窗口中，因此不会把焦点从用户当前输入框抢走，也不会遮挡点击。
- */
-function SelectionPolishNotice({ state, message }: SelectionPolishNoticeProps) {
-  const { t } = useTranslation();
-  const processing = state === 'polishing';
-  const failed = state === 'error';
-  const completed = state === 'done';
-  const cancelled = state === 'cancelled';
-  const label = message
-    ?? (processing
-      ? t('capsule.selectionPolish.polishing')
-      : completed
-        ? t('capsule.selectionPolish.replaced')
-        : cancelled
-          ? t('capsule.selectionPolish.noSelection')
-          : t('capsule.selectionPolish.failed'));
-  const color = failed
-    ? '#ff8278'
-    : completed
-      ? '#63d596'
-      : cancelled
-        ? 'var(--ol-capsule-center-ink)'
-        : '#8fc0ff';
-  const symbol = completed ? '✓' : failed ? '!' : cancelled ? '·' : null;
-
-  return (
-    <div
-      role={failed ? 'alert' : 'status'}
-      aria-live="polite"
-      style={{
-        display: 'inline-flex',
-        alignItems: 'center',
-        gap: 8,
-        maxWidth: 360,
-        padding: '8px 14px',
-        borderRadius: 999,
-        border: failed
-          ? '1px solid rgba(255, 112, 102, 0.42)'
-          : '1px solid var(--ol-capsule-pill-border)',
-        background: 'var(--ol-capsule-pill-bg)',
-        boxShadow: 'var(--ol-capsule-pill-shadow)',
-        color,
-        fontFamily: 'var(--ol-font-sans)',
-        fontSize: 13,
-        fontWeight: 600,
-        lineHeight: 1.25,
-        letterSpacing: '0.01em',
-        pointerEvents: 'none',
-      }}
-    >
-      {processing ? (
-        <span
-          aria-hidden="true"
-          style={{
-            width: 12,
-            height: 12,
-            flex: '0 0 auto',
-            border: '2px solid rgba(143, 192, 255, 0.32)',
-            borderTopColor: color,
-            borderRadius: '50%',
-            animation: 'selection-polish-spinner .75s linear infinite',
-          }}
-        />
-      ) : (
-        <span
-          aria-hidden="true"
-          style={{
-            display: 'inline-flex',
-            width: 13,
-            justifyContent: 'center',
-            flex: '0 0 auto',
-            color,
-            fontSize: completed ? 15 : 16,
-            fontWeight: 800,
-            lineHeight: 1,
-          }}
-        >
-          {symbol}
-        </span>
-      )}
-      <span
-        style={{
-          overflow: 'hidden',
-          textOverflow: 'ellipsis',
-          whiteSpace: 'nowrap',
-        }}
-      >
-        {label}
-      </span>
-    </div>
-  );
-}
-
 // ───────── 经典药丸（Openless 默认风格）───────────────────────────────
 // 从 1.3.14 的胶囊实现恢复：毛玻璃药丸 + 音量条 + 取消/确认按钮。尺寸与当时
 // capsuleLayout 的常量保持一致（Siri 光效舞台是 460×180 全幅，经典版是居中小药丸）。
@@ -306,14 +201,9 @@ const CLASSIC_PILL_METRICS: ClassicPillMetrics = {
   height: 42,
   textWidth: 84,
 };
-const CLASSIC_PILL_METRICS_WIN: ClassicPillMetrics = {
-  width: 196,
-  height: 52,
-  textWidth: 104,
-};
-
 function classicPillMetrics(os: OS): ClassicPillMetrics {
-  return os === 'win' ? CLASSIC_PILL_METRICS_WIN : CLASSIC_PILL_METRICS;
+  void os;
+  return CLASSIC_PILL_METRICS;
 }
 
 function AudioBars({ level }: { level: number }) {
@@ -451,12 +341,11 @@ interface ClassicPillProps {
   level: number;
   insertedChars: number;
   message?: string;
-  operating?: boolean;
   onCancel: () => void;
   onConfirm: () => void;
 }
 
-function ClassicPill({ os, state, level, insertedChars, message, operating, onCancel, onConfirm }: ClassicPillProps) {
+function ClassicPill({ os, state, level, insertedChars, message, onCancel, onConfirm }: ClassicPillProps) {
   const { t } = useTranslation();
   const metrics = classicPillMetrics(os);
   const processingLayout = useMemo(() => getCapsuleMessageLayout(os, 'processing'), [os]);
@@ -530,7 +419,7 @@ function ClassicPill({ os, state, level, insertedChars, message, operating, onCa
               WebkitLineClamp: processingLayout.lineClamp,
             }}
           >
-            {t(operating ? 'capsule.using' : 'capsule.thinking')}
+            {t('capsule.thinking')}
           </span>
         </div>
       );
@@ -549,12 +438,11 @@ function ClassicPill({ os, state, level, insertedChars, message, operating, onCa
   }
 
   const ambient = state === 'recording' ? Math.min(1, Math.max(0, level)) : 0;
-  const scale = os === 'win' ? 1 : 1 + ambient * 0.018;
+  const scale = 1 + ambient * 0.018;
   const shadowAlpha = 0.20 + ambient * 0.10;
 
   return (
-    // 非 Linux 走假毛玻璃；Linux 禁用透明窗口后由 .ol-frost 平台规则退成不透明面。
-    // 不写 backdrop-filter —— webview 模糊不了透明窗口背后的桌面（Tauri 上游限制）。
+    // 不写 backdrop-filter：webview 无法模糊透明窗口背后的桌面。
     <div
       className="ol-frost ol-capsule-pill"
       style={{
@@ -568,7 +456,7 @@ function ClassicPill({ os, state, level, insertedChars, message, operating, onCa
         boxSizing: 'border-box',
         borderRadius: 999,
         border: '1px solid var(--ol-capsule-pill-border)',
-        boxShadow: `${os === 'win' ? `0 10px 24px -14px rgba(0, 0, 0, ${(0.24 + ambient * 0.06).toFixed(3)})` : `0 18px 50px -10px rgba(0, 0, 0, ${shadowAlpha.toFixed(3)})`}, 0 0 0 0.5px rgba(0, 0, 0, 0.24), var(--ol-capsule-pill-inset)`,
+        boxShadow: `0 18px 50px -10px rgba(0, 0, 0, ${shadowAlpha.toFixed(3)}), 0 0 0 0.5px rgba(0, 0, 0, 0.24), var(--ol-capsule-pill-inset)`,
         color: 'var(--ol-capsule-center-ink)',
         fontFamily: 'var(--ol-font-sans)',
         transform: `scale(${scale.toFixed(4)})`,
@@ -592,12 +480,10 @@ interface ClassicCapsuleProps {
   level: number;
   insertedChars: number;
   message?: string;
-  operating?: boolean;
-  translation: boolean;
 }
 
 /**
- * 经典药丸 + 「正在翻译」徽章（与 1.3.14 一致）。取消/确认按钮直接调 dictation
+ * 经典药丸。取消/确认按钮直接调 dictation
  * 命令（胶囊窗口本身不抢焦点，按钮交互只出现在录音进行中）。
  */
 function ClassicCapsule({
@@ -606,12 +492,7 @@ function ClassicCapsule({
   level,
   insertedChars,
   message,
-  operating,
-  translation,
 }: ClassicCapsuleProps) {
-  const { t } = useTranslation();
-  const metrics = classicPillMetrics(os);
-  const hostMetrics = getCapsuleHostMetrics(os, false);
   const onCancel = useCallback(() => {
     void cancelDictation();
   }, []);
@@ -621,59 +502,12 @@ function ClassicCapsule({
 
   return (
     <>
-      {/* "正在翻译" 徽章 — 嵌套两层：
-          外层只负责"绝对定位 + 水平居中（translateX(-50%)）"，不参与动画；
-          内层只负责"垂直位移 + 渐变透明度"——这样不会跟 translateX(-50%) 冲突，
-          也不存在 keyframe 与 inline transform 互相覆盖导致的视觉跳变。 */}
-      <div
-        style={{
-          position: 'absolute',
-          left: '50%',
-          // macOS / Linux：pill 居中在 460×180 host，badge 锚到 pill 中线上方 21+8。
-          // Windows：pill 更高（52），badge 锚到 pill 上沿（bottomInset + height + gap）。
-          bottom: os === 'win'
-            ? `${hostMetrics.bottomInset + metrics.height + hostMetrics.badgeGap}px`
-            : 'calc(50% + 21px + 8px)',
-          transform: 'translateX(-50%)',
-          pointerEvents: 'none',
-        }}
-      >
-        <div
-          style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: 5,
-            padding: '3px 10px',
-            borderRadius: 999,
-            fontSize: 10.5,
-            fontWeight: 600,
-            color: 'var(--ol-blue)',
-            background: 'var(--ol-capsule-badge-bg)',
-            // issue #470：去掉无效的 backdrop-filter —— webview 模糊不了透明窗口背后的桌面
-            // （Tauri 上游限制，同 pill 注释），纯空耗合成，删除零视觉变化。
-            border: '0.5px solid var(--ol-capsule-badge-border)',
-            boxShadow: '0 4px 12px -4px rgba(37, 99, 235, 0.25), 0 0 0 0.5px rgba(0,0,0,0.04)',
-            letterSpacing: '0.02em',
-            whiteSpace: 'nowrap',
-            // 隐藏：从 pill 中线偏下出发；显示：归位到 pill 上方。
-            opacity: translation ? 1 : 0,
-            transform: translation ? 'translateY(0) scale(1)' : 'translateY(40px) scale(.88)',
-            transformOrigin: 'center bottom',
-            transition: 'opacity .24s ease-out, transform .34s cubic-bezier(.2,.9,.3,1.1)',
-            willChange: 'opacity, transform',
-          }}
-        >
-          <span style={{ width: 5, height: 5, borderRadius: 999, background: 'var(--ol-blue)' }} />
-          {t('capsule.translating')}
-        </div>
-      </div>
       <ClassicPill
         os={os}
         state={state}
         level={level}
         insertedChars={insertedChars}
         message={message}
-        operating={operating}
         onCancel={onCancel}
         onConfirm={onConfirm}
       />
@@ -715,9 +549,7 @@ function getPreviewCapsulePayload() {
       state: 'idle' as CapsuleState,
       level: 0,
       message: undefined,
-      translation: false,
       warming: false,
-      selectionPolish: false,
       style: 'siri' as CapsuleStyle,
     };
   }
@@ -732,9 +564,7 @@ function getPreviewCapsulePayload() {
     state: previewState,
     level: Number.isFinite(previewLevel) ? Math.min(1, Math.max(0, previewLevel)) : 0.6,
     message: params.get('message') ?? undefined,
-    translation: params.get('translation') === '1',
     warming: params.get('warming') === '1',
-    selectionPolish: params.get('selectionPolish') === '1',
     // 浏览器预览：?style=classic 直接看经典药丸。
     style: params.get('style') === 'classic' ? ('classic' as CapsuleStyle) : ('siri' as CapsuleStyle),
   };
@@ -758,8 +588,6 @@ export function Capsule({ os: forcedOs }: CapsuleProps = {}) {
     sequence: 0,
     text: '',
   });
-  const [translation, setTranslation] = useState<boolean>(preview.translation);
-  const [selectionPolish, setSelectionPolish] = useState<boolean>(preview.selectionPolish);
   // 胶囊样式（siri / classic）：随 capsule:state payload 下发；设置里切换后还会经
   // prefs:changed 广播即时到达（见下方监听），无需等下一次录音。
   const [capsuleStyle, setCapsuleStyle] = useState<CapsuleStyle>(preview.style);
@@ -772,7 +600,6 @@ export function Capsule({ os: forcedOs }: CapsuleProps = {}) {
   // 经典药丸专属：done 态的「已插入 N 字」与 thinking/using 文案。payload 只在状态变化
   // 时到达，用 ref 保存即可 —— 触发重渲的是 setState，这里只是给渲染读取终态值。
   const insertedCharsRef = useRef(0);
-  const operatingRef = useRef(false);
   // `leaving` 与 `lastVisibleState` 协同实现「退出动画」：
   // - 当 state 从非 idle 变成 idle 时，不立即卸载，而是把 leaving 置为 true 并保留
   //   最后一帧的可见 state（lastVisibleState），让胶囊用 capsule-out 动画收缩淡出。
@@ -780,26 +607,19 @@ export function Capsule({ os: forcedOs }: CapsuleProps = {}) {
   // - 若期间 state 又切回非 idle（例如用户连按热键），立刻中止 leaving 并恢复显示。
   const [leaving, setLeaving] = useState<boolean>(false);
   const [lastVisibleState, setLastVisibleState] = useState<CapsuleState>(preview.state);
-  const [lastVisibleSelectionPolish, setLastVisibleSelectionPolish] = useState<boolean>(
-    preview.selectionPolish,
-  );
   const [lastVisibleMessage, setLastVisibleMessage] = useState<string | undefined>(preview.message);
   // 退出动画时长跟随样式；leaving effect 故意只依赖 state，所以经 ref 读取最新值。
   const exitMsRef = useRef(isClassic ? EXIT_ANIM_MS_CLASSIC : EXIT_ANIM_MS_SIRI);
   exitMsRef.current = isClassic ? EXIT_ANIM_MS_CLASSIC : EXIT_ANIM_MS_SIRI;
   const exitMs = exitMsRef.current;
-  // 词条建议卡片。走独立事件通道，不进会话状态机 —— 那套状态机身上挂着 Esc 独占、
-  // Space 贴附、多屏定位一整串逻辑，加一个非会话状态进去只会污染它。
-  const [suggestions, setSuggestions] = useState<PendingCorrection[]>([]);
   // 落字失败兜底卡片。与词条卡片同一套路：独立事件通道，不进会话状态机。
   const [insertFallback, setInsertFallback] =
     useState<InsertFallbackCardPayload | null>(null);
   // 前端 host 与原生窗口保持同一份透明语音 orb 舞台尺寸。
-  const hostMetrics = getCapsuleHostMetrics(os, translation);
+  const hostMetrics = getCapsuleHostMetrics(os);
   // Windows 端 host 用「host 高 − pill 高」把 pill 垂直居中；Siri 舞台 460×180 与 host
   // 等高（padding 0），经典药丸则在 180 高的窗口里垂直居中。
   const pillMetrics = isClassic ? classicPillMetrics(os) : metrics;
-  const badgeBottom = Math.round(metrics.height * 0.73);
 
   // 空闲预热 shader 编译缓存：首次按下热键时光条不用现场编译（响应延迟反馈）。
   useEffect(() => {
@@ -831,20 +651,14 @@ export function Capsule({ os: forcedOs }: CapsuleProps = {}) {
         setLevel(p.level ?? 0);
         setMessage(p.message ?? undefined);
         if (p.state === 'recording') setLocalAsrText('');
-        setTranslation(p.translation === true);
         setWarming(p.warming === true);
-        setSelectionPolish(p.selectionPolish === true);
         if (p.capsuleStyle != null) setCapsuleStyle(p.capsuleStyle);
         if (p.insertedChars != null) insertedCharsRef.current = p.insertedChars;
-        operatingRef.current = p.operating === true;
       });
       const transcriptHandle = await listen<BackendEvent>('backend:event', event => {
         const next = applyTranscriptEvent(transcriptViewRef.current, event.payload);
         transcriptViewRef.current = next;
         setLocalAsrText(next.text);
-      });
-      const suggestHandle = await listen<PendingCorrection[]>('vocab:suggested', event => {
-        setSuggestions(event.payload ?? []);
       });
       const fallbackHandle = await listen<InsertFallbackCardPayload | null>(
         'insert:fallback',
@@ -855,14 +669,12 @@ export function Capsule({ os: forcedOs }: CapsuleProps = {}) {
       if (cancelled) {
         handle();
         transcriptHandle();
-        suggestHandle();
         fallbackHandle();
       } else {
         unlisten = () => {
           handle();
           transcriptHandle();
-          suggestHandle();
-          fallbackHandle();
+            fallbackHandle();
         };
       }
     })();
@@ -901,7 +713,6 @@ export function Capsule({ os: forcedOs }: CapsuleProps = {}) {
   useEffect(() => {
     setLeaving(false);
     insertedCharsRef.current = 0;
-    operatingRef.current = false;
     warmStartRef.current = null;
   }, [capsuleStyle]);
 
@@ -932,13 +743,6 @@ export function Capsule({ os: forcedOs }: CapsuleProps = {}) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state]);
 
-  // Idle payload 不携带终态文案。保留最近一帧可见 selection 提示，才能让 auto-hide
-  // 触发后的离场动画继续显示“已替换 / 未选中内容”等正确反馈，而不闪回语音舞台。
-  useEffect(() => {
-    if (state === 'idle') return;
-    setLastVisibleSelectionPolish(selectionPolish);
-    setLastVisibleMessage(message);
-  }, [state, selectionPolish, message]);
 
   // 学习「预备态持续多久」= 麦克风就绪耗时，EMA 更新 warmupMs（预测展开的基准时长）。
   useEffect(() => {
@@ -965,12 +769,6 @@ export function Capsule({ os: forcedOs }: CapsuleProps = {}) {
     return <InsertFallbackCard payload={insertFallback} />;
   }
 
-  // 卡片优先：它和胶囊共用一个窗口，但时序上不冲突 —— 卡片在改完字之后才弹，那时
-  // 会话早已收尾；新一轮听写开始时后端会先把卡片收起来（见 begin_session_as）。
-  if (suggestions.length > 0) {
-    return <VocabSuggestionCard suggestions={suggestions} />;
-  }
-
   // 真正卸载：state 已是 idle，且不在离场动画中。
   if (state === 'idle' && !leaving) {
     return <div style={{ width: 0, height: 0 }} />;
@@ -978,9 +776,6 @@ export function Capsule({ os: forcedOs }: CapsuleProps = {}) {
 
   // 离场时用 lastVisibleState 渲染最后一帧内容，避免把 idle 当作无波形状态。
   const renderedState: CapsuleState = state === 'idle' ? lastVisibleState : state;
-  const renderedSelectionPolish = state === 'idle'
-    ? lastVisibleSelectionPolish
-    : selectionPolish;
   const renderedMessage = state === 'idle'
     ? lastVisibleMessage
     : state === 'transcribing' && localAsrText
@@ -999,10 +794,8 @@ export function Capsule({ os: forcedOs }: CapsuleProps = {}) {
         paddingLeft: hostMetrics.horizontalInset,
         paddingRight: hostMetrics.horizontalInset,
         boxSizing: hostMetrics.boxSizing,
-        paddingTop: os === 'win'
-          ? Math.max(0, hostMetrics.height - pillMetrics.height - hostMetrics.bottomInset)
-          : 0,
-        paddingBottom: os === 'win' ? hostMetrics.bottomInset : 0,
+        paddingTop: 0,
+        paddingBottom: 0,
         background: 'transparent',
         animation: leaving
           ? `capsule-out ${exitMs}ms cubic-bezier(.55,.06,.68,.19) forwards`
@@ -1013,63 +806,16 @@ export function Capsule({ os: forcedOs }: CapsuleProps = {}) {
         willChange: 'transform, opacity',
       }}
     >
-      {!renderedSelectionPolish && (isClassic ? (
+      {isClassic ? (
         <ClassicCapsule
           os={os}
           state={renderedState}
           level={leaving ? 0 : level}
           insertedChars={insertedCharsRef.current}
           message={renderedMessage}
-          operating={operatingRef.current}
-          translation={translation}
         />
       ) : (
         <>
-      {/* "正在翻译" 徽章 — 嵌套两层：
-          外层只负责"绝对定位 + 水平居中（translateX(-50%)）"，不参与动画；
-          内层只负责"垂直位移 + 渐变透明度"——这样不会跟 translateX(-50%) 冲突，
-          也不存在 keyframe 与 inline transform 互相覆盖导致的视觉跳变。 */}
-      <div
-        style={{
-          position: 'absolute',
-          left: '50%',
-          bottom: `${badgeBottom}px`,
-          transform: 'translateX(-50%)',
-          pointerEvents: 'none',
-        }}
-      >
-        <div
-          style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: 5,
-            fontSize: 10.5,
-            fontWeight: 600,
-            // 纯光效语言：无壳发光小字，与波形同一气质（浮空 + 冷蓝光晕）。
-            color: 'rgba(190, 212, 255, 0.95)',
-            textShadow: '0 0 14px rgba(90, 140, 255, 0.85), 0 1px 6px rgba(0, 0, 0, 0.45)',
-            letterSpacing: '0.02em',
-            whiteSpace: 'nowrap',
-            // 隐藏：从光条附近偏下出发；显示：归位到光条上方。
-            opacity: translation ? 1 : 0,
-            transform: translation ? 'translateY(0) scale(1)' : 'translateY(40px) scale(.88)',
-            transformOrigin: 'center bottom',
-            transition: 'opacity .24s ease-out, transform .34s cubic-bezier(.2,.9,.3,1.1)',
-            willChange: 'opacity, transform',
-          }}
-        >
-          <span
-            style={{
-              width: 5,
-              height: 5,
-              borderRadius: 999,
-              background: 'rgba(150, 185, 255, 0.95)',
-              boxShadow: '0 0 8px rgba(90, 140, 255, 0.9)',
-            }}
-          />
-          {t('capsule.translating')}
-        </div>
-      </div>
       <VoiceOrbStage
         os={os}
         state={renderedState}
@@ -1079,9 +825,6 @@ export function Capsule({ os: forcedOs }: CapsuleProps = {}) {
         message={renderedMessage}
       />
         </>
-      ))}
-      {renderedSelectionPolish && (
-        <SelectionPolishNotice state={renderedState} message={renderedMessage} />
       )}
     </div>
   );

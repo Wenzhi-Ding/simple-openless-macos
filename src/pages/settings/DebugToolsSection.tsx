@@ -5,7 +5,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { debugReadCursorContext, exportErrorLog } from '../../lib/ipc';
-import { useMobileLayout } from '../../lib/useMobileLayout';
+import { useNarrowLayout } from '../../lib/useResponsiveLayout';
 import type { HostDocumentReadResult } from '../../lib/types';
 import { useHotkeySettings } from '../../state/HotkeySettingsContext';
 import { Btn, Card } from '../_atoms';
@@ -15,7 +15,7 @@ const clamp = (n: number, min: number, max: number) => Math.max(min, Math.min(ma
 
 export function DebugToolsSection() {
   const { t } = useTranslation();
-  const mobile = useMobileLayout();
+  const narrow = useNarrowLayout();
   const { prefs, updatePrefs: savePrefs } = useHotkeySettings();
   const [exportStatus, setExportStatus] = useState<'idle' | 'busy' | 'ok' | 'err'>('idle');
   const [exportMessage, setExportMessage] = useState<string>('');
@@ -106,7 +106,7 @@ export function DebugToolsSection() {
         <Toggle on={prefs.recordAudioForDebug} onToggle={onRecordAudioForDebugChange} />
       </SettingRow>
       <SettingRow label={t('settings.recording.audioRecordingMaxEntriesLabel')}>
-        <div style={{ display: 'flex', flexDirection: mobile ? 'column' : 'row', gap: 8, alignItems: mobile ? 'stretch' : 'center', width: '100%' }}>
+        <div style={{ display: 'flex', flexDirection: narrow ? 'column' : 'row', gap: 8, alignItems: narrow ? 'stretch' : 'center', width: '100%' }}>
           <input
             type="number"
             min={1}
@@ -114,10 +114,10 @@ export function DebugToolsSection() {
             placeholder="200"
             value={prefs.audioRecordingMaxEntries ?? ''}
             onChange={e => onAudioRecordingMaxEntriesChange(e.target.value)}
-            style={{ ...inputStyle, width: mobile ? '100%' : 80, textAlign: 'right' }}
+            style={{ ...inputStyle, width: narrow ? '100%' : 80, textAlign: 'right' }}
             disabled={!prefs.recordAudioForDebug}
           />
-          {mobile && (
+          {narrow && (
             <span style={{ fontSize: 11, color: 'var(--ol-ink-4)', lineHeight: 1.45 }}>
               {t('settings.recording.audioRecordingMaxEntriesDesc')}
             </span>
@@ -177,21 +177,21 @@ export function DebugToolsSection() {
               style={{
                 fontSize: 11,
                 color: 'var(--ol-ok)',
-                whiteSpace: mobile ? 'normal' : 'nowrap',
-                overflow: mobile ? 'visible' : 'hidden',
-                textOverflow: mobile ? 'clip' : 'ellipsis',
+                whiteSpace: narrow ? 'normal' : 'nowrap',
+                overflow: narrow ? 'visible' : 'hidden',
+                textOverflow: narrow ? 'clip' : 'ellipsis',
                 wordBreak: 'break-word',
-                maxWidth: mobile ? '100%' : 220,
+                maxWidth: narrow ? '100%' : 220,
               }}
               title={exportMessage}
             >
               {t('modal.about.exportSuccess')}
-              {mobile && exportMessage ? `：${exportMessage}` : ''}
+              {narrow && exportMessage ? `：${exportMessage}` : ''}
             </span>
           )}
           {exportStatus === 'err' && (
             <span
-              style={{ fontSize: 11, color: 'var(--ol-err)', lineHeight: 1.45, wordBreak: 'break-word', maxWidth: mobile ? '100%' : 280 }}
+              style={{ fontSize: 11, color: 'var(--ol-err)', lineHeight: 1.45, wordBreak: 'break-word', maxWidth: narrow ? '100%' : 280 }}
               title={exportMessage}
             >
               {t('modal.about.exportFailed')}

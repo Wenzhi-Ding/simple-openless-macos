@@ -42,7 +42,7 @@ export type LlmEngineFetch = LlmEngineStatus | EngineFetchError | null;
 
 export const ASR_FIXED_NAME = 'Qwen3-ASR 1.7B';
 export const ASR_FIXED_PROVIDER = 'local-qwen3-mlx';
-export const LLM_FIXED_NAME = 'Gemma 4 E2B';
+export const LLM_FIXED_NAME = 'Gemma 4 E4B';
 export const LLM_FIXED_PROVIDER = 'local-llama';
 
 function isFetchError(value: unknown): value is EngineFetchError {

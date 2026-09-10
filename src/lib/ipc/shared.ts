@@ -1,4 +1,4 @@
-import type { HotkeyCapability, HotkeyStatus, PlatformCapabilities, WindowsImeStatus } from "../types"
+import type { PlatformCapabilities } from "../types"
 import { getPlatformCapabilities as loadPlatformCapabilities } from "../platform"
 
 declare global {
@@ -11,7 +11,7 @@ export const isTauri =
     globalThis.window !== undefined &&
     "__TAURI_INTERNALS__" in globalThis.window
 
-export const BACKEND_CONTRACT_VERSION = "2.0.0"
+export const BACKEND_CONTRACT_VERSION = "4.0.0"
 
 export interface StartupSnapshot {
     contractVersion: string
@@ -68,32 +68,4 @@ export async function invokeOrMock<T>(
     await requireBackendReady()
     const { invoke } = await import("@tauri-apps/api/core")
     return invoke<T>(cmd, args)
-}
-
-export const androidHotkeyCapability: HotkeyCapability = {
-    adapter: "unavailable",
-    availableTriggers: [],
-    requiresAccessibilityPermission: false,
-    supportsModifierOnlyTrigger: false,
-    supportsSideSpecificModifiers: false,
-    explicitFallbackAvailable: false,
-    statusHint:
-        "移动端不支持全局热键；请使用应用内录音按钮或悬浮窗（需授权）。",
-}
-
-export const androidHotkeyStatus: HotkeyStatus = {
-    adapter: "unavailable",
-    state: "failed",
-    message: "移动端不支持全局热键",
-    lastError: {
-        code: "unavailable",
-        message: "Global hotkeys are not available on mobile",
-    },
-}
-
-export const androidWindowsImeStatus: WindowsImeStatus = {
-    state: "notWindows",
-    usingTsfBackend: false,
-    message: "Not available on Android",
-    dllPath: null,
 }

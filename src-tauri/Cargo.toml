@@ -1,6 +1,6 @@
 [package]
 name = "openless"
-version = "2.0.0-Beta.1"
+version = "2.0.0"
 license = "AGPL-3.0-only"
 description = "OpenLess — local voice input that types where your cursor is"
 authors = ["OpenLess"]
@@ -26,14 +26,12 @@ encoding_rs = "0.8"
 # tauri build 跨 minor 一致性检查会拒绝 npm 2.11 + Rust 2.10 的组合。
 # macos-private-api must live in [dependencies] so tauri_build can match tauri.conf.json
 # macOSPrivateApi; tray-icon stays desktop-only in the target table below.
-tauri = { version = "~2.11", features = ["macos-private-api"] }
-# 锁 >=2.3.5 修复 GHSA-c9pr-q8gx-3mgp：tauri-plugin-shell `open` 端点作用域校验绕过（CRITICAL，issue #668）。
+tauri = { version = "~2.11", features = ["macos-private-api", "tray-icon"] }
 tauri-plugin-dialog = "2.7.2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # 热词同音纠错:汉字转拼音(my_typeless Python 版的 Rust 移植)。
 pinyin = "0.10"
-sha2 = "0.10"
 # 历史录音回放 data URL(read_audio_recording)用的标准 base64。
 base64 = "0.22"
 tokio = { version = "1", features = ["full"] }
@@ -41,43 +39,16 @@ futures-util = "0.3"
 thiserror = "1"
 anyhow = "1"
 log = "0.4"
-env_logger = "0.11"
 simplelog = "0.12"
 parking_lot = "0.12"
 once_cell = "1"
 uuid = { version = "1", features = ["v4", "serde"] }
-chrono = { version = "0.4", features = ["serde"] }
-regex = "1"
-bytes = "1"
-url = "2"
-raw-window-handle = "0.6"
-# Audio capture — shared across desktop and mobile.
+# Audio capture.
 cpal = "0.15"
-
-[target.'cfg(any(target_os = "android", target_os = "ios"))'.dependencies]
-tauri-plugin-fs = "2.5.1"
-
-# Desktop-only plugins, hotkey/insertion helpers, and tray-icon (not built for mobile).
-[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
-tauri = { version = "~2.11", features = ["macos-private-api", "tray-icon"] }
 tauri-plugin-single-instance = "2"
 tauri-plugin-autostart = "2"
 global-hotkey = "0.6"
-enigo = "0.3"
-arboard = { version = "3", features = ["wayland-data-control"] }
-
-[target.'cfg(unix)'.dependencies]
-# PIN persistence uses O_NOFOLLOW/O_NONBLOCK/O_CLOEXEC; macOS qwen-asr also
-# uses libc::free for strings allocated by the C runtime.
-libc = "0.2"
-
-[target.'cfg(target_os = "linux")'.dependencies]
-dbus = "0.9"
-gtk = "0.18"
-[target.'cfg(target_os = "android")'.dependencies]
-jni = "0.21"
-ndk-context = "0.1"
-tao = "0.35"
+arboard = { version = "3", default-features = false }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 block2 = "0.5"
@@ -88,49 +59,13 @@ core-graphics = "0.24"
 # 直接依赖零额外编译成本。
 coreaudio-sys = "0.2"
 objc2 = { version = "0.5", features = ["exception"] }
-objc2-foundation = "0.2"
-objc2-app-kit = "0.2"
 # 屏幕 OCR（听写触发的本地 Vision 识别）： objc2 只用 msg_send/class 手写桥接
 # （与 selection.rs 同模式），数组/字符串经 core-foundation toll-free bridging；
 # foreign-types 提供 CGImage::as_ptr。
 foreign-types = "0.5"
 
 tauri-nspanel = { git = "https://github.com/ahkohd/tauri-nspanel", branch = "v2" }
-
-# sherpa-onnx 同时服务 Windows 与 macOS(macOS 减法改造:本地识别只保留
-# SenseVoice 一条链路),static 特性自带预编译 C++ 工件,无需系统 cmake。
-[target.'cfg(any(target_os = "windows", target_os = "macos"))'.dependencies]
-sherpa-onnx = { version = "1.13.2", default-features = false, features = ["static"] }
-
-[target.'cfg(target_os = "windows")'.dependencies]
-raw-window-handle = "0.6"
-windows = { version = "0.58", features = [
-  "Win32_Foundation",
-  "Win32_Globalization",
-  "Win32_Graphics_Dwm",
-  "Win32_Graphics_Gdi",
-  "Win32_Media_Audio",
-  "Win32_Media_Audio_Endpoints",
-  "Win32_Security",
-  "Win32_Storage_FileSystem",
-  "Win32_System_Com",
-  "Win32_System_DataExchange",
-  "Win32_System_Diagnostics_ToolHelp",
-  "Win32_System_JobObjects",
-  "Win32_System_Ole",
-  "Win32_System_Registry",
-  "Win32_System_Threading",
-  "Win32_UI_HiDpi",
-  "Win32_UI_Input_KeyboardAndMouse",
-  "Win32_UI_Shell",
-  "Win32_UI_TextServices",
-  "Win32_UI_WindowsAndMessaging",
-] }
-winreg = "0.52"
-
-# 跨平台磨砂层（macOS NSVisualEffectView / Windows Mica）。
-[target.'cfg(any(target_os = "macos", target_os = "windows"))'.dependencies]
-window-vibrancy = "0.7"
+window-vibrancy = "0.6"
 
 [features]
 default = ["custom-protocol"]
@@ -146,9 +81,3 @@ opt-level = 3
 lto = "thin"
 codegen-units = 1
 strip = "symbols"
-
-# issue #801: wayland-scanner 0.31.10 still pins vulnerable quick-xml 0.39.
-# This local copy backports upstream security commit d07c4f91f28b without
-# pulling the breaking, unreleased wayland-rs master branch.
-[patch.crates-io]
-wayland-scanner = { path = "vendor/wayland-scanner" }

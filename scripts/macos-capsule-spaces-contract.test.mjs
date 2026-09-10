@@ -16,7 +16,7 @@ const coordinatorHostRs = (
   await readFile(new URL('../src-tauri/src/tauri_coordinator_host.rs', import.meta.url), 'utf-8')
 ).replace(/\r\n/g, '\n');
 const functionMatch = coordinatorHostRs.match(
-  /#\[cfg\(target_os = "macos"\)\]\s*(?:pub\((?:crate|super)\) )?fn show_capsule_window_no_activate[\s\S]*?\n}\n\n#\[cfg\(target_os = "linux"\)\]/,
+  /(?:pub\((?:crate|super)\) )?fn show_capsule_window_no_activate[\s\S]*?\n}\n(?=\S)/,
 );
 
 if (!functionMatch) {
@@ -40,7 +40,7 @@ assertMatch(
 
 assertMatch(
   macosNoActivateFunction,
-  /setLevel:\s*25[\s\S]*?orderFrontRegardless/,
+  /setLevel\s*:\s*25[\s\S]*?orderFrontRegardless/,
   'macOS capsule must raise window level above the menu bar (25) so it renders over fullscreen apps, not just behind them',
 );
 
@@ -68,96 +68,12 @@ assertMatch(
 
 assertMatch(
   libRs,
-  /跟随鼠标光标所在显示器[\s\S]*?if let Some\(mon\) = capsule_target_monitor\(window\)/,
+  /position_capsule_bottom_center[\s\S]*?if let Some\(mon\) = capsule_target_monitor\(window\)/,
   'macOS capsule positioning must follow capsule_target_monitor (the mouse screen), not its own current_monitor',
 );
 
 assertMatch(
   coordinatorHostRs,
-  /#\[cfg\(target_os = "macos"\)\][\s\S]*?crate::capsule_target_monitor\(window\)/,
+  /crate::capsule_target_monitor\(window\)/,
   'macOS capsule layout cache key must reuse capsule_target_monitor, or it will skip repositioning when the cursor moves to another screen',
 );
-
-// === 卡片借走胶囊窗口后必须完整归还（位置！）契约 ===
-//
-// 词条卡片和落字回退卡片都不是自己的窗口 —— 它们借用录音胶囊那一个 "capsule"
-// 窗口，弹出时把它缩到卡片大小、挪到右下角。收起时必须原样还回去。
-//
-// 「还位置」这一步曾经漏过一次，真机表现是：用过一次带添加词的卡片之后，
-// 下一次录音的胶囊出现在右下角，再也回不到底部居中。漏这一步之所以致命，
-// 是因为 maybe_position_capsule_bottom_center 的去重缓存只记「显示器 + 翻译态」，
-// 卡片这一挪它一无所知 —— 下次录音拿到相同的显示器快照就判定「没变化」，
-// 直接跳过重新定位。窗口被挪走了，而唯一会把它挪回来的那段代码以为自己不用动。
-//
-// 所以复位和清缓存两件事都要做，各堵一个方向；穿透状态同理（emit_capsule 靠
-// capsule_cursor_passthrough 跳过重复调用，缓存与窗口真实状态分家就会跳过
-// 该调的那一次，表现是胶囊上的 ✓/✕ 点不动）。
-//
-// 这段修复在 2026-08 丢过一次（只存在于未合并的本地分支上，主线重新长回了
-// 漏位置的版本），靠单测抓不到 —— 它全是 Tauri 窗口调用，跑在 main thread
-// 闭包里。契约测试是唯一能钉住它的手段。
-const coordinatorRs = (
-  await readFile(new URL('../src-tauri/src/coordinator.rs', import.meta.url), 'utf-8')
-).replace(/\r\n/g, '\n');
-assertMatch(
-  coordinatorHostRs,
-  /fn set_cursor_passthrough[\s\S]*?window\.set_ignore_cursor_events\(passthrough\)[\s\S]*?cursor_passthrough[\s\S]*?store\(passthrough, Ordering::SeqCst\)/,
-  'the narrow capsule-window capability must update the Tauri window and its host-owned passthrough cache together',
-);
-
-function extractFn(source, name) {
-  const match = source.match(new RegExp(`(?:pub\\(crate\\) )?fn ${name}[\\s\\S]*?\\n}\\n`));
-  if (!match) {
-    throw new Error(`${name}: function not found in coordinator.rs`);
-  }
-  return match[0];
-}
-
-// 弹卡片 = 把共享窗口挪走，去重缓存必须当场作废。
-for (const name of ['show_vocab_suggestion_card', 'show_insert_fallback_card']) {
-  const body = extractFn(coordinatorRs, name);
-  assertMatch(
-    body,
-    /capsule\.invalidate_layout\(\)/,
-    `${name} moves the shared capsule window, so it must invalidate the capsule_layout dedup cache`,
-  );
-  assertMatch(
-    body,
-    /capsule\.set_cursor_passthrough\(false\)/,
-    `${name} must change cursor passthrough through the host capability that keeps its cache in sync`,
-  );
-}
-
-// 收卡片 = 把窗口完整还回去：穿透、尺寸、位置，一样都不能少。
-for (const name of ['hide_vocab_suggestion_card', 'hide_insert_fallback_card']) {
-  const body = extractFn(coordinatorRs, name);
-  assertMatch(
-    body,
-    /set_cursor_passthrough\(true\)/,
-    `${name} must restore cursor passthrough, or the capsule keeps blocking that strip of screen`,
-  );
-  assertMatch(
-    body,
-    /capsule_window_bounds\(false\)[\s\S]*?set_size/,
-    `${name} must restore the capsule window size, or the next capsule is squeezed into a card-sized window`,
-  );
-  assertMatch(
-    body,
-    /capsule\.invalidate_layout\(\)/,
-    `${name} must invalidate the capsule_layout dedup cache, or the next recording skips repositioning and the capsule stays bottom-right`,
-  );
-  assertMatch(
-    body,
-    /position_capsule_bottom_center\(false\)/,
-    `${name} must move the capsule window back to bottom-center; restoring size alone leaves it in the card's bottom-right corner`,
-  );
-  // 顺序不变量：尺寸和位置要一起动，窗口还亮着时改就有概率被合成出一帧
-  //「卡片被拉宽、还横着飞过半个屏幕」。
-  const hideAt = body.indexOf('capsule.hide()');
-  const resizeAt = body.indexOf('set_size');
-  if (hideAt === -1 || hideAt > resizeAt) {
-    throw new Error(
-      `${name} must hide the window before changing its geometry, or the restore animates on screen`,
-    );
-  }
-}

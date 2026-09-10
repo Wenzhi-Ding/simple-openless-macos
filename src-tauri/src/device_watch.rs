@@ -1,25 +1,10 @@
-//! 托盘麦克风设备变更的 OS 原生监听（issue #470）。
+//! macOS 托盘麦克风设备变更监听。
 //!
-//! 目的：替代「每 10s 轮询 `list_input_devices()`」这条空闲唤醒。改用各平台原生的设备
-//! 变更通知，空闲时零唤醒，设备插拔/默认设备切换时由 OS 回调实时触发刷新。
-//!
-//! 平台分流：
-//! - macOS：CoreAudio `AudioObjectAddPropertyListener` 监听
-//!   `kAudioHardwarePropertyDevices`，专用线程跑 `CFRunLoop` 常驻。
-//! - Windows / Linux：暂返回 `false`，由 `lib.rs` 的 60s 慢速兜底轮询负责。
-//!   （Windows 原生 `IMMNotificationClient` 通知留作后续，需 Windows 开发机验证。）
-//!
-//! 三平台共用契约：`spawn_native_watcher(app, on_change)`。`on_change` 是 `lib.rs` 提供
-//! 的去抖闭包（内部复用 `microphone_device_signature()`，真正变化才刷新+emit）。回调里
-//! 只调用 `on_change`，不做别的。注册失败一律返回 `false`（只 warn 不 panic），交由
-//! 兜底轮询兜底，保证三平台都「永远能检测到设备」。
+//! CoreAudio `AudioObjectAddPropertyListener` 监听设备变化，专用线程运行 CFRunLoop。
 
 use tauri::AppHandle;
 
-/// 注册 OS 原生设备变更监听。成功返回 `true`，平台不支持或注册失败返回 `false`。
-///
-/// `on_change` 在 OS 回调线程上被调用（可能并发/重复），其内部负责去抖与线程派发。
-#[cfg(target_os = "macos")]
+/// 注册 CoreAudio 设备变更监听。`on_change` 在回调线程执行。
 pub(crate) fn spawn_native_watcher<F>(_app: AppHandle, on_change: F) -> bool
 where
     F: Fn() + Send + Sync + 'static,
@@ -27,20 +12,9 @@ where
     macos::spawn(on_change)
 }
 
-/// 非 macOS（Windows / Linux）：暂无本地验证过的原生路径，返回 `false`，纯靠 `lib.rs`
-/// 的 60s 慢速兜底轮询。Windows 原生 `IMMNotificationClient` 留作后续（需 Windows 开发机验证）。
-#[cfg(not(target_os = "macos"))]
-pub(crate) fn spawn_native_watcher<F>(_app: AppHandle, _on_change: F) -> bool
-where
-    F: Fn() + Send + Sync + 'static,
-{
-    false
-}
-
 // ===================================================================================
 // macOS — CoreAudio AudioObjectAddPropertyListener
 // ===================================================================================
-#[cfg(target_os = "macos")]
 mod macos {
     use coreaudio_sys::{
         kAudioHardwarePropertyDevices, kAudioObjectPropertyElementMain,

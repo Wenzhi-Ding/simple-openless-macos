@@ -14,8 +14,6 @@ pub enum HostAction {
     FocusMain,
     ShowDictationFeedback,
     HideDictationFeedback,
-    ShowSelectionPreview,
-    HideSelectionPreview,
     OpenSystemSettings(String),
     RequestRestart,
     Notify(String),
@@ -370,7 +368,7 @@ pub trait DictationEngine: Send + Sync {
     ) -> BoxFuture<'static, Result<EngineResult, EngineFailure>>;
 
     /// Replace the immutable session snapshot before finalization when a host
-    /// action (currently Android's finish-and-translate gesture) is only known
+    /// action is only known
     /// at stop time. Implementations that retain the context must override this
     /// method; settings are never re-read here.
     fn update_context(
@@ -601,9 +599,8 @@ pub trait TranscriptionSession: AudioConsumer {
         None
     }
 
-    /// Drain provider notices discovered during finalization. This lets a
-    /// native adapter report facts such as Foundry GPU-to-CPU fallback without
-    /// publishing UI events or inventing host-only callback policy.
+    /// Drain provider notices discovered during finalization without publishing
+    /// UI events or inventing host-only callback policy.
     fn take_progress_notifications(&self) -> Vec<crate::types::NotificationPayload> {
         Vec::new()
     }
@@ -662,42 +659,6 @@ pub trait TextInsertionSession: Send + Sync {
     fn finish(&self, final_text: String)
         -> BoxFuture<'static, Result<InsertOutcome, BackendError>>;
     fn cancel(&self) -> BoxFuture<'static, Result<(), BackendError>>;
-}
-
-/// Core-side decision point for a native document edit observation.
-///
-/// The boolean is an acknowledgement: `true` means Core accepted the edit as
-/// belonging to the inserted text, so the native watcher may advance its
-/// document baseline. Keeping that decision here prevents macOS AX code from
-/// owning vocabulary policy or accepting a report from a stale generation.
-pub trait EditObservationSink: Send + Sync {
-    fn publish(&self, edit: crate::host_document::EditPair) -> bool;
-}
-
-/// Narrow native watcher seam. Hosts observe document changes and own the
-/// platform resource; Core owns arming policy, generation and deduplication.
-pub trait EditObservationAdapter: Send + Sync {
-    fn arm(
-        &self,
-        typed_text: String,
-        sink: Arc<dyn EditObservationSink>,
-    ) -> Result<(), BackendError>;
-
-    fn disarm(&self);
-}
-
-pub struct NoopEditObservationAdapter;
-
-impl EditObservationAdapter for NoopEditObservationAdapter {
-    fn arm(
-        &self,
-        _typed_text: String,
-        _sink: Arc<dyn EditObservationSink>,
-    ) -> Result<(), BackendError> {
-        Ok(())
-    }
-
-    fn disarm(&self) {}
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -762,11 +723,7 @@ mod resource_tests {
             resolver.resolve(Path::new("../secret")).unwrap_err().code,
             crate::errors::BackendErrorCode::InvalidArgument
         );
-        let absolute = if cfg!(windows) {
-            PathBuf::from("C:/secret")
-        } else {
-            PathBuf::from("/secret")
-        };
+        let absolute = PathBuf::from("/secret");
         assert_eq!(
             resolver.resolve(&absolute).unwrap_err().code,
             crate::errors::BackendErrorCode::InvalidArgument

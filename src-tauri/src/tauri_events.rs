@@ -24,13 +24,8 @@ pub fn start(app: AppHandle, backend: Arc<OpenLessBackend>) {
             match events.recv().await {
                 Ok(event) => {
                     let _ = app.emit("backend:event", &event);
-                    forward_legacy_event(
-                        &app,
-                        &backend_for_events,
-                        event.session_id,
-                        event.kind,
-                    )
-                    .await;
+                    forward_legacy_event(&app, &backend_for_events, event.session_id, event.kind)
+                        .await;
                 }
                 Err(EventRecvError::Lagged(dropped)) => {
                     log::warn!(
@@ -73,9 +68,6 @@ async fn forward_legacy_event(
 ) {
     match kind {
         BackendEventKind::PreferencesChanged(_) => emit_preferences(app, backend),
-        BackendEventKind::CredentialsChanged(status) => {
-            let _ = app.emit("credentials:changed", status);
-        }
         BackendEventKind::VocabularyChanged(_) => {
             // Legacy listeners use this only as an invalidation signal.  Do not
             // send the core revision as the old hit-count payload.
@@ -101,11 +93,8 @@ async fn forward_legacy_event(
                     inserted_chars: Some(
                         u32::try_from(result.polished_text.chars().count()).unwrap_or(u32::MAX),
                     ),
-                    translation: false,
-                    operating: false,
                     warming: false,
                     capsule_style: backend.get_preferences().capsule_style,
-                    selection_polish: false,
                 });
             }
         }
@@ -142,9 +131,7 @@ async fn forward_legacy_event(
         }
         BackendEventKind::LocalAsrPrepareProgress(progress) => {
             let event_name = match progress.runtime {
-                LocalAsrRuntimeKind::Foundry => "foundry-local-asr-prepare-progress",
-                LocalAsrRuntimeKind::SherpaOnnx => "sherpa-onnx-asr-prepare-progress",
-                LocalAsrRuntimeKind::Generic => "local-asr-prepare-progress",
+                LocalAsrRuntimeKind::Qwen3Mlx => "local-asr-prepare-progress",
             };
             let payload = serde_json::json!({
                 "phase": progress.phase,
@@ -178,19 +165,11 @@ async fn forward_legacy_event(
         BackendEventKind::BackendStopping => {
             emit_dictation_state(app, backend, DictationStateSnapshot::default());
         }
-        BackendEventKind::VocabularySuggestionsChanged(suggestions) => {
-            if let Some(coordinator) = app.try_state::<Arc<crate::coordinator::Coordinator>>() {
-                coordinator.refresh_vocab_suggestion_presentation(!suggestions.is_empty());
-            }
-            let _ = app.emit_to("capsule", "vocab:suggested", suggestions);
-        }
         // These domains either have no legacy push event or require a
         // window-specific payload that remains owned by the compatibility host.
         BackendEventKind::BackendStarted
-        | BackendEventKind::SelectionStateChanged(_)
         | BackendEventKind::PolishDelta(_)
         | BackendEventKind::HistoryChanged(_)
-        | BackendEventKind::StylePacksChanged(_)
         | BackendEventKind::PermissionChanged(_)
         | BackendEventKind::HotkeyStatusChanged(_) => {}
     }
@@ -215,8 +194,6 @@ fn emit_dictation_state(
     if let Some(main) = app.get_webview_window("main") {
         let _ = main.emit("capsule:state", &payload);
     }
-    #[cfg(target_os = "android")]
-    crate::android::notify_capsule_state(&payload);
 }
 
 fn map_dictation_state(
@@ -259,14 +236,11 @@ fn map_dictation_state(
         elapsed_ms: snapshot.elapsed_ms,
         message,
         inserted_chars: None,
-        translation: snapshot.translation_active,
-        operating: false,
         warming: matches!(
             snapshot.phase,
             DictationPhase::Starting | DictationPhase::Recording
         ) && !snapshot.recording_ready,
         capsule_style,
-        selection_polish: false,
     }
 }
 
@@ -285,9 +259,7 @@ fn transcription_notice_payload(
     if message.trim().is_empty() {
         return None;
     }
-    if dictation.session_id != Some(session_id)
-        || dictation.phase != DictationPhase::Transcribing
-    {
+    if dictation.session_id != Some(session_id) || dictation.phase != DictationPhase::Transcribing {
         return None;
     }
     Some(CapsulePayload {
@@ -296,11 +268,8 @@ fn transcription_notice_payload(
         elapsed_ms: dictation.elapsed_ms,
         message: Some(message.to_string()),
         inserted_chars: None,
-        translation: dictation.translation_active,
-        operating: false,
         warming: false,
         capsule_style: style,
-        selection_polish: false,
     })
 }
 
@@ -308,19 +277,12 @@ async fn emit_resync(app: &AppHandle, backend: &OpenLessBackend) {
     emit_preferences(app, backend);
     let snapshot = backend.snapshot();
     emit_dictation_state(app, backend, snapshot.dictation.clone());
-    let _ = app.emit("credentials:changed", snapshot.credentials);
     let _ = app.emit("vocab:updated", ());
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-
-
-
-
-
 
     #[test]
     fn core_dictation_state_maps_to_the_legacy_capsule_contract() {
@@ -348,14 +310,12 @@ mod tests {
                     elapsed_ms: 321,
                     level: 0.25,
                     message: Some("fixture".to_string()),
-                    translation_active: true,
                     recording_ready: phase != DictationPhase::Starting,
                 },
                 CapsuleStyle::Classic,
             );
             assert_eq!(payload.state, expected_state);
             assert_eq!(payload.warming, expected_warming);
-            assert!(payload.translation);
             assert_eq!(payload.capsule_style, CapsuleStyle::Classic);
             assert_eq!(payload.elapsed_ms, 321);
             assert_eq!(payload.level, 0.25);
@@ -395,22 +355,5 @@ mod tests {
             );
             assert_ne!(payload.message.as_deref(), Some(token), "{token}");
         }
-    }
-
-
-}
-
-#[cfg(test)]
-fn migration_legacy_event_name(kind: &BackendEventKind) -> Option<&'static str> {
-    match kind {
-        BackendEventKind::LocalAsrPrepareProgress(progress) => Some(match progress.runtime {
-            LocalAsrRuntimeKind::Foundry => "foundry-local-asr-prepare-progress",
-            LocalAsrRuntimeKind::SherpaOnnx => "sherpa-onnx-asr-prepare-progress",
-            LocalAsrRuntimeKind::Generic => "local-asr-prepare-progress",
-        }),
-        BackendEventKind::LocalAsrEngineChanged(_) => Some("local-asr:engine-changed"),
-        BackendEventKind::MicrophoneDevicesChanged => Some("microphone:devices-changed"),
-        BackendEventKind::VocabularySuggestionsChanged(_) => Some("vocab:suggested"),
-        _ => None,
     }
 }

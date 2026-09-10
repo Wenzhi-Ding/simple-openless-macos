@@ -1,6 +1,6 @@
 //! 流式插入的纯策略与 Unicode 边界规则。
 
-use crate::shared_types::{ChineseScriptPreference, MacosNewlineMode};
+use crate::shared_types::MacosNewlineMode;
 
 pub const STREAMING_FLUSH_INTERVAL_MS: u64 = 12;
 
@@ -122,19 +122,6 @@ impl StreamingInsertState {
     }
 }
 
-pub fn apply_chinese_script_preference(text: &str, preference: ChineseScriptPreference) -> String {
-    use ferrous_opencc::config::BuiltinConfig;
-
-    let config = match preference {
-        ChineseScriptPreference::Simplified => Some(BuiltinConfig::T2s),
-        ChineseScriptPreference::Traditional => Some(BuiltinConfig::S2t),
-        ChineseScriptPreference::Auto => None,
-    };
-    config
-        .and_then(|config| ferrous_opencc::OpenCC::from_config(config).ok())
-        .map_or_else(|| text.to_string(), |converter| converter.convert(text))
-}
-
 pub fn append_typed_prefix(target: &mut String, delta: &str, typed_chars: usize) -> usize {
     let prefix: String = delta.chars().take(typed_chars).collect();
     let count = prefix.chars().count();
@@ -142,13 +129,8 @@ pub fn append_typed_prefix(target: &mut String, delta: &str, typed_chars: usize)
     count
 }
 
-pub fn streaming_insert_eligible(
-    enabled: bool,
-    translation_active: bool,
-    traditional_script: bool,
-    windows_paste_insertion: bool,
-) -> bool {
-    enabled && !translation_active && !traditional_script && !windows_paste_insertion
+pub fn streaming_insert_eligible(enabled: bool) -> bool {
+    enabled
 }
 
 #[cfg(test)]
@@ -232,8 +214,7 @@ mod tests {
 
     #[test]
     fn policy_blocks_only_unsafe_modes() {
-        assert!(streaming_insert_eligible(true, false, false, false));
-        assert!(!streaming_insert_eligible(true, true, false, false));
-        assert!(!streaming_insert_eligible(true, false, true, false));
+        assert!(streaming_insert_eligible(true));
+        assert!(!streaming_insert_eligible(false));
     }
 }

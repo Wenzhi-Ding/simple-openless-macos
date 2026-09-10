@@ -12,7 +12,7 @@
 //! ## 三条硬约束（新代码不得违反，哪怕仓库里的旧 AX 代码就是这么写的）
 //!
 //! 1. **AX 调用必须有超时**。`AXUIElementSetMessagingTimeout` 不设就继承默认的
-//!    ~6 秒 —— 对着一个卡死的 app 就是 6 秒冻结。`selection.rs` / `lib.rs` 的既有
+//!    ~6 秒 —— 对着一个卡死的 app 就是 6 秒冻结。`focus_target.rs` / `lib.rs` 的既有
 //!    AX 代码都没设，那是缺陷，不要复制。
 //! 2. **不在 tokio worker 上同步调 AX**。走 `spawn_blocking` + `tokio::time::timeout`
 //!    双保险（形状照 `windows_ime_ipc.rs` 的原生调用边界）。内层超时保护线程本身，
@@ -30,13 +30,77 @@ mod macos;
 
 // `minimal_edit` 目前只有 macOS 的观察回调在用，非 macOS 构建下没有消费方。
 #[allow(unused_imports)]
-pub use openless_core::host_document::{
-    edit_is_within_typed_text, is_vocab_worthy, learned_rule, minimal_edit, plan_window,
-    utf16_offset_to_char_offset, window_around_cursor, DocumentWindow, EditPair, LearnedRule,
-    WindowSpan,
-};
-
 use serde::Serialize;
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DocumentWindow {
+    pub text: String,
+    pub cursor: usize,
+}
+
+impl DocumentWindow {
+    pub fn before(&self) -> &str {
+        let index = self
+            .text
+            .char_indices()
+            .nth(self.cursor)
+            .map(|(i, _)| i)
+            .unwrap_or(self.text.len());
+        &self.text[..index]
+    }
+
+    pub fn after(&self) -> &str {
+        let index = self
+            .text
+            .char_indices()
+            .nth(self.cursor)
+            .map(|(i, _)| i)
+            .unwrap_or(self.text.len());
+        &self.text[index..]
+    }
+}
+
+pub(crate) struct WindowSpan {
+    pub start: usize,
+    pub len: usize,
+    pub cursor_in_span: usize,
+}
+pub(crate) fn plan_window(len: usize, cursor: usize, budget: usize) -> WindowSpan {
+    let cursor = cursor.min(len);
+    if budget == 0 {
+        return WindowSpan {
+            start: cursor,
+            len: 0,
+            cursor_in_span: 0,
+        };
+    }
+    let before = cursor.min(budget * 4 / 5);
+    let after = (len - cursor).min(budget - before);
+    let before = cursor.min(budget - after);
+    WindowSpan {
+        start: cursor - before,
+        len: before + after,
+        cursor_in_span: before,
+    }
+}
+pub(crate) fn window_around_cursor(text: &str, cursor: usize, budget: usize) -> DocumentWindow {
+    let span = plan_window(text.chars().count(), cursor, budget);
+    DocumentWindow {
+        text: text.chars().skip(span.start).take(span.len).collect(),
+        cursor: span.cursor_in_span,
+    }
+}
+pub(crate) fn utf16_offset_to_char_offset(text: &str, utf16_offset: usize) -> usize {
+    let mut units = 0;
+    for (index, character) in text.chars().enumerate() {
+        if units >= utf16_offset {
+            return index;
+        }
+        units += character.len_utf16();
+    }
+    text.chars().count()
+}
 
 /// 送进 LLM 的默认上下文预算（char）。够覆盖一两段中文，又不至于让 prompt 显著变贵。
 /// 真实的成本/延迟影响要等接进润色后实测，届时再调。
@@ -58,7 +122,6 @@ const READ_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(1200)
 /// 过了一分钟用户还在动这段文字，多半是在继续写新东西而不是纠我们插错的词，再学下去
 /// 只会收进噪声。同时这也是「观察器绝不泄漏」的最后一道保险。
 #[cfg(target_os = "macos")]
-const EDIT_WATCH_MAX_LIFETIME: std::time::Duration = std::time::Duration::from_secs(60);
 
 /// 一次读取的结局。`Ok` 之外的每一种都要能说清「为什么没读到」—— 装机验证时全靠它
 /// 判断某个 app 是「被拦了」还是「AX 根本不支持」。
@@ -224,14 +287,6 @@ pub(crate) enum ReadOutcome {
     Unavailable(&'static str),
 }
 
-/// 读光标周围的上下文；任何失败都退化为 `None`，绝不向上抛错。
-///
-/// 这是产品链路要用的入口（里程碑 2 起）。想知道「为什么没读到」用
-/// [`probe_around_cursor`]。
-pub async fn read_around_cursor(budget_chars: usize) -> Option<DocumentWindow> {
-    probe_around_cursor(budget_chars).await.window
-}
-
 /// 带诊断信息的读取。debug 命令用它，装机验证时靠 `status` / `reason` 判断各 app
 /// 的真实覆盖情况。
 pub async fn probe_around_cursor(budget_chars: usize) -> HostDocumentReadResult {
@@ -252,7 +307,7 @@ pub async fn probe_around_cursor(budget_chars: usize) -> HostDocumentReadResult 
 #[cfg(target_os = "macos")]
 async fn macos_probe(budget_chars: usize) -> HostDocumentReadResult {
     let started = std::time::Instant::now();
-    let (app_name, bundle_id) = crate::selection::current_front_app_parts();
+    let (app_name, bundle_id) = crate::focus_target::current_front_app_parts();
 
     let finish = |mut result: HostDocumentReadResult| {
         result.app_name = app_name.clone();
@@ -308,13 +363,13 @@ fn blocked_result(reason: BlockReason) -> HostDocumentReadResult {
 /// 检查（Secure Input / 敏感应用 / 密码框 / 归属一致）；`Err(reason)` = 拒绝截图。
 /// 非 macOS 无实现（屏幕 OCR 功能本身不编译启用）。
 /// 负对照（测试用）：无窗口元素上 SPI 必须失败（真实动态调用，非仅编译）。
-#[cfg(target_os = "macos")]
+#[cfg(all(test, target_os = "macos"))]
 pub(crate) fn screen_ocr_ax_spi_negative_control() -> bool {
     macos::ax_window_id_spi_fails_for_windowless_element()
 }
 
 /// 只读探针（测试用）：当前焦点元素的 (pid, 所在窗口 CGWindowID)。
-#[cfg(target_os = "macos")]
+#[cfg(all(test, target_os = "macos"))]
 pub(crate) fn screen_ocr_focused_window_identity() -> Option<(i32, u32)> {
     macos::focused_identity_for_tests()
 }
@@ -327,93 +382,9 @@ pub(crate) fn screen_ocr_focus_gate(
     macos::ocr_focus_gate(expected_pid, expected_window_id)
 }
 
-
-// ═══════════════════════════════════════════════════════════════════════════
-
-// 手改监听
-// ═══════════════════════════════════════════════════════════════════════════
-
-/// 已武装的手改监听。**drop 即解除** —— 让「忘了解除」在类型层面不成立。
-///
-/// 观察器泄漏不只是资源问题：它意味着我们持续持有别的 app 的 AX 引用、持续被那个 app
-/// 的每次击键唤醒。所以除了这里的 RAII，观察线程自己还有 60 秒硬超时和「前台 app 一换
-/// 就自杀」两道保险。
-pub struct EditWatcher {
-    #[cfg(target_os = "macos")]
-    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
-}
-
-impl EditWatcher {
-    /// 主动解除。幂等，drop 时会自动调用。
-    pub fn disarm(&self) {
-        #[cfg(target_os = "macos")]
-        self.stop.store(true, std::sync::atomic::Ordering::Relaxed);
-    }
-}
-
-impl Drop for EditWatcher {
-    fn drop(&mut self) {
-        self.disarm();
-    }
-}
-
-/// 武装「用户改了我们刚插入的文本」的监听。
-///
-/// `typed_text` 必须是**用户实际看到落到屏幕上的那段文字**：流式路径下它是真正打出去的
-/// 内容，可能短于完整的 LLM 输出（中途失败、被取消）。拿完整输出当基线会让所有没打完的
-/// 会话都被判成「用户删掉了一大段」。
-///
-/// `on_edit` 在观察线程上被调用，可能多次。任何失败都返回 `None` —— 学不到东西是可以
-/// 接受的，影响落字不行。
-pub fn watch_for_edits<F>(typed_text: String, on_edit: F) -> Option<EditWatcher>
-where
-    F: Fn(EditPair) -> bool + Send + Sync + 'static,
-{
-    #[cfg(target_os = "macos")]
-    {
-        if typed_text.trim().is_empty() {
-            return None;
-        }
-        let stop = macos::spawn_edit_watcher(typed_text, Box::new(on_edit))?;
-        Some(EditWatcher { stop })
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        let _ = (typed_text, on_edit);
-        None
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// 丢掉 `EditWatcher` 必须真的把观察线程停掉。
-    ///
-    /// 停止链路横跨两个文件，读单个文件看不全，实际被误读过：`spawn_edit_watcher`
-    /// 只是把 flag 交出来，谁都没置位它 —— 置位的是这里的 `Drop`。解除的调用点也不是
-    /// 显式的 `disarm()`，而是 `*slot = None`（`arm_edit_watch` / `begin_session_as`）。
-    ///
-    /// 这条链一旦断了，症状是**静默的**：观察器活到 60 秒硬超时才停，期间继续读用户
-    /// 正在写的文档、继续上报，还会和新武装的那个并行跑。所以钉一个测试在这里。
-    #[cfg(target_os = "macos")]
-    #[test]
-    fn dropping_the_watcher_stops_the_observer_thread() {
-        use std::sync::atomic::{AtomicBool, Ordering};
-        use std::sync::Arc;
-
-        let stop = Arc::new(AtomicBool::new(false));
-        let watcher = EditWatcher {
-            stop: Arc::clone(&stop),
-        };
-        assert!(!stop.load(Ordering::Relaxed), "刚建好不该是停止态");
-
-        drop(watcher);
-        assert!(
-            stop.load(Ordering::Relaxed),
-            "Drop 必须置位停止 flag —— 观察线程只认这一个信号（macos.rs 的 run_edit_watch_loop）"
-        );
-    }
 
     fn gate(bundle: Option<&str>, role: Option<&str>, subrole: Option<&str>) -> GateInputs {
         GateInputs {

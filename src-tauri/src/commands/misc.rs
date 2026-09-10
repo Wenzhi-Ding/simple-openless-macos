@@ -20,30 +20,12 @@ pub async fn get_hotkey_status(core: CoreState<'_>) -> Result<HotkeyStatus, Stri
 
 #[tauri::command]
 pub fn get_hotkey_capability(coord: CoordinatorState<'_>) -> HotkeyCapability {
-    #[cfg(mobile)]
-    {
-        let _ = coord;
-        return HotkeyCapability::current();
-    }
-    #[cfg(not(mobile))]
     coord.hotkey_capability()
 }
 
 #[tauri::command]
 pub fn set_shortcut_recording_active(coord: CoordinatorState<'_>, active: bool) {
-    #[cfg(mobile)]
-    {
-        let _ = (coord, active);
-        return;
-    }
-    #[cfg(not(mobile))]
     coord.set_shortcut_recording_active(active);
-}
-
-#[tauri::command]
-#[cfg(not(mobile))]
-pub fn get_windows_ime_status() -> WindowsImeStatus {
-    crate::windows_ime_profile::get_windows_ime_status()
 }
 
 #[tauri::command]
@@ -67,16 +49,6 @@ pub async fn list_microphone_devices(
 }
 
 #[tauri::command]
-#[cfg(mobile)]
-pub async fn start_microphone_level_monitor(
-    _app: AppHandle,
-    _device_name: String,
-) -> Result<(), String> {
-    Ok(())
-}
-
-#[tauri::command]
-#[cfg(not(mobile))]
 pub async fn start_microphone_level_monitor(
     app: AppHandle,
     device_name: String,
@@ -110,12 +82,6 @@ pub async fn start_microphone_level_monitor(
 
 #[tauri::command]
 pub async fn stop_microphone_level_monitor(app: AppHandle) {
-    #[cfg(mobile)]
-    {
-        let _ = app;
-        return;
-    }
-    #[cfg(not(mobile))]
     let _ = tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<MicrophoneMonitorState>();
         let recorder = state.lock().take();
@@ -130,41 +96,17 @@ pub async fn stop_microphone_level_monitor(app: AppHandle) {
 /// 路径来自 lib::log_dir_path() —— mac: ~/Library/Logs/OpenLess/openless.log，
 /// windows: %LOCALAPPDATA%\OpenLess\Logs\openless.log。
 ///
-/// Android 上 dialog 返回 `content://` URI，不能用 `std::fs::copy`；走 JNI
-/// ContentResolver 写入，避免 tauri-plugin-fs detachFd 导致 0 字节文件。
 #[tauri::command]
 pub fn export_error_log(target_path: String) -> Result<(), String> {
     let src = resolve_openless_log_path()?;
 
-    #[cfg(target_os = "android")]
-    {
-        if target_path.starts_with("content://") {
-            let bytes = std::fs::read(&src).map_err(|e| format!("读取日志失败：{e}"))?;
-            return crate::android::jni::android::write_content_uri(&target_path, &bytes)
-                .map_err(|e| format!("复制日志失败：{e}"));
-        }
-        let path = target_path
-            .strip_prefix("file://")
-            .unwrap_or(target_path.as_str());
-        return std::fs::copy(&src, std::path::Path::new(path))
-            .map(|_| ())
-            .map_err(|e| format!("复制日志失败：{e}"));
-    }
-
-    #[cfg(not(target_os = "android"))]
-    {
-        std::fs::copy(&src, std::path::Path::new(&target_path))
-            .map(|_| ())
-            .map_err(|e| format!("复制日志失败：{e}"))
-    }
+    std::fs::copy(&src, std::path::Path::new(&target_path))
+        .map(|_| ())
+        .map_err(|e| format!("复制日志失败：{e}"))
 }
 
 fn resolve_openless_log_path() -> Result<std::path::PathBuf, String> {
     let mut candidates = Vec::new();
-    #[cfg(target_os = "android")]
-    {
-        candidates.extend(crate::persistence::android_openless_log_candidates());
-    }
     candidates.push(crate::log_dir_path().join("openless.log"));
 
     if let Some(src) = candidates.iter().find(|path| path.exists()) {

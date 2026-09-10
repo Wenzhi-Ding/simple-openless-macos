@@ -2,8 +2,6 @@
 
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
-import { AndroidPermissionsPanel } from '@android/components/AndroidPermissionsPanel';
-import { checkAndroidMicrophoneAccess, requestAndroidMicrophoneAccess } from '@android/lib/androidMicrophonePermission';
 import {
   checkAccessibilityPermission,
   checkMicrophonePermission,
@@ -12,10 +10,10 @@ import {
   requestAccessibilityPermission,
   requestMicrophonePermission,
 } from '../lib/ipc';
-import { getHotkeyTriggerLabel } from '../lib/hotkey';
+import { defaultDictationHotkey, formatComboLabel } from '../lib/hotkey';
+import { requiresScreenCapturePermission } from '../lib/platform';
 import { checkPermission, permissionAction, permissionStatusKey, type PermissionCheck, dictationPermissionsReady, permissionGranted } from '../lib/permissionOnboarding';
 import { usePermissionRefresh } from '../lib/usePermissionRefresh';
-import { detectOS } from './WindowChrome';
 import { checkScreenCapturePermission, requestScreenCapturePermission } from '../lib/ipc/permissions';
 import type { PermissionStatus, PlatformCapabilities } from '../lib/types';
 import { useHotkeySettings } from '../state/HotkeySettingsContext';
@@ -23,12 +21,6 @@ import { useHotkeySettings } from '../state/HotkeySettingsContext';
 interface OnboardingProps {
   onComplete: () => void;
 }
-
-type AndroidStepId =
-  | 'microphone'
-  | 'accessibility'
-  | 'overlayPermission'
-  | 'overlayConfig'
 
 export function Onboarding({ onComplete }: OnboardingProps) {
   const { t } = useTranslation();
@@ -42,225 +34,8 @@ export function Onboarding({ onComplete }: OnboardingProps) {
     return <OnboardingLoading label={t('common.loading')} />;
   }
 
-  if (platformCaps.platform === 'android') {
-    return <AndroidOnboarding onComplete={onComplete} />;
-  }
 
   return <DesktopOnboarding onComplete={onComplete} platformCaps={platformCaps} />;
-}
-
-function AndroidOnboarding({ onComplete }: OnboardingProps) {
-  const { t } = useTranslation();
-  const [stepIndex, setStepIndex] = useState(0);
-
-  const steps = useMemo<Array<{ id: AndroidStepId; title: string; desc: string }>>(
-    () => [
-      {
-        id: 'microphone',
-        title: t('onboarding.androidSteps.microphoneTitle'),
-        desc: t('onboarding.androidSteps.microphoneDesc'),
-      },
-      {
-        id: 'accessibility',
-        title: t('onboarding.androidSteps.accessibilityTitle'),
-        desc: t('onboarding.androidSteps.accessibilityDesc'),
-      },
-      {
-        id: 'overlayPermission',
-        title: t('onboarding.androidSteps.overlayPermissionTitle'),
-        desc: t('onboarding.androidSteps.overlayPermissionDesc'),
-      },
-      {
-        id: 'overlayConfig',
-        title: t('onboarding.androidSteps.overlayConfigTitle'),
-        desc: t('onboarding.androidSteps.overlayConfigDesc'),
-      },
-    ],
-    [t],
-  );
-
-  const current = steps[stepIndex] ?? steps[0];
-  const isFirst = stepIndex === 0;
-  const isLast = stepIndex === steps.length - 1;
-
-  const goNext = () => {
-    if (isLast) {
-      onComplete();
-      return;
-    }
-    setStepIndex((value) => Math.min(value + 1, steps.length - 1));
-  };
-
-  return (
-    <OnboardingSurface>
-      <div
-        style={{
-          width: '100%',
-          maxWidth: 560,
-          minHeight: '100%',
-          display: 'flex',
-          flexDirection: 'column',
-          gap: 14,
-        }}
-      >
-        <BrandHeader
-          title={t('onboarding.androidTitle')}
-          desc={t('onboarding.androidIntro')}
-          compact
-        />
-
-        <div
-          style={{
-            display: 'grid',
-            gridTemplateColumns: `repeat(${steps.length}, 1fr)`,
-            gap: 5,
-            padding: '0 2px',
-          }}
-          aria-hidden
-        >
-          {steps.map((step, index) => (
-            <div
-              key={step.id}
-              style={{
-                height: 4,
-                borderRadius: 999,
-                background: index <= stepIndex ? 'var(--ol-blue)' : 'var(--ol-line-soft)',
-              }}
-            />
-          ))}
-        </div>
-
-        <div
-          style={{
-            background: 'var(--ol-surface)',
-            border: '0.5px solid var(--ol-line)',
-            borderRadius: 14,
-            boxShadow: 'var(--ol-shadow-lg)',
-            padding: 18,
-            display: 'flex',
-            flexDirection: 'column',
-            gap: 14,
-            minWidth: 0,
-          }}
-        >
-          <div>
-            <div style={{ fontSize: 12, color: 'var(--ol-ink-4)', marginBottom: 4 }}>
-              {t('onboarding.androidStepCounter', { current: stepIndex + 1, total: steps.length })}
-            </div>
-            <div style={{ fontSize: 17, fontWeight: 650 }}>{current.title}</div>
-            <div style={{ fontSize: 12.5, color: 'var(--ol-ink-3)', lineHeight: 1.55, marginTop: 5 }}>
-              {current.desc}
-            </div>
-          </div>
-
-          <AndroidStepContent step={current.id} />
-        </div>
-
-        <div style={{ display: 'flex', gap: 10, width: '100%' }}>
-          <button
-            type="button"
-            onClick={() => setStepIndex((value) => Math.max(value - 1, 0))}
-            disabled={isFirst}
-            style={{
-              ...secondaryButtonStyle,
-              opacity: isFirst ? 0.45 : 1,
-            }}
-          >
-            {t('onboarding.androidBack')}
-          </button>
-          <button type="button" onClick={goNext} style={primaryButtonStyle}>
-            {isLast ? t('onboarding.androidFinish') : t('onboarding.androidNext')}
-          </button>
-        </div>
-
-        <button type="button" onClick={onComplete} style={plainButtonStyle}>
-          {t('onboarding.androidContinue')}
-        </button>
-      </div>
-    </OnboardingSurface>
-  );
-}
-
-function AndroidStepContent({ step }: { step: AndroidStepId }) {
-  if (step === 'microphone') {
-    return <AndroidMicrophoneStep />;
-  }
-  if (step === 'accessibility') {
-    return <AndroidStepCard><AndroidPermissionsPanel mode="accessibility" /></AndroidStepCard>;
-  }
-  if (step === 'overlayPermission') {
-    return <AndroidStepCard><AndroidPermissionsPanel mode="overlayPermission" /></AndroidStepCard>;
-  }
-  if (step === 'overlayConfig') {
-    return <AndroidStepCard><AndroidPermissionsPanel mode="overlayConfig" /></AndroidStepCard>;
-  }
-  // 减法改造(纯本地):ASR/LLM provider 配置步骤已移除——本地引擎开箱即用,
-  // Android onboarding 直接完成。
-  return null;
-}
-
-function AndroidMicrophoneStep() {
-  const { t } = useTranslation();
-  const [status, setStatus] = useState<PermissionStatus>('notDetermined');
-  const [busy, setBusy] = useState(false);
-
-  const refresh = async () => {
-    setStatus(await checkAndroidMicrophoneAccess());
-  };
-
-  useEffect(() => {
-    void refresh();
-    // issue #470：纯事件驱动，去掉高频轮询。窗口重新聚焦或重新可见时刷新（授权必经系统设置再切回）。
-    const onFocus = () => { void refresh(); };
-    const onVisibility = () => { if (document.visibilityState === 'visible') void refresh(); };
-    window.addEventListener('focus', onFocus);
-    document.addEventListener('visibilitychange', onVisibility);
-    return () => {
-      window.removeEventListener('focus', onFocus);
-      document.removeEventListener('visibilitychange', onVisibility);
-    };
-  }, []);
-
-  const request = async () => {
-    setBusy(true);
-    try {
-      if (status === 'denied' || status === 'restricted') {
-        await openSystemSettings('microphone');
-      } else {
-        setStatus(await requestAndroidMicrophoneAccess());
-      }
-      await refresh();
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const granted = status === 'granted' || status === 'notApplicable';
-  return (
-    <AndroidStepCard>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
-        <div>
-          <div style={{ fontSize: 13, fontWeight: 600 }}>{t('onboarding.micTitle')}</div>
-          <div style={{ fontSize: 12, color: 'var(--ol-ink-3)', lineHeight: 1.5, marginTop: 4 }}>
-            {t('onboarding.micDesc')}
-          </div>
-        </div>
-        <StatusBadge granted={granted} label={granted ? t('settings.permissions.granted') : t('settings.permissions.denied')} />
-      </div>
-      <button
-        type="button"
-        onClick={request}
-        disabled={busy || granted}
-        style={{
-          ...primaryButtonStyle,
-          width: '100%',
-          opacity: busy || granted ? 0.55 : 1,
-        }}
-      >
-        {granted ? t('onboarding.actionGranted') : t('onboarding.actionRequestMic')}
-      </button>
-    </AndroidStepCard>
-  );
 }
 
 function DesktopOnboarding({
@@ -273,8 +48,9 @@ function DesktopOnboarding({
   const [screenCapture, setScreenCapture] = useState<PermissionCheck>('loading');
   const [permissionError, setPermissionError] = useState(false);
   const [busy, setBusy] = useState(false);
-  const isMac = platformCaps.platform === 'desktop' && detectOS() === 'mac';
-  const { capability } = useHotkeySettings();
+  const isMac = requiresScreenCapturePermission(platformCaps);
+  const { capability, prefs } = useHotkeySettings();
+  const dictationHotkeyLabel = formatComboLabel(prefs?.dictationHotkey ?? defaultDictationHotkey());
   const requiresAccessibility = isMac || !!capability?.requiresAccessibilityPermission;
   const refresh = usePermissionRefresh(async active => {
     const [a, m, s] = await Promise.all([
@@ -325,11 +101,11 @@ function DesktopOnboarding({
           boxShadow: 'var(--ol-shadow-lg)',
         }}
       >
-        <BrandHeader title={t('settings.permissions.title')} desc={problems.length ? t('permissions.needsAttention', { defaultValue: '待检查或处理：{{names}}；已授权项目无需重新授权。', names: problems.join('、') }) : t('settings.permissions.granted')} />
+        <BrandHeader title={t('settings.permissions.title')} desc={problems.length ? t('permissions.needsAttention', { names: problems.join('、') }) : t('settings.permissions.granted')} />
 
         {requiresAccessibility && (
           <PermissionStep index={1} title={t('settings.permissions.accLabel')}
-            desc={t('onboarding.accessibilityDesc', { trigger: capability ? getHotkeyTriggerLabel(capability.availableTriggers[0]) : '右 Command' })}
+            desc={t('onboarding.accessibilityDesc', { trigger: dictationHotkeyLabel })}
             status={accessibility} actionLabel={label(accessibility)}
             onAction={permissionAction(accessibility) === 'retry' ? refresh : onGrantAccessibility}
             disabled={busy || permissionAction(accessibility) === 'none'} />
@@ -441,43 +217,6 @@ function BrandHeader({ title, desc, compact = false }: { title: string; desc: st
   );
 }
 
-function AndroidStepCard({ children }: { children: ReactNode }) {
-  return (
-    <div
-      style={{
-        display: 'flex',
-        flexDirection: 'column',
-        gap: 12,
-        padding: 14,
-        borderRadius: 10,
-        background: 'var(--ol-surface-2)',
-        border: '0.5px solid var(--ol-line-soft)',
-        minWidth: 0,
-      }}
-    >
-      {children}
-    </div>
-  );
-}
-
-function StatusBadge({ granted, label }: { granted: boolean; label: string }) {
-  return (
-    <span
-      style={{
-        flexShrink: 0,
-        fontSize: 11,
-        fontWeight: 600,
-        borderRadius: 999,
-        padding: '4px 8px',
-        color: granted ? 'var(--ol-ok)' : 'var(--ol-ink-4)',
-        background: granted ? 'rgba(40, 160, 90, 0.12)' : 'rgba(0,0,0,0.06)',
-      }}
-    >
-      {label}
-    </span>
-  );
-}
-
 interface StepProps {
   index: number;
   title: string;
@@ -522,7 +261,7 @@ function PermissionStep({ index, title, desc, status, actionLabel, onAction, dis
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontSize: 13.5, fontWeight: 600 }}>{title}</div>
         <div role="status" style={{ fontSize: 12, color: status === 'granted' ? 'var(--ol-green, #16834a)' : 'var(--ol-ink-3)' }}>
-          {t('settings.permissions.' + permissionStatusKey(status), { defaultValue: '检查失败（不是未授权），请重试' })}
+          {t('settings.permissions.' + permissionStatusKey(status))}
         </div>
         <div style={{ fontSize: 12, color: 'var(--ol-ink-3)', marginTop: 3, lineHeight: 1.5 }}>{desc}</div>
         {hint && (
@@ -554,47 +293,6 @@ function PermissionStep({ index, title, desc, status, actionLabel, onAction, dis
     </div>
   );
 }
-
-const primaryButtonStyle = {
-  flex: 1,
-  minHeight: 42,
-  padding: '10px 14px',
-  fontSize: 13,
-  fontWeight: 600,
-  fontFamily: 'inherit',
-  border: 0,
-  borderRadius: 10,
-  background: 'var(--ol-primary-solid-bg)',
-  color: 'var(--ol-primary-solid-ink)',
-  cursor: 'default',
-} as const;
-
-const secondaryButtonStyle = {
-  flex: 1,
-  minHeight: 42,
-  padding: '10px 14px',
-  fontSize: 13,
-  fontWeight: 600,
-  fontFamily: 'inherit',
-  border: '0.5px solid var(--ol-line-strong)',
-  borderRadius: 10,
-  background: 'var(--ol-surface)',
-  color: 'var(--ol-ink-2)',
-  cursor: 'default',
-} as const;
-
-const plainButtonStyle = {
-  width: '100%',
-  padding: '10px 14px',
-  fontSize: 12.5,
-  fontWeight: 500,
-  fontFamily: 'inherit',
-  border: 0,
-  borderRadius: 8,
-  background: 'transparent',
-  color: 'var(--ol-ink-4)',
-  cursor: 'default',
-} as const;
 
 const footerHintStyle = {
   marginTop: 18,

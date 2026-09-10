@@ -1,7 +1,4 @@
-#![cfg_attr(target_os = "linux", allow(dead_code, unused_variables))]
-//! Storage path resolution: models root, recordings archive (with retention
-//! pruning), and the Windows
-//! Foundry Local cache roots.
+//! Storage path resolution for the fixed model and recording archives.
 
 use std::fs;
 use std::path::PathBuf;
@@ -157,43 +154,6 @@ pub fn prune_recordings(retention_days: u32, max_entries: Option<u32>) -> Result
 /// 决定文件是否被写过）。前端用 `read_audio_recording` IPC 读字节流喂 HTMLAudio。
 pub fn recording_path_for_session(session_id: &str) -> Result<PathBuf> {
     Ok(recordings_root()?.join(format!("{session_id}.wav")))
-}
-
-/// Foundry Local 下载与缓存根目录。DLL 和模型都不打进安装包，和 Qwen3-ASR
-/// 一样放在 OpenLess 的 models 目录下，卸载清理用户数据时可以一起删除。
-#[cfg(target_os = "windows")]
-pub fn foundry_local_root() -> Result<PathBuf> {
-    let dir = models_root()?.join("foundry-local");
-    ensure_dir(&dir)?;
-    Ok(dir)
-}
-
-#[cfg(target_os = "windows")]
-pub fn foundry_native_runtime_root() -> Result<PathBuf> {
-    let dir = foundry_local_root()?.join("runtime");
-    ensure_dir(&dir)?;
-    Ok(dir)
-}
-
-#[cfg(target_os = "windows")]
-pub fn foundry_model_cache_root() -> Result<PathBuf> {
-    let dir = foundry_local_root()?;
-    ensure_dir(&dir)?;
-    Ok(dir)
-}
-
-#[cfg(target_os = "windows")]
-pub fn foundry_app_data_root() -> Result<PathBuf> {
-    let dir = foundry_local_root()?.join("app-data");
-    ensure_dir(&dir)?;
-    Ok(dir)
-}
-
-#[cfg(target_os = "windows")]
-pub fn foundry_logs_root() -> Result<PathBuf> {
-    let dir = foundry_local_root()?.join("logs");
-    ensure_dir(&dir)?;
-    Ok(dir)
 }
 
 #[cfg(test)]

@@ -4,7 +4,7 @@
 
 import { useState, type CSSProperties, type ReactNode } from 'react';
 import { Icon } from '../components/Icon';
-import { useMobileLayout, useReadableLayout, useConservativeLayout } from '../lib/useMobileLayout';
+import { useNarrowLayout, useReadableLayout, useConservativeLayout } from '../lib/useResponsiveLayout';
 
 interface PageHeaderProps {
   kicker?: string;
@@ -15,18 +15,18 @@ interface PageHeaderProps {
 }
 
 export function PageHeader({ kicker, title, desc, right, titleRight }: PageHeaderProps) {
-  const mobile = useMobileLayout();
+  const narrow = useNarrowLayout();
   const readable = useReadableLayout();
   const conservative = useConservativeLayout();
   const preferenceStack = readable || conservative;
-  const stackLayout = mobile || preferenceStack;
+  const stackLayout = narrow || preferenceStack;
   return (
     <div style={{
       display: 'flex',
       alignItems: 'flex-start',
       justifyContent: 'space-between',
-      gap: stackLayout ? 12 : mobile ? 12 : 24,
-      marginBottom: stackLayout ? 16 : mobile ? 16 : 24,
+      gap: stackLayout ? 12 : narrow ? 12 : 24,
+      marginBottom: stackLayout ? 16 : narrow ? 16 : 24,
       flexWrap: stackLayout ? 'wrap' : 'nowrap',
     }}>
       <div style={{ minWidth: 0 }}>
@@ -34,7 +34,7 @@ export function PageHeader({ kicker, title, desc, right, titleRight }: PageHeade
           <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '.08em', textTransform: 'uppercase', color: 'var(--ol-ink-4)', marginBottom: 8 }}>{kicker}</div>
         )}
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-          <h1 style={{ margin: 0, fontSize: mobile ? 22 : 26, fontWeight: 600, letterSpacing: '-0.02em', color: 'var(--ol-ink)' }}>{title}</h1>
+          <h1 style={{ margin: 0, fontSize: narrow ? 22 : 26, fontWeight: 600, letterSpacing: '-0.02em', color: 'var(--ol-ink)' }}>{title}</h1>
           {titleRight}
         </div>
         {desc && <p style={{ margin: '8px 0 0', fontSize: 13, color: 'var(--ol-ink-3)', maxWidth: preferenceStack ? undefined : 640, lineHeight: 1.55 }}>{desc}</p>}

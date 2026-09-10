@@ -2,9 +2,7 @@
 
 use std::collections::BTreeSet;
 
-use crate::shared_types::{
-    ComboBinding, HotkeyTrigger, ShortcutBinding, StylePackHotkey, UserPreferences,
-};
+use crate::shared_types::{ComboBinding, HotkeyTrigger, ShortcutBinding, UserPreferences};
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum ShortcutBindingError {
@@ -62,12 +60,6 @@ fn normalize_modifier_tag(raw: &str) -> String {
     if is_side_specific_modifier_tag(&tag) {
         return tag;
     }
-    #[cfg(target_os = "windows")]
-    {
-        if matches!(tag.as_str(), "cmd" | "command") {
-            return "ctrl".to_string();
-        }
-    }
     tag
 }
 
@@ -76,11 +68,6 @@ fn physical_class_from_generic_tag(tag: &str) -> String {
         "ctrl" | "control" => "Control".to_string(),
         "alt" | "option" | "opt" => "Alt".to_string(),
         "shift" => "Shift".to_string(),
-        #[cfg(target_os = "windows")]
-        "cmd" | "command" => "Control".to_string(),
-        #[cfg(target_os = "windows")]
-        "super" | "meta" | "win" => "Super".to_string(),
-        #[cfg(not(target_os = "windows"))]
         "cmd" | "command" | "super" | "meta" | "win" => "Super".to_string(),
         other => other.to_string(),
     }
@@ -335,7 +322,7 @@ pub fn reject_modifier_only_action_shortcut(binding: &ShortcutBinding) -> Result
 
 pub fn reject_bare_shift_dictation_shortcut(binding: &ShortcutBinding) -> Result<(), String> {
     if binding.modifiers.is_empty() && binding.primary.eq_ignore_ascii_case("shift") {
-        return Err("Shift 单键目前只能用于翻译快捷键".into());
+        return Err("Shift 单键不能作为快捷键，请使用组合键".into());
     }
     Ok(())
 }
@@ -368,186 +355,11 @@ fn reject_overlap(
     Ok(())
 }
 
-pub fn reject_dictation_qa_hotkey_overlap(
-    dictation: &ShortcutBinding,
-    qa: &ShortcutBinding,
-) -> Result<(), String> {
-    reject_overlap(dictation, qa, "QA 快捷键不能和听写快捷键相同")
-}
-
-pub fn reject_dictation_translation_hotkey_overlap(
-    dictation: &ShortcutBinding,
-    translation: &ShortcutBinding,
-) -> Result<(), String> {
-    reject_overlap(dictation, translation, "翻译快捷键不能和听写快捷键相同")
-}
-
-pub fn reject_qa_translation_hotkey_overlap(
-    qa: &ShortcutBinding,
-    translation: &ShortcutBinding,
-) -> Result<(), String> {
-    reject_overlap(qa, translation, "翻译快捷键不能和 QA 快捷键相同")
-}
-
-pub fn reject_qa_switch_style_hotkey_overlap(
-    qa: &ShortcutBinding,
-    switch_style: &ShortcutBinding,
-) -> Result<(), String> {
-    reject_overlap(qa, switch_style, "切换风格快捷键不能和 QA 快捷键相同")
-}
-
-pub fn reject_qa_open_app_hotkey_overlap(
-    qa: &ShortcutBinding,
-    open_app: &ShortcutBinding,
-) -> Result<(), String> {
-    reject_overlap(qa, open_app, "打开应用快捷键不能和 QA 快捷键相同")
-}
-
-pub fn reject_qa_less_computer_hotkey_overlap(
-    qa: &ShortcutBinding,
-    less_computer: &ShortcutBinding,
-) -> Result<(), String> {
-    reject_overlap(
-        qa,
-        less_computer,
-        "Less Computer 快捷键不能和 QA 快捷键相同",
-    )
-}
-
 pub fn reject_non_dictation_side_specific_shortcuts(
     preferences: &UserPreferences,
 ) -> Result<(), String> {
-    reject_side_specific_non_dictation(&preferences.translation_hotkey)?;
-    for binding in [
-        preferences.qa_hotkey.as_ref(),
-        preferences.switch_style_hotkey.as_ref(),
-        preferences.open_app_hotkey.as_ref(),
-        preferences.coding_agent_voice_hotkey.as_ref(),
-    ]
-    .into_iter()
-    .flatten()
-    {
+    for binding in [preferences.open_app_hotkey.as_ref()].into_iter().flatten() {
         reject_side_specific_non_dictation(binding)?;
-    }
-    if let Some(binding) = preferences.selection_polish_hotkey.as_ref() {
-        validate_shortcut_binding(binding).map_err(|error| error.to_string())?;
-        reject_side_specific_non_dictation(binding)?;
-        reject_bare_shift_dictation_shortcut(binding)?;
-    }
-    Ok(())
-}
-
-pub fn reject_selection_polish_hotkey_collisions(
-    selection_polish: &ShortcutBinding,
-    preferences: &UserPreferences,
-) -> Result<(), String> {
-    reject_overlap(
-        selection_polish,
-        &preferences.dictation_hotkey,
-        "选区润色快捷键不能和听写快捷键相同",
-    )?;
-    reject_overlap(
-        selection_polish,
-        &preferences.translation_hotkey,
-        "选区润色快捷键不能和翻译快捷键相同",
-    )?;
-    if let Some(binding) = preferences.qa_hotkey.as_ref() {
-        reject_overlap(
-            selection_polish,
-            binding,
-            "选区润色快捷键不能和 QA 快捷键相同",
-        )?;
-    }
-    if let Some(binding) = preferences.switch_style_hotkey.as_ref() {
-        reject_overlap(
-            selection_polish,
-            binding,
-            "选区润色快捷键不能和切换风格快捷键相同",
-        )?;
-    }
-    if let Some(binding) = preferences.open_app_hotkey.as_ref() {
-        reject_overlap(
-            selection_polish,
-            binding,
-            "选区润色快捷键不能和打开应用快捷键相同",
-        )?;
-    }
-    if let Some(binding) = preferences.coding_agent_voice_hotkey.as_ref() {
-        reject_overlap(
-            selection_polish,
-            binding,
-            "选区润色快捷键不能和 Less Computer 快捷键相同",
-        )?;
-    }
-    Ok(())
-}
-
-fn reject_style_pack_hotkey_overlap_with_others(
-    binding: &ShortcutBinding,
-    preferences: &UserPreferences,
-) -> Result<(), String> {
-    reject_overlap(
-        binding,
-        &preferences.dictation_hotkey,
-        "风格快捷键不能和听写快捷键相同",
-    )?;
-    reject_overlap(
-        binding,
-        &preferences.translation_hotkey,
-        "风格快捷键不能和翻译快捷键相同",
-    )?;
-    let optional_bindings = [
-        (
-            preferences.qa_hotkey.as_ref(),
-            "风格快捷键不能和 QA 快捷键相同",
-        ),
-        (
-            preferences.switch_style_hotkey.as_ref(),
-            "风格快捷键不能和切换风格快捷键相同",
-        ),
-        (
-            preferences.open_app_hotkey.as_ref(),
-            "风格快捷键不能和打开应用快捷键相同",
-        ),
-        (
-            preferences.coding_agent_voice_hotkey.as_ref(),
-            "风格快捷键不能和 Less Computer 快捷键相同",
-        ),
-        (
-            preferences.selection_polish_hotkey.as_ref(),
-            "风格快捷键不能和选区润色快捷键相同",
-        ),
-    ];
-    for (other, message) in optional_bindings {
-        if let Some(other) = other {
-            reject_overlap(binding, other, message)?;
-        }
-    }
-    Ok(())
-}
-
-pub fn reject_style_pack_hotkey_conflicts(
-    hotkeys: &[StylePackHotkey],
-    preferences: &UserPreferences,
-) -> Result<(), String> {
-    for (index, entry) in hotkeys.iter().enumerate() {
-        if entry.pack_id.trim().is_empty() {
-            return Err("风格快捷键必须选择一个风格包".into());
-        }
-        validate_shortcut_binding(&entry.binding).map_err(|error| error.to_string())?;
-        reject_side_specific_non_dictation(&entry.binding)?;
-        reject_modifier_only_action_shortcut(&entry.binding)?;
-        for other in &hotkeys[..index] {
-            if other.pack_id == entry.pack_id {
-                return Err("同一个风格包只能绑定一个快捷键".into());
-            }
-            reject_overlap(
-                &other.binding,
-                &entry.binding,
-                "两个风格快捷键不能使用相同按键",
-            )?;
-        }
-        reject_style_pack_hotkey_overlap_with_others(&entry.binding, preferences)?;
     }
     Ok(())
 }
@@ -558,46 +370,26 @@ pub fn reject_style_pack_hotkey_conflicts(
 /// Dictation is the highest-priority binding and is never changed. Other
 /// bindings are considered in product-priority order: an invalid or colliding
 /// value first falls back to its previous value, then is disabled when no safe
-/// fallback exists. Translation is required, so it falls back to its default.
-/// Style-pack shortcuts are lowest priority and are reconciled last.
+/// fallback exists.
 pub fn reconcile_hotkey_collisions(
     preferences: &mut UserPreferences,
     previous: &UserPreferences,
 ) -> usize {
     #[derive(Clone, Copy, PartialEq, Eq)]
     enum NonCoreHotkey {
-        Translation,
-        Qa,
-        SwitchStyle,
         OpenApp,
-        SelectionPolish,
-        LessComputer,
     }
 
     impl NonCoreHotkey {
         fn get(self, preferences: &UserPreferences) -> Option<ShortcutBinding> {
             match self {
-                Self::Translation => Some(preferences.translation_hotkey.clone()),
-                Self::Qa => preferences.qa_hotkey.clone(),
-                Self::SwitchStyle => preferences.switch_style_hotkey.clone(),
                 Self::OpenApp => preferences.open_app_hotkey.clone(),
-                Self::SelectionPolish => preferences.selection_polish_hotkey.clone(),
-                Self::LessComputer => preferences.coding_agent_voice_hotkey.clone(),
             }
         }
 
         fn set(self, preferences: &mut UserPreferences, value: Option<ShortcutBinding>) {
             match self {
-                Self::Translation => {
-                    if let Some(value) = value {
-                        preferences.translation_hotkey = value;
-                    }
-                }
-                Self::Qa => preferences.qa_hotkey = value,
-                Self::SwitchStyle => preferences.switch_style_hotkey = value,
                 Self::OpenApp => preferences.open_app_hotkey = value,
-                Self::SelectionPolish => preferences.selection_polish_hotkey = value,
-                Self::LessComputer => preferences.coding_agent_voice_hotkey = value,
             }
         }
 
@@ -606,23 +398,12 @@ pub fn reconcile_hotkey_collisions(
                 return false;
             }
             match self {
-                Self::SelectionPolish => {
-                    validate_shortcut_binding(binding).is_ok()
-                        && reject_bare_shift_dictation_shortcut(binding).is_ok()
-                }
                 _ => true,
             }
         }
     }
 
-    const ORDER: [NonCoreHotkey; 6] = [
-        NonCoreHotkey::Translation,
-        NonCoreHotkey::Qa,
-        NonCoreHotkey::SwitchStyle,
-        NonCoreHotkey::OpenApp,
-        NonCoreHotkey::SelectionPolish,
-        NonCoreHotkey::LessComputer,
-    ];
+    const ORDER: [NonCoreHotkey; 1] = [NonCoreHotkey::OpenApp];
     let mut higher = vec![preferences.dictation_hotkey.clone()];
     let mut adjusted = 0;
     for key in ORDER {
@@ -634,15 +415,10 @@ pub fn reconcile_hotkey_collisions(
             higher.push(current);
             continue;
         }
-        let fallback = key.get(previous).filter(|candidate| {
+        let resolved = key.get(previous).filter(|candidate| {
             !higher.iter().any(|held| bindings_overlap(held, candidate))
                 && key.binding_is_valid(candidate)
         });
-        let resolved = if key == NonCoreHotkey::Translation && fallback.is_none() {
-            Some(UserPreferences::default().translation_hotkey)
-        } else {
-            fallback
-        };
         key.set(preferences, resolved.clone());
         adjusted += 1;
         if let Some(value) = resolved {
@@ -650,124 +426,20 @@ pub fn reconcile_hotkey_collisions(
         }
     }
 
-    let mut kept = Vec::<StylePackHotkey>::new();
-    for entry in &preferences.style_pack_hotkeys {
-        let candidate_is_valid = |candidate: &StylePackHotkey| {
-            !candidate.pack_id.trim().is_empty()
-                && validate_shortcut_binding(&candidate.binding).is_ok()
-                && reject_side_specific_non_dictation(&candidate.binding).is_ok()
-                && reject_modifier_only_action_shortcut(&candidate.binding).is_ok()
-                && !kept.iter().any(|held| {
-                    held.pack_id == candidate.pack_id
-                        || bindings_overlap(&held.binding, &candidate.binding)
-                })
-                && !higher
-                    .iter()
-                    .any(|held| bindings_overlap(held, &candidate.binding))
-        };
-        if candidate_is_valid(entry) {
-            kept.push(entry.clone());
-            continue;
-        }
-        adjusted += 1;
-        if let Some(fallback) = previous
-            .style_pack_hotkeys
-            .iter()
-            .find(|old| old.pack_id == entry.pack_id)
-            .filter(|old| candidate_is_valid(old))
-        {
-            kept.push(fallback.clone());
-        }
-    }
-    if kept != preferences.style_pack_hotkeys {
-        preferences.style_pack_hotkeys = kept;
-    }
     adjusted
 }
 
 pub fn reject_hotkey_collisions(preferences: &UserPreferences) -> Result<(), String> {
     reject_non_dictation_side_specific_shortcuts(preferences)?;
-    let switch_style = preferences.switch_style_hotkey.as_ref();
     let open_app = preferences.open_app_hotkey.as_ref();
-    let less_computer = preferences.coding_agent_voice_hotkey.as_ref();
-    if let Some(qa) = preferences.qa_hotkey.as_ref() {
-        reject_dictation_qa_hotkey_overlap(&preferences.dictation_hotkey, qa)?;
-        reject_qa_translation_hotkey_overlap(qa, &preferences.translation_hotkey)?;
-        if let Some(binding) = less_computer {
-            reject_qa_less_computer_hotkey_overlap(qa, binding)?;
-        }
-        if let Some(binding) = switch_style {
-            reject_qa_switch_style_hotkey_overlap(qa, binding)?;
-        }
-        if let Some(binding) = open_app {
-            reject_qa_open_app_hotkey_overlap(qa, binding)?;
-        }
-    }
-    reject_dictation_translation_hotkey_overlap(
-        &preferences.dictation_hotkey,
-        &preferences.translation_hotkey,
-    )?;
-    if let Some(binding) = less_computer {
-        reject_overlap(
-            &preferences.dictation_hotkey,
-            binding,
-            "Less Computer 快捷键不能和听写快捷键相同",
-        )?;
-        reject_overlap(
-            &preferences.translation_hotkey,
-            binding,
-            "Less Computer 快捷键不能和翻译快捷键相同",
-        )?;
-    }
-    if let Some(binding) = switch_style {
-        reject_overlap(
-            &preferences.dictation_hotkey,
-            binding,
-            "切换风格快捷键不能和听写快捷键相同",
-        )?;
-        reject_overlap(
-            &preferences.translation_hotkey,
-            binding,
-            "切换风格快捷键不能和翻译快捷键相同",
-        )?;
-        if let Some(less_computer) = less_computer {
-            reject_overlap(
-                less_computer,
-                binding,
-                "Less Computer 快捷键不能和切换风格快捷键相同",
-            )?;
-        }
-    }
     if let Some(binding) = open_app {
         reject_overlap(
             &preferences.dictation_hotkey,
             binding,
             "打开应用快捷键不能和听写快捷键相同",
         )?;
-        reject_overlap(
-            &preferences.translation_hotkey,
-            binding,
-            "打开应用快捷键不能和翻译快捷键相同",
-        )?;
-        if let Some(less_computer) = less_computer {
-            reject_overlap(
-                less_computer,
-                binding,
-                "Less Computer 快捷键不能和打开应用快捷键相同",
-            )?;
-        }
     }
-    if let (Some(switch_style), Some(open_app)) = (switch_style, open_app) {
-        reject_overlap(
-            switch_style,
-            open_app,
-            "打开应用快捷键不能和切换风格快捷键相同",
-        )?;
-    }
-    if let Some(binding) = preferences.selection_polish_hotkey.as_ref() {
-        reject_selection_polish_hotkey_collisions(binding, preferences)?;
-    }
-    reject_style_pack_hotkey_conflicts(&preferences.style_pack_hotkeys, preferences)
+    Ok(())
 }
 
 #[cfg(test)]
@@ -823,72 +495,5 @@ mod tests {
             legacy_modifier_trigger(&binding),
             Some(HotkeyTrigger::RightControl)
         );
-    }
-
-    #[test]
-    fn settings_reconciliation_disables_a_legacy_selection_collision() {
-        let previous = UserPreferences {
-            dictation_hotkey: ShortcutBinding {
-                primary: "RightAlt".into(),
-                modifiers: vec![],
-            },
-            selection_polish_hotkey: Some(ShortcutBinding {
-                primary: "RightAlt".into(),
-                modifiers: vec![],
-            }),
-            ..UserPreferences::default()
-        };
-        let mut next = previous.clone();
-
-        let adjusted = reconcile_hotkey_collisions(&mut next, &previous);
-
-        assert_eq!(adjusted, 1);
-        assert!(next.selection_polish_hotkey.is_none());
-        assert!(reject_hotkey_collisions(&next).is_ok());
-    }
-
-    #[test]
-    fn settings_reconciliation_restores_non_core_conflicts_and_invalid_bindings() {
-        let previous = UserPreferences {
-            qa_hotkey: Some(combo("E", &["ctrl", "shift"])),
-            ..UserPreferences::default()
-        };
-        let mut next = previous.clone();
-        next.qa_hotkey = Some(combo("Shift", &[]));
-        next.translation_hotkey = combo("D", &["cmd-left"]);
-
-        let adjusted = reconcile_hotkey_collisions(&mut next, &previous);
-
-        assert_eq!(adjusted, 2);
-        assert_eq!(next.qa_hotkey, previous.qa_hotkey);
-        assert_eq!(next.translation_hotkey, previous.translation_hotkey);
-        assert!(reject_hotkey_collisions(&next).is_ok());
-    }
-
-    #[test]
-    fn settings_reconciliation_treats_style_pack_shortcuts_as_lowest_priority() {
-        let previous = UserPreferences::default();
-        let mut next = previous.clone();
-        next.style_pack_hotkeys = vec![
-            StylePackHotkey {
-                pack_id: "custom.one".into(),
-                binding: next.dictation_hotkey.clone(),
-            },
-            StylePackHotkey {
-                pack_id: "custom.two".into(),
-                binding: combo("K", &["ctrl", "shift"]),
-            },
-            StylePackHotkey {
-                pack_id: "custom.three".into(),
-                binding: combo("K", &["ctrl", "shift"]),
-            },
-        ];
-
-        let adjusted = reconcile_hotkey_collisions(&mut next, &previous);
-
-        assert_eq!(adjusted, 2);
-        assert_eq!(next.style_pack_hotkeys.len(), 1);
-        assert_eq!(next.style_pack_hotkeys[0].pack_id, "custom.two");
-        assert!(reject_hotkey_collisions(&next).is_ok());
     }
 }

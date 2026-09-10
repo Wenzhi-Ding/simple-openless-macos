@@ -2,7 +2,6 @@
 // 自 Settings.tsx 的 RecordingSection「历史与上下文」折叠组拆出，逻辑零改动。
 
 import { useTranslation } from 'react-i18next';
-import { detectOS } from '../../components/WindowChrome';
 import { useHotkeySettings } from '../../state/HotkeySettingsContext';
 import { Card } from '../_atoms';
 import { SettingRow, SectionTitle, inputStyle } from './shared';
@@ -80,31 +79,6 @@ export function DataStorageSection() {
           style={{ ...inputStyle, width: 80, textAlign: 'right' }}
         />
       </SettingRow>
-      {/* 光标上下文：固定开启（开关已删，后端对旧值强制 true）。敏感应用等
-          fail-closed 门控在 core，与本展示无关。 */}
-      {detectOS() === 'mac' && (
-        <SettingRow
-          label={t('settings.dataStorage.cursorContextLabel')}
-          desc={t('settings.dataStorage.cursorContextDesc')}
-        >
-          <span style={{ fontSize: 12, color: 'var(--ol-ink-3)' }}>
-            {t('settings.dataStorage.alwaysOn')}
-          </span>
-        </SettingRow>
-      )}
-      {/* 屏幕上下文（本地 OCR）：权限统一由初始引导与权限面板管理。 */}
-      {detectOS() === 'mac' && (
-        <SettingRow
-          label={t('settings.dataStorage.screenOcrLabel')}
-          desc={t('settings.dataStorage.screenOcrDesc')}
-        >
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <span style={{ fontSize: 12, color: 'var(--ol-ink-3)' }}>
-              {t('settings.dataStorage.alwaysOn')}
-            </span>
-          </div>
-        </SettingRow>
-      )}
     </Card>
   );
 }

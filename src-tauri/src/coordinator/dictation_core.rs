@@ -1,7 +1,5 @@
-use std::sync::Arc;
-
 use super::Inner;
-
+use std::sync::Arc;
 async fn dispatch(
     inner: &Arc<Inner>,
     edge: openless_core::DictationHotkeyEdge,
@@ -11,7 +9,6 @@ async fn dispatch(
     }
     inner.backend.dispatch_dictation_hotkey_edge(edge).await
 }
-
 pub(super) async fn handle_pressed_edge(
     inner: &Arc<Inner>,
     pressed_at: std::time::Instant,
@@ -30,7 +27,6 @@ pub(super) async fn handle_pressed_edge(
         Err(error) => log::warn!("[coord] core dictation press failed: {error}"),
     }
 }
-
 pub(super) async fn handle_released_edge(
     inner: &Arc<Inner>,
     released_at: std::time::Instant,
@@ -49,7 +45,6 @@ pub(super) async fn handle_released_edge(
         Err(error) => log::warn!("[coord] core dictation release failed: {error}"),
     }
 }
-
 pub(super) fn handle_trigger_combined(inner: &Arc<Inner>, edge: crate::hotkey::HotkeyCombinedEdge) {
     let result = inner.host.block_on(dispatch(
         inner,
@@ -63,7 +58,6 @@ pub(super) fn handle_trigger_combined(inner: &Arc<Inner>, edge: crate::hotkey::H
         Err(error) => log::warn!("[coord] core dictation combo cancel failed: {error}"),
     }
 }
-
 #[cfg(any(debug_assertions, test))]
 pub(super) async fn handle_pressed(
     inner: &Arc<Inner>,
@@ -72,7 +66,6 @@ pub(super) async fn handle_pressed(
 ) {
     handle_pressed_edge(inner, pressed_at, press_id).await;
 }
-
 #[cfg(any(debug_assertions, test))]
 pub(super) async fn handle_released(
     inner: &Arc<Inner>,
@@ -81,7 +74,6 @@ pub(super) async fn handle_released(
 ) {
     handle_released_edge(inner, released_at, press_id).await;
 }
-
 pub(super) async fn cancel_active_session(inner: &Arc<Inner>) -> bool {
     let session_id = inner.backend.snapshot().dictation.session_id;
     match inner.backend.cancel_dictation(session_id).await {
@@ -91,14 +83,5 @@ pub(super) async fn cancel_active_session(inner: &Arc<Inner>) -> bool {
             log::warn!("[coord] core dictation cancel failed: {error}");
             false
         }
-    }
-}
-
-#[cfg(target_os = "windows")]
-pub(super) fn windows_sendinput_options_from_prefs(
-    preferences: &crate::types::UserPreferences,
-) -> crate::unicode_keystroke::WindowsSendInputOptions {
-    crate::unicode_keystroke::WindowsSendInputOptions {
-        newline_mode: preferences.windows_sendinput_newline_mode,
     }
 }

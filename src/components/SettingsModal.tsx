@@ -13,7 +13,7 @@ import { useTranslation } from 'react-i18next';
 import { Icon } from './Icon';
 import { SavedToast } from './SavedToast';
 import { useSavedToastListener } from '../lib/savedEvent';
-import { useMobileLayout, useConservativeLayout } from '../lib/useMobileLayout';
+import { useNarrowLayout, useConservativeLayout } from '../lib/useResponsiveLayout';
 import type { OS } from './WindowChrome';
 import { AboutTab, GeneralTab, PrivacyTab, AdvancedTab } from '../pages/settings/tabs';
 import { chipSelectedStyle } from '../pages/settings/shared';
@@ -51,7 +51,7 @@ const LINK_ITEMS: ModalNavItem[] = [];
 
 export function SettingsModal({ os: _os, onClose, initialSettingsSection }: SettingsModalProps) {
   const { t } = useTranslation();
-  const mobile = useMobileLayout();
+  const narrow = useNarrowLayout();
   const conservative = useConservativeLayout();
   const [section, setSection] = useState<SettingsSectionId>(initialSettingsSection ?? 'general');
   const savedToast = useSavedToastListener();
@@ -60,7 +60,7 @@ export function SettingsModal({ os: _os, onClose, initialSettingsSection }: Sett
   const tabRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const [pillRect, setPillRect] = useState<{ top: number; height: number } | null>(null);
   useLayoutEffect(() => {
-    if (mobile) {
+    if (narrow) {
       setPillRect(null);
       return;
     }
@@ -68,45 +68,45 @@ export function SettingsModal({ os: _os, onClose, initialSettingsSection }: Sett
     const el = tabRefs.current[idx];
     if (!el) return;
     setPillRect({ top: el.offsetTop, height: el.offsetHeight });
-  }, [section, mobile]);
+  }, [section, narrow]);
 
   return (
     <div
-      onClick={mobile ? undefined : onClose}
+      onClick={narrow ? undefined : onClose}
       style={{
-        position: mobile ? 'fixed' : 'absolute',
+        position: narrow ? 'fixed' : 'absolute',
         inset: 0,
         // 白/实底哲学：遮罩只做半透明压暗（overlay token），不再叠 backdrop-filter 玻璃模糊。
-        background: mobile ? 'var(--ol-surface)' : 'var(--ol-overlay-bg)',
+        background: narrow ? 'var(--ol-surface)' : 'var(--ol-overlay-bg)',
         display: 'flex',
-        alignItems: mobile ? 'stretch' : 'center',
-        justifyContent: mobile ? 'stretch' : 'center',
-        padding: mobile ? 0 : 28,
-        zIndex: mobile ? 70 : 50,
-        animation: mobile ? undefined : 'ol-modal-backdrop-in 0.18s var(--ol-motion-soft)',
+        alignItems: narrow ? 'stretch' : 'center',
+        justifyContent: narrow ? 'stretch' : 'center',
+        padding: narrow ? 0 : 28,
+        zIndex: narrow ? 70 : 50,
+        animation: narrow ? undefined : 'ol-modal-backdrop-in 0.18s var(--ol-motion-soft)',
       }}>
 
       <div
         className="ol-settings-surface"
-        data-ol-mobile={mobile ? 'true' : undefined}
+        data-ol-narrow={narrow ? 'true' : undefined}
         onClick={(e) => e.stopPropagation()}
         style={{
           width: '100%',
-          maxWidth: mobile ? undefined : 880,
+          maxWidth: narrow ? undefined : 880,
           height: '100%',
-          maxHeight: mobile ? undefined : 600,
+          maxHeight: narrow ? undefined : 600,
           background: 'var(--ol-settings-content-bg)',
-          borderRadius: mobile ? 0 : 14,
-          border: mobile ? 'none' : '0.5px solid var(--ol-line)',
-          boxShadow: mobile ? 'none' : 'var(--ol-shadow-xl)',
+          borderRadius: narrow ? 0 : 14,
+          border: narrow ? 'none' : '0.5px solid var(--ol-line)',
+          boxShadow: narrow ? 'none' : 'var(--ol-shadow-xl)',
           display: 'flex',
-          flexDirection: mobile ? 'column' : 'row',
+          flexDirection: narrow ? 'column' : 'row',
           overflow: 'hidden',
-          animation: mobile ? undefined : 'ol-modal-card-in 0.24s var(--ol-motion-spring)',
+          animation: narrow ? undefined : 'ol-modal-card-in 0.24s var(--ol-motion-spring)',
           position: 'relative',
         }}>
 
-        {mobile ? (
+        {narrow ? (
           <div style={{
             flexShrink: 0,
             display: 'flex',
@@ -119,7 +119,7 @@ export function SettingsModal({ os: _os, onClose, initialSettingsSection }: Sett
               type="button"
               onClick={onClose}
               aria-label={t('common.close')}
-              style={mobileHeaderBtnStyle}
+              style={narrowHeaderBtnStyle}
             >
               <Icon name="close" size={16} />
             </button>
@@ -135,7 +135,7 @@ export function SettingsModal({ os: _os, onClose, initialSettingsSection }: Sett
                     type="button"
                     onClick={() => setSection(it.id as SettingsSectionId)}
                     className={active ? 'ol-nav-btn ol-nav-btn-active' : 'ol-nav-btn'}
-                    style={mobileTabChipStyle(active)}
+                    style={narrowTabChipStyle(active)}
                   >
                     {t(`modal.sections.${it.id}`)}
                   </button>
@@ -198,9 +198,9 @@ export function SettingsModal({ os: _os, onClose, initialSettingsSection }: Sett
             saveState={savedToast.state}
             message={savedToast.message}
             slideFrom="top"
-            offsetStyle={{ position: 'absolute', top: mobile ? 12 : 16, right: mobile ? 14 : 54 }}
+            offsetStyle={{ position: 'absolute', top: narrow ? 12 : 16, right: narrow ? 14 : 54 }}
           />
-          {!mobile && (
+          {!narrow && (
           <button
             onClick={onClose}
             style={{
@@ -219,7 +219,7 @@ export function SettingsModal({ os: _os, onClose, initialSettingsSection }: Sett
           </button>
           )}
 
-          {!mobile && (
+          {!narrow && (
           <h2 style={{ margin: 0, padding: '22px 28px 8px', fontSize: 22, fontWeight: 600, letterSpacing: '-0.02em', flexShrink: 0 }}>
             {t(`modal.sections.${section}`)}
           </h2>
@@ -234,7 +234,7 @@ export function SettingsModal({ os: _os, onClose, initialSettingsSection }: Sett
               flex: 1,
               minHeight: 0,
               overflow: 'auto',
-              padding: mobile ? '12px 16px calc(16px + env(safe-area-inset-bottom, 0px))' : '10px 28px 28px',
+              padding: narrow ? '12px 16px calc(16px + env(safe-area-inset-bottom, 0px))' : '10px 28px 28px',
             }}>
             {/* key=section 让切 tab 时整块重挂载，ol-tab-fade 轻微淡入。 */}
             <div
@@ -253,7 +253,7 @@ export function SettingsModal({ os: _os, onClose, initialSettingsSection }: Sett
   );
 }
 
-const mobileHeaderBtnStyle: CSSProperties = {
+const narrowHeaderBtnStyle: CSSProperties = {
   width: 36,
   height: 36,
   flexShrink: 0,
@@ -267,7 +267,7 @@ const mobileHeaderBtnStyle: CSSProperties = {
   cursor: 'default',
 };
 
-function mobileTabChipStyle(active: boolean): CSSProperties {
+function narrowTabChipStyle(active: boolean): CSSProperties {
   return {
     flexShrink: 0,
     padding: '6px 12px',

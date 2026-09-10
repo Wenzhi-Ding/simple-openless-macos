@@ -1,36 +1,27 @@
-// 权限/连通性面板：麦克风 / 辅助功能 / 全局热键 / Windows IME / 网络。
+// 权限面板：麦克风 / 辅助功能 / 屏幕录制 / 全局热键。
 // 内含三个状态 Pill + 适配器名称翻译辅助函数。
 
 import { useEffect, useState, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
-import { AndroidPermissionsPanel } from '@android/components/AndroidPermissionsPanel';
 import { Icon } from '../../components/Icon';
 import {
   checkAccessibilityPermission,
   checkMicrophonePermission,
   getHotkeyStatus,
-  getWindowsImeStatus,
   openSystemSettings,
   requestAccessibilityPermission,
   requestMicrophonePermission,
 } from '../../lib/ipc';
 import { getPlatformCapabilities } from '../../lib/platform';
-import { useLayoutStack, useConservativeLayout } from '../../lib/useMobileLayout';
-import { checkAndroidMicrophoneAccess, requestAndroidMicrophoneAccess } from '@android/lib/androidMicrophonePermission';
-import type {
-  HotkeyStatus,
-  PlatformCapabilities,
-  WindowsImeStatus,
-} from '../../lib/types';
+import { useLayoutStack, useConservativeLayout } from '../../lib/useResponsiveLayout';
+import type { HotkeyStatus, PlatformCapabilities } from '../../lib/types';
 import { useHotkeySettings } from '../../state/HotkeySettingsContext';
 import { Btn, Card, Pill } from '../_atoms';
 import { SettingRow } from './shared';
-import { detectOS } from '../../components/WindowChrome';
 import { checkScreenCapturePermission, requestScreenCapturePermission } from '../../lib/ipc/permissions';
 import { checkPermission, permissionAction, type PermissionCheck } from '../../lib/permissionOnboarding';
 import { usePermissionRefresh } from '../../lib/usePermissionRefresh';
 
-const ANDROID_SETUP_WIZARD_COMPLETE_KEY = 'openless.androidSetupWizardComplete';
 
 export function PermissionsSection() {
   const { t } = useTranslation();
@@ -39,10 +30,9 @@ export function PermissionsSection() {
   const [screenCapture, setScreenCapture] = useState<PermissionCheck>('loading');
   const [permissionError, setPermissionError] = useState(false);
   const [busy, setBusy] = useState(false);
-  const isMac = detectOS() === 'mac';
   const [hotkey, setHotkey] = useState<HotkeyStatus | null>(null);
-  const [windowsIme, setWindowsIme] = useState<WindowsImeStatus | null>(null);
   const [platformCaps, setPlatformCaps] = useState<PlatformCapabilities | null>(null);
+  const isMac = platformCaps?.platform === 'macos';
   const { capability } = useHotkeySettings();
   const baseLayoutStack = useLayoutStack();
   const conservative = useConservativeLayout();
@@ -63,7 +53,7 @@ export function PermissionsSection() {
   const refreshPermissions = usePermissionRefresh(async active => {
     await Promise.all([
       checkPermission('accessibility', checkAccessibilityPermission, 'settings').then(v => { if (active()) setAccessibility(v); }),
-      checkPermission('microphone', platformCaps?.platform === 'android' ? checkAndroidMicrophoneAccess : checkMicrophonePermission, 'settings').then(v => { if (active()) setMicrophone(v); }),
+      checkPermission('microphone', checkMicrophonePermission, 'settings').then(v => { if (active()) setMicrophone(v); }),
       checkPermission('screenCapture', isMac ? checkScreenCapturePermission : async () => 'notApplicable', 'settings').then(v => { if (active()) setScreenCapture(v); }),
     ]);
   });
@@ -72,19 +62,12 @@ export function PermissionsSection() {
     setHotkey(await getHotkeyStatus());
   };
 
-  const refreshWindowsIme = async () => {
-    setWindowsIme(await getWindowsImeStatus());
-  };
-
   useEffect(() => {
     refreshPermissions();
     if (platformCaps?.supportsDesktopHotkey === true) {
       refreshHotkey();
     }
-    if (platformCaps?.platform !== 'android') {
-      refreshWindowsIme();
-    }
-  }, [platformCaps?.platform, platformCaps?.supportsDesktopHotkey]);
+  }, [platformCaps?.platform, platformCaps?.supportsDesktopHotkey, isMac]);
 
 
   const requestPermission = async (action: () => Promise<unknown>) => {
@@ -110,18 +93,8 @@ export function PermissionsSection() {
   };
 
   const reRequestMicrophone = async () => {
-    const isAndroid = platformCaps?.platform === 'android';
-    if (isAndroid && (microphone === 'denied' || microphone === 'restricted')) {
-      await openSystemSettings('microphone');
-      await refreshPermissions();
-      return;
-    }
-    const status = isAndroid
-      ? await requestAndroidMicrophoneAccess()
-      : await requestMicrophonePermission();
-    if (!isAndroid && (status === 'denied' || status === 'restricted')) {
-      await openSystemSettings('microphone');
-    }
+    const status = await requestMicrophonePermission();
+    if (status === 'denied' || status === 'restricted') await openSystemSettings('microphone');
     await refreshPermissions();
   };
 
@@ -129,18 +102,6 @@ export function PermissionsSection() {
     <Card>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: 6 }}>
         <div style={{ fontSize: 13, fontWeight: 600 }}>{t('settings.permissions.title')}</div>
-        {platformCaps?.platform === 'android' && (
-          <Btn
-            variant="ghost"
-            size="sm"
-            onClick={() => {
-              localStorage.removeItem(ANDROID_SETUP_WIZARD_COMPLETE_KEY);
-              window.location.reload();
-            }}
-          >
-            {t('settings.permissions.rerunAndroidSetup')}
-          </Btn>
-        )}
       </div>
       <SettingRow label={t('settings.permissions.micLabel')}>
         <div style={permissionActionsStyle}>
@@ -156,7 +117,7 @@ export function PermissionsSection() {
           )}
         </div>
       </SettingRow>
-      {(isMac || capability?.requiresAccessibilityPermission) && platformCaps?.platform !== 'android' && (
+      {(isMac || capability?.requiresAccessibilityPermission) && (
         <SettingRow label={t('settings.permissions.accLabel')}>
           <div style={permissionActionsStyle}>
             <PermissionPill status={accessibility} />
@@ -206,25 +167,6 @@ export function PermissionsSection() {
         </div>
       </SettingRow>
       )}
-      {platformCaps?.supportsOverlay && platformCaps.platform === 'android' && (
-        <AndroidPermissionsPanel />
-      )}
-      {windowsIme?.state !== 'notWindows' && platformCaps?.platform !== 'android' && (
-        <SettingRow label={t('settings.permissions.windowsImeLabel')}>
-          <div style={permissionActionsStyle}>
-            {windowsIme && (
-              <span style={{
-                fontSize: 11.5, color: 'var(--ol-ink-4)',
-                whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-                minWidth: 0, flex: '0 1 auto',
-              }}>
-                {t(`settings.permissions.windowsIme.${windowsIme.state}`)}
-              </span>
-            )}
-            <WindowsImeStatusPill status={windowsIme} />
-          </div>
-        </SettingRow>
-      )}
     </Card>
   );
 }
@@ -232,7 +174,7 @@ export function PermissionsSection() {
 function PermissionPill({ status }: { status: PermissionCheck }) {
   const { t } = useTranslation();
   if (status === 'checkFailed' || status === 'unavailable') {
-    return <Pill tone="outline">{t('settings.permissions.checkFailed', { defaultValue: '检查失败（不是未授权），请重试' })}</Pill>;
+    return <Pill tone="outline">{t('settings.permissions.checkFailed')}</Pill>;
   }
   if (status === 'loading') {
     return <Pill tone="default">{t('settings.permissions.checking')}</Pill>;
@@ -264,15 +206,4 @@ function HotkeyStatusPill({ status }: { status: HotkeyStatus | null }) {
     return <Pill tone="default">{t('settings.permissions.hotkeyStarting')}</Pill>;
   }
   return <Pill tone="outline">{t('settings.permissions.hotkeyFailed')}</Pill>;
-}
-
-function WindowsImeStatusPill({ status }: { status: WindowsImeStatus | null }) {
-  const { t } = useTranslation();
-  if (!status) {
-    return <Pill tone="default">{t('settings.permissions.checking')}</Pill>;
-  }
-  if (status.state === 'installed') {
-    return <Pill tone="ok"><Icon name="check" size={11} />{t('settings.permissions.windowsImeInstalled')}</Pill>;
-  }
-  return <Pill tone="outline">{t('settings.permissions.windowsImeUnavailable')}</Pill>;
 }

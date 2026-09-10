@@ -21,14 +21,19 @@ assert.deepEqual(
   'package-lock root devDependencies must match package.json',
 );
 
-const dompurifyTypes = packageLock.packages['node_modules/@types/dompurify'];
-const trustedTypes = packageLock.packages['node_modules/@types/trusted-types'];
-
-assert.equal(dompurifyTypes?.dev, true, '@types/dompurify must remain development-only');
-assert.equal(
-  Boolean(trustedTypes?.dev || trustedTypes?.devOptional),
-  true,
-  '@types/trusted-types must not be classified as a production-only dependency',
-);
+for (const removed of [
+  '@shadcn/react',
+  '@tailwindcss/vite',
+  '@tauri-apps/plugin-updater',
+  'dompurify',
+  'marked',
+  'tailwindcss',
+]) {
+  assert.equal(
+    packageLock.packages[`node_modules/${removed}`],
+    undefined,
+    `${removed} must be absent from the lockfile`,
+  );
+}
 
 console.log('package-lock-root-contract.test.mjs passed');

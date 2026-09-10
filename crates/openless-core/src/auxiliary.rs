@@ -1,28 +1,24 @@
 //! Shared use-cases for operating on previously captured text or audio.
 //!
 //! Hosts own file selection and optional foreground-application capture. The
-//! core owns style selection, immutable provider snapshots, cancellation and
-//! attribution so Tauri and egui cannot drift in their business behaviour.
+//! core owns immutable provider snapshots, cancellation and attribution.
 
 use std::sync::Arc;
 
 use futures_util::future::BoxFuture;
 
 use crate::config::TaskSpawner;
-use crate::credentials::{CredentialStore};
 use crate::dictation_context::{
     DictationContext, DictationProviderInvocations, DictationStartOptions, ProviderInvocation,
 };
 use crate::errors::{BackendError, BackendErrorCode};
 use crate::ports::{TextPolisher, TextStreamChunk, TextStreamSink, TranscriptionEngine};
-use crate::style_pack_store::StylePackStore;
 use crate::types::SessionId;
 use crate::{DictionaryStore, PreferencesStore, UserPreferences};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RepolishRequest {
     pub raw_text: String,
-    pub style_pack_id: Option<String>,
     pub front_app: Option<String>,
 }
 
@@ -56,7 +52,7 @@ pub struct RetranscriptionFailure {
 
 impl RetranscriptionFailure {
     pub fn is_terminal(&self) -> bool {
-        is_terminal_foundry_error(&self.error)
+        !self.error.retryable
     }
 
     pub fn into_message(self) -> String {
@@ -78,9 +74,7 @@ pub trait AuxiliaryApi: Send + Sync {
 
 pub(crate) struct AuxiliaryService {
     preferences: Arc<PreferencesStore>,
-    style_packs: Arc<StylePackStore>,
     vocabulary: Arc<DictionaryStore>,
-    credential_store: Arc<dyn CredentialStore>,
     polisher: Arc<dyn TextPolisher>,
     transcription: Arc<dyn TranscriptionEngine>,
     task_spawner: Arc<dyn TaskSpawner>,
@@ -90,18 +84,14 @@ impl AuxiliaryService {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         preferences: Arc<PreferencesStore>,
-        style_packs: Arc<StylePackStore>,
         vocabulary: Arc<DictionaryStore>,
-        credential_store: Arc<dyn CredentialStore>,
         polisher: Arc<dyn TextPolisher>,
         transcription: Arc<dyn TranscriptionEngine>,
         task_spawner: Arc<dyn TaskSpawner>,
     ) -> Self {
         Self {
             preferences,
-            style_packs,
             vocabulary,
-            credential_store,
             polisher,
             transcription,
             task_spawner,
@@ -110,20 +100,16 @@ impl AuxiliaryService {
 
     async fn capture_repolish_context(
         &self,
-        style_pack_id: Option<&str>,
         front_app: Option<String>,
     ) -> Result<Arc<DictationContext>, BackendError> {
         let preferences = self.preferences.get();
         let llm = ProviderInvocation::for_provider(preferences.active_llm_provider.clone());
-        let omni = ProviderInvocation::for_provider(preferences.active_omni_provider.clone());
         self.capture_context(
             preferences,
-            style_pack_id,
             front_app,
             DictationProviderInvocations::new(
                 ProviderInvocation::for_provider("auxiliary-unused-asr"),
                 llm,
-                omni,
             ),
         )
     }
@@ -134,11 +120,9 @@ impl AuxiliaryService {
         self.capture_context(
             preferences,
             None,
-            None,
             DictationProviderInvocations::new(
                 asr,
                 ProviderInvocation::for_provider("auxiliary-unused-llm"),
-                ProviderInvocation::for_provider("auxiliary-unused-omni"),
             ),
         )
     }
@@ -146,16 +130,9 @@ impl AuxiliaryService {
     fn capture_context(
         &self,
         preferences: UserPreferences,
-        style_pack_id: Option<&str>,
         front_app: Option<String>,
         providers: DictationProviderInvocations,
     ) -> Result<Arc<DictationContext>, BackendError> {
-        let style_pack = match style_pack_id.filter(|id| !id.trim().is_empty()) {
-            Some(id) => self.style_packs.get(id)?,
-            None => self
-                .style_packs
-                .get_or_default_active(&preferences.active_style_pack_id)?,
-        };
         let hotwords = self
             .vocabulary
             .list()?
@@ -164,31 +141,18 @@ impl AuxiliaryService {
             .map(|entry| entry.phrase)
             .collect();
         let options = DictationStartOptions {
-            style_pack_id: Some(style_pack.id.clone()),
             front_app,
             ..DictationStartOptions::default()
         };
-        let mut context = DictationContext::capture(
-            &preferences,
-            &style_pack,
-            providers,
-            hotwords,
-            Vec::new(),
-            &options,
-        );
-        context.pipeline_mode = crate::shared_types::effective_pipeline_mode(
-            preferences.multimodal_pipeline_enabled,
-            preferences.pipeline_mode,
-        );
+        let context =
+            DictationContext::capture(&preferences, providers, hotwords, Vec::new(), &options);
         Ok(Arc::new(context))
     }
 
     fn clone_for_future(&self) -> Self {
         Self {
             preferences: Arc::clone(&self.preferences),
-            style_packs: Arc::clone(&self.style_packs),
             vocabulary: Arc::clone(&self.vocabulary),
-            credential_store: Arc::clone(&self.credential_store),
             polisher: Arc::clone(&self.polisher),
             transcription: Arc::clone(&self.transcription),
             task_spawner: Arc::clone(&self.task_spawner),
@@ -203,9 +167,7 @@ impl AuxiliaryApi for AuxiliaryService {
     ) -> BoxFuture<'static, Result<String, BackendError>> {
         let service = self.clone_for_future();
         Box::pin(async move {
-            let context = service
-                .capture_repolish_context(request.style_pack_id.as_deref(), request.front_app)
-                .await?;
+            let context = service.capture_repolish_context(request.front_app).await?;
             if !context.uses_llm_polisher() {
                 return Ok(request.raw_text);
             }
@@ -254,7 +216,7 @@ impl AuxiliaryApi for AuxiliaryService {
                 .start(session_id, context, Arc::new(DiscardTextStream))
                 .await
                 .map_err(|mut error| {
-                    error.retryable = !is_terminal_foundry_error(&error);
+                    error.retryable = false;
                     RetranscriptionFailure {
                         error,
                         attempted_asr: Some(fallback_label.clone()),
@@ -277,7 +239,7 @@ impl AuxiliaryApi for AuxiliaryService {
                     asr: attempted_asr,
                 }),
                 Err(mut error) => {
-                    error.retryable = !is_terminal_foundry_error(&error);
+                    error.retryable = false;
                     Err(RetranscriptionFailure {
                         error,
                         attempted_asr: Some(attempted_asr),
@@ -286,12 +248,6 @@ impl AuxiliaryApi for AuxiliaryService {
             }
         })
     }
-}
-
-fn is_terminal_foundry_error(error: &BackendError) -> bool {
-    error.details.as_ref().is_some_and(|details| {
-        details.get("terminal").and_then(serde_json::Value::as_str) == Some("foundry_fallback")
-    })
 }
 
 struct DiscardTextStream;
@@ -368,16 +324,12 @@ impl AuxiliaryApi for UnsupportedAuxiliaryApi {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::credentials::{CredentialKey, InMemoryCredentialStore, SecretValue};
-    use crate::style_packs::{BUILTIN_STYLE_PACK_FORMAL_ID, BUILTIN_STYLE_PACK_RAW_ID};
-    use crate::testing::{FixtureTextPolisher, FixtureTranscriptionEngine};
-    use crate::CredentialsStatus;
+    use crate::test_support::{FixtureTextPolisher, FixtureTranscriptionEngine};
     use crate::TokioTaskSpawner;
 
-    fn service_with_credentials(
+    fn service(
         polisher: Arc<dyn TextPolisher>,
         transcription: Arc<dyn TranscriptionEngine>,
-        credential_store: Arc<dyn CredentialStore>,
     ) -> (AuxiliaryService, std::path::PathBuf) {
         let dictionary_path = std::env::temp_dir().join(format!(
             "openless-core-auxiliary-{}.json",
@@ -386,9 +338,7 @@ mod tests {
         (
             AuxiliaryService::new(
                 Arc::new(PreferencesStore::in_memory()),
-                Arc::new(StylePackStore::in_memory()),
                 Arc::new(DictionaryStore::at_path(dictionary_path.clone())),
-                credential_store,
                 polisher,
                 transcription,
                 Arc::new(TokioTaskSpawner),
@@ -397,108 +347,20 @@ mod tests {
         )
     }
 
-    fn service(
-        polisher: Arc<dyn TextPolisher>,
-        transcription: Arc<dyn TranscriptionEngine>,
-    ) -> (AuxiliaryService, std::path::PathBuf) {
-        service_with_credentials(
-            polisher,
-            transcription,
-            Arc::new(InMemoryCredentialStore::default()),
-        )
-    }
-
-    struct AsrOnlyCredentialStore;
-
-    impl AsrOnlyCredentialStore {
-        fn unsupported<T>() -> BoxFuture<'static, Result<T, BackendError>> {
-            Box::pin(async {
-                Err(BackendError::new(
-                    BackendErrorCode::Unsupported,
-                    "test credential operation is unsupported",
-                ))
-            })
-        }
-    }
-
-    impl CredentialStore for AsrOnlyCredentialStore {
-        fn status(
-            &self,
-            _preferences: UserPreferences,
-        ) -> BoxFuture<'static, Result<CredentialsStatus, BackendError>> {
-            Self::unsupported()
-        }
-
-        fn read(
-            &self,
-            _key: CredentialKey,
-        ) -> BoxFuture<'static, Result<Option<SecretValue>, BackendError>> {
-            Self::unsupported()
-        }
-
-        fn write(
-            &self,
-            _key: CredentialKey,
-            _value: SecretValue,
-        ) -> BoxFuture<'static, Result<(), BackendError>> {
-            Self::unsupported()
-        }
-
-        fn remove(&self, _key: CredentialKey) -> BoxFuture<'static, Result<(), BackendError>> {
-            Self::unsupported()
-        }
-
-        fn active_provider(
-            &self,
-            slot: crate::credentials::ProviderSlot,
-        ) -> BoxFuture<'static, Result<String, BackendError>> {
-            assert!(
-                matches!(slot, crate::credentials::ProviderSlot::Asr),
-                "retranscription queried a non-ASR slot"
-            );
-            Self::unsupported()
-        }
-    }
-
     #[tokio::test]
-    async fn untouched_builtin_raw_repolish_is_a_true_passthrough() {
+    async fn repolish_always_uses_the_fixed_polisher() {
         let (service, path) = service(
-            Arc::new(FixtureTextPolisher::successful("must not be used")),
+            Arc::new(FixtureTextPolisher::successful("固定润色结果")),
             Arc::new(FixtureTranscriptionEngine::successful("unused", 0)),
         );
-
         let result = service
             .repolish(RepolishRequest {
                 raw_text: "原样输出".into(),
-                style_pack_id: Some(BUILTIN_STYLE_PACK_RAW_ID.into()),
                 front_app: Some("Editor".into()),
             })
             .await
             .unwrap();
-
-        assert_eq!(result, "原样输出");
-        let _ = std::fs::remove_file(path);
-    }
-
-    #[tokio::test]
-    async fn repolish_uses_the_explicit_style_without_changing_active_preferences() {
-        let (service, path) = service(
-            Arc::new(FixtureTextPolisher::successful("指定风格结果")),
-            Arc::new(FixtureTranscriptionEngine::successful("unused", 0)),
-        );
-        let before = service.preferences.get().active_style_pack_id;
-
-        let result = service
-            .repolish(RepolishRequest {
-                raw_text: "原文".into(),
-                style_pack_id: Some(BUILTIN_STYLE_PACK_FORMAL_ID.into()),
-                front_app: None,
-            })
-            .await
-            .unwrap();
-
-        assert_eq!(result, "指定风格结果");
-        assert_eq!(service.preferences.get().active_style_pack_id, before);
+        assert_eq!(result, "固定润色结果");
         let _ = std::fs::remove_file(path);
     }
 
@@ -510,28 +372,12 @@ mod tests {
             transcription.clone(),
         );
         let expected_provider = service.preferences.get().active_asr_provider;
-
         let result = service.retranscribe_pcm(vec![1, 0, 2, 0]).await.unwrap();
-
         assert_eq!(result.text, "重转文本");
         assert_eq!(result.duration_ms, 125);
         assert_eq!(result.asr.provider, expected_provider);
         assert_eq!(transcription.pcm(), vec![1, 0, 2, 0]);
         assert_eq!(transcription.cancel_count(), 0);
-        let _ = std::fs::remove_file(path);
-    }
-
-    #[tokio::test]
-    async fn retranscription_does_not_resolve_llm_or_omni_credentials() {
-        let (service, path) = service_with_credentials(
-            Arc::new(FixtureTextPolisher::successful("unused")),
-            Arc::new(FixtureTranscriptionEngine::successful("仅 ASR", 80)),
-            Arc::new(AsrOnlyCredentialStore),
-        );
-
-        let result = service.retranscribe_pcm(vec![1, 0]).await.unwrap();
-
-        assert_eq!(result.text, "仅 ASR");
         let _ = std::fs::remove_file(path);
     }
 
@@ -542,9 +388,7 @@ mod tests {
             Arc::new(FixtureTextPolisher::successful("unused")),
             transcription.clone(),
         );
-
         let failure = service.retranscribe_pcm(vec![1]).await.unwrap_err();
-
         assert_eq!(failure.error.code, BackendErrorCode::InvalidArgument);
         assert!(transcription.pcm().is_empty());
         let _ = std::fs::remove_file(path);

@@ -31,33 +31,12 @@ fn default_true() -> bool {
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
-#[serde(rename_all = "lowercase")]
-pub enum PolishMode {
-    Raw,
-    #[default]
-    Light,
-    Structured,
-    Formal,
-}
-
-impl PolishMode {
-    pub fn display_name(&self) -> &'static str {
-        match self {
-            Self::Raw => "原文",
-            Self::Light => "轻度润色",
-            Self::Structured => "清晰结构",
-            Self::Formal => "正式表达",
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum HistorySource {
     #[default]
     Voice,
+    #[serde(alias = "selection_voice_edit")]
     SelectionPolish,
-    SelectionVoiceEdit,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -81,11 +60,6 @@ pub struct DictationSession {
     #[serde(default)]
     pub asr_transcript: Option<String>,
     pub final_text: String,
-    pub mode: PolishMode,
-    #[serde(default)]
-    pub style_pack_id: Option<String>,
-    #[serde(default)]
-    pub translation_active: bool,
     #[serde(default)]
     pub polish_source: Option<String>,
     pub app_bundle_id: Option<String>,
@@ -117,33 +91,6 @@ pub struct DictationSession {
     pub polish_diagnostics: Option<crate::polish_diagnostics::PolishDiagnostics>,
 }
 
-/// Origin of a deterministic correction rule.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
-#[serde(rename_all = "camelCase")]
-pub enum RuleSource {
-    /// Added explicitly by the user. Legacy records without `source` use this
-    /// value for backward compatibility.
-    #[default]
-    Manual,
-    /// Learned from a correction made by the user.
-    Learned,
-}
-
-/// One deterministic text correction shared by dictation and selection flows.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct CorrectionRule {
-    pub id: String,
-    pub pattern: String,
-    pub replacement: String,
-    #[serde(default = "default_true")]
-    pub enabled: bool,
-    #[serde(default)]
-    pub created_at: String,
-    #[serde(default)]
-    pub source: RuleSource,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct DictionaryEntry {
@@ -157,40 +104,6 @@ pub struct DictionaryEntry {
     pub hits: u64,
     #[serde(default)]
     pub created_at: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct VocabPreset {
-    pub id: String,
-    pub name: String,
-    pub phrases: Vec<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
-#[serde(default, rename_all = "camelCase")]
-pub struct VocabPresetStore {
-    pub custom: Vec<VocabPreset>,
-    pub overrides: Vec<VocabPreset>,
-    pub disabled_builtin_preset_ids: Vec<String>,
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
-#[serde(rename_all = "camelCase")]
-pub enum SelectionVoiceIntentMode {
-    #[default]
-    Prompt,
-    Auto,
-    Manual,
-    Heuristic,
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
-#[serde(rename_all = "camelCase")]
-pub enum SelectionVoiceManualIntent {
-    #[default]
-    Question,
-    Edit,
 }
 
 impl std::fmt::Display for SessionId {
@@ -221,8 +134,6 @@ pub struct DictationStateSnapshot {
     pub elapsed_ms: u64,
     pub level: f32,
     pub message: Option<String>,
-    #[serde(default)]
-    pub translation_active: bool,
     /// Native capture startup can return before its first PCM callback. Hosts
     /// must keep their warming presentation until that callback is observed.
     #[serde(default)]
@@ -237,7 +148,6 @@ impl Default for DictationStateSnapshot {
             elapsed_ms: 0,
             level: 0.0,
             message: None,
-            translation_active: false,
             recording_ready: false,
         }
     }
@@ -328,14 +238,6 @@ pub struct PreferencesChange {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct DownloadProgress {
-    pub resource_id: String,
-    pub completed_bytes: u64,
-    pub total_bytes: Option<u64>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct PermissionSnapshot {
     pub microphone: PermissionState,
     pub accessibility: PermissionState,
@@ -377,12 +279,6 @@ pub struct HistoryChange {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct VocabularyChange {
-    pub revision: u64,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct StylePackChange {
     pub revision: u64,
 }
 
@@ -435,13 +331,11 @@ mod tests {
             elapsed_ms: 1500,
             level: 0.5,
             message: None,
-            translation_active: true,
             recording_ready: true,
         };
         let value = serde_json::to_value(snapshot).unwrap();
         assert_eq!(value["phase"], "transcribing");
         assert_eq!(value["elapsedMs"], 1500);
-        assert_eq!(value["translationActive"], true);
         assert_eq!(value["level"], 0.5);
         assert!(value.get("sessionId").is_some());
         assert!(value.get("elapsed_ms").is_none());

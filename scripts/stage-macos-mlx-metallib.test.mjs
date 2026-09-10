@@ -15,15 +15,15 @@ import { fileURLToPath } from "node:url"
 const appRoot = resolve(fileURLToPath(new URL("..", import.meta.url)))
 const script = join(appRoot, "scripts", "stage-macos-mlx-metallib.mjs")
 
-function candidate(root, suffix, content) {
-  const path = join(root, `qwen3-asr-rs-${suffix}`, "out", "lib", "mlx.metallib")
+function candidate(root, version, content) {
+  const path = join(root, "lib", version, "site-packages", "mlx", "lib", "mlx.metallib")
   mkdirSync(resolve(path, ".."), { recursive: true })
   writeFileSync(path, content)
   return path
 }
 
-function run(buildRoot, output) {
-  return spawnSync(process.execPath, [script, "--build-root", buildRoot, "--output", output], {
+function run(runtimeRoot, output) {
+  return spawnSync(process.execPath, [script, "--runtime-root", runtimeRoot, "--output", output], {
     cwd: appRoot,
     encoding: "utf8",
   })
@@ -31,33 +31,28 @@ function run(buildRoot, output) {
 
 const root = mkdtempSync(join(tmpdir(), "openless-mlx-stage-test-"))
 try {
-  const buildRoot = join(root, "build")
+  const runtimeRoot = join(root, "runtime")
   const output = join(root, "staged", "mlx.metallib")
-  mkdirSync(buildRoot, { recursive: true })
+  mkdirSync(runtimeRoot, { recursive: true })
   mkdirSync(resolve(output, ".."), { recursive: true })
 
   writeFileSync(output, "stale", { flag: "w" })
-  const missing = run(buildRoot, output)
+  const missing = run(runtimeRoot, output)
   assert.notEqual(missing.status, 0)
-  assert.match(missing.stderr, /未找到 MLX metallib/)
+  assert.match(missing.stderr, /恰好包含一个非空 mlx\.metallib/)
   assert.equal(existsSync(output), false)
 
-  candidate(buildRoot, "one", "kernel-a")
-  const single = run(buildRoot, output)
+  candidate(runtimeRoot, "python3.12", "kernel-a")
+  const single = run(runtimeRoot, output)
   assert.equal(single.status, 0, single.stderr)
   assert.equal(readFileSync(output, "utf8"), "kernel-a")
 
-  candidate(buildRoot, "same", "kernel-a")
-  const identical = run(buildRoot, output)
-  assert.equal(identical.status, 0, identical.stderr)
-  assert.equal(readFileSync(output, "utf8"), "kernel-a")
-
-  candidate(buildRoot, "conflict", "kernel-b")
-  const conflict = run(buildRoot, output)
-  assert.notEqual(conflict.status, 0)
-  assert.match(conflict.stderr, /内容冲突/)
-  assert.match(conflict.stderr, /qwen3-asr-rs-one/)
-  assert.match(conflict.stderr, /qwen3-asr-rs-conflict/)
+  candidate(runtimeRoot, "python3.13", "kernel-a")
+  const duplicate = run(runtimeRoot, output)
+  assert.notEqual(duplicate.status, 0)
+  assert.match(duplicate.stderr, /找到 2 个/)
+  assert.match(duplicate.stderr, /python3\.12/)
+  assert.match(duplicate.stderr, /python3\.13/)
 } finally {
   rmSync(root, { recursive: true, force: true })
 }

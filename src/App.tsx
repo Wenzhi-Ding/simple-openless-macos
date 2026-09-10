@@ -4,19 +4,13 @@ import { detectOS, type OS } from './components/WindowChrome';
 import {
   checkAccessibilityPermission,
   checkMicrophonePermission,
-  getHotkeyStatus,
   getStartupSnapshot,
   getSettings,
   getPlatformCapabilities,
-  handleWindowHotkeyEvent,
   isTauri,
 } from './lib/ipc';
 import type { PlatformCapabilities } from './lib/types';
 import { checkScreenCapturePermission } from './lib/ipc/permissions';
-import {
-  isWindowHotkeyKeyboardCandidate,
-  windowMouseHotkeyCode,
-} from './lib/windowHotkeyFallback';
 import { HotkeySettingsProvider } from './state/HotkeySettingsContext';
 import { checkPermission, SCREEN_PERMISSION_REVIEWED_KEY, screenPermissionNeedsReview } from './lib/permissionOnboarding';
 
@@ -31,16 +25,13 @@ const FloatingShell = lazy(() =>
 const Onboarding = lazy(() =>
   import('./components/Onboarding').then(m => ({ default: m.Onboarding })),
 );
-const SelectionPolishPreview = lazy(() => import('./pages/SelectionPolishPreview').then(m => ({ default: m.SelectionPolishPreview })));
 
 interface AppProps {
   isCapsule: boolean;
-  isSelectionPolishPreview: boolean;
   forcedOs?: OS | null;
 }
 
 type Gate = 'checking' | 'incompatible' | 'onboarding' | 'ready';
-const ANDROID_SETUP_WIZARD_COMPLETE_KEY = 'openless.androidSetupWizardComplete';
 
 /**
  * 所有 Tauri webview 共用同一个 fail-closed 启动边界。胶囊、QA、预览和 Less Computer
@@ -71,23 +62,16 @@ export function App(props: AppProps) {
   return <ReadyApp {...props} />;
 }
 
-function ReadyApp({ isCapsule, isSelectionPolishPreview, forcedOs }: AppProps) {
+function ReadyApp({ isCapsule, forcedOs }: AppProps) {
   if (isCapsule) {
     return <Capsule os={forcedOs} />;
   }
-  if (isSelectionPolishPreview) {
-    return <Suspense fallback={null}><SelectionPolishPreview /></Suspense>;
-  }
-
   const os = forcedOs ?? detectOS();
-  // Windows 启动不应被权限探测阻塞首屏。
+  // 权限探测期间显示启动门控，避免主界面误报授权状态。
   const [gate, setGate] = useState<Gate>(isTauri ? 'checking' : 'ready');
   const [startupError, setStartupError] = useState<string | null>(null);
   const [platformCaps, setPlatformCaps] = useState<PlatformCapabilities | null>(null);
   const completeOnboarding = () => {
-    if (platformCaps?.platform === 'android') {
-      localStorage.setItem(ANDROID_SETUP_WIZARD_COMPLETE_KEY, '1');
-    }
     if (os === 'mac') {
       try { localStorage.setItem(SCREEN_PERMISSION_REVIEWED_KEY, '1'); }
       catch (error) { console.warn('[permissions] could not remember optional step', error); }
@@ -155,46 +139,6 @@ function ReadyApp({ isCapsule, isSelectionPolishPreview, forcedOs }: AppProps) {
     void (async () => {
       const caps = platformCaps;
 
-      if (caps.platform === 'android') {
-        if (localStorage.getItem(ANDROID_SETUP_WIZARD_COMPLETE_KEY) !== '1') {
-          setGate('onboarding');
-          return;
-        }
-        const m = await checkMicrophonePermission();
-        if (cancelled) return;
-        // notDetermined is non-blocking on Android — show grant flow in-app instead
-        // of trapping users on onboarding while JNI/runtime permission is pending.
-        const blocked = m === 'denied' || m === 'restricted';
-        setGate(blocked ? 'onboarding' : 'ready');
-        return;
-      }
-
-      if (os === 'win') {
-        // 超时保护：50 次 × 200ms = 10s。hotkey hook 永远 starting（被反作弊 / EDR
-        // / UAC 拦）时不让 UI 死锁灰屏，过 10s 强 setGate('ready') 让用户进
-        // Permissions 页看 hotkey_status.lastError 处理。详见 issue #163。
-        const POLL_INTERVAL_MS = 200;
-        const POLL_MAX_ATTEMPTS = 50;
-        let attempts = 0;
-        while (!cancelled && attempts < POLL_MAX_ATTEMPTS) {
-          attempts += 1;
-          const status = await getHotkeyStatus();
-          if (cancelled) return;
-          if (status.state !== 'starting') {
-            setGate('ready');
-            return;
-          }
-          await new Promise(resolve => window.setTimeout(resolve, POLL_INTERVAL_MS));
-        }
-        if (!cancelled) {
-          console.warn(
-            `[startup] hotkey gate timed out after ${POLL_MAX_ATTEMPTS * POLL_INTERVAL_MS}ms; forcing ready so user can reach Permissions page`
-          );
-          setGate('ready');
-        }
-        return;
-      }
-
       const [a, m] = await Promise.all([
         checkPermission('accessibility', checkAccessibilityPermission, 'startup'),
         checkPermission('microphone', checkMicrophonePermission, 'startup'),
@@ -223,39 +167,6 @@ function ReadyApp({ isCapsule, isSelectionPolishPreview, forcedOs }: AppProps) {
       cancelled = true;
     };
   }, [os, platformCaps]);
-
-  useEffect(() => {
-    if (!isTauri || os !== 'win') return;
-    const forwardKey = (event: KeyboardEvent) => {
-      if (!isWindowHotkeyKeyboardCandidate(event)) return;
-      void handleWindowHotkeyEvent(
-        event.type as 'keydown' | 'keyup',
-        event.key,
-        event.code,
-        event.repeat,
-      ).catch(error => console.warn('[window-hotkey] forward failed', error));
-    };
-    const forwardMouse = (event: MouseEvent) => {
-      const code = windowMouseHotkeyCode(event.button);
-      if (!code) return;
-      void handleWindowHotkeyEvent(
-        event.type === 'mousedown' ? 'keydown' : 'keyup',
-        code,
-        code,
-        false,
-      ).catch(error => console.warn('[window-hotkey] mouse forward failed', error));
-    };
-    window.addEventListener('keydown', forwardKey, true);
-    window.addEventListener('keyup', forwardKey, true);
-    window.addEventListener('mousedown', forwardMouse, true);
-    window.addEventListener('mouseup', forwardMouse, true);
-    return () => {
-      window.removeEventListener('keydown', forwardKey, true);
-      window.removeEventListener('keyup', forwardKey, true);
-      window.removeEventListener('mousedown', forwardMouse, true);
-      window.removeEventListener('mouseup', forwardMouse, true);
-    };
-  }, [os]);
 
   if (gate === 'checking') {
     return <div role="status">正在检查 OpenLess Core 兼容性…</div>;

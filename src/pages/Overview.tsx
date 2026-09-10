@@ -6,7 +6,7 @@ import { Icon } from '../components/Icon';
 import { formatComboLabel } from '../lib/hotkey';
 import { getActivityStats, listHistory } from '../lib/ipc';
 import { Heatmap } from '../components/Heatmap';
-import { useMobileLayout } from '../lib/useMobileLayout';
+import { useNarrowLayout } from '../lib/useResponsiveLayout';
 import { countCodePoints } from '../lib/unicode';
 import {
   ACTIVITY_METRICS,
@@ -15,7 +15,7 @@ import {
   type ActivityMetric,
   type ActivityPeriod,
 } from '../lib/activityMetrics';
-import type { ActivityDay, CredentialsStatus, DictationSession, PolishMode } from '../lib/types';
+import type { ActivityDay, DictationSession } from '../lib/types';
 import { useHotkeySettings } from '../state/HotkeySettingsContext';
 import { Btn, Card, PageHeader, Pill } from './_atoms';
 import {
@@ -31,16 +31,6 @@ import {
   type LocalModelState,
 } from '../lib/localModels';
 
-function useModeLabels(): Record<PolishMode, string> {
-  const { t } = useTranslation();
-  return {
-    raw: t('style.modes.raw.name'),
-    light: t('style.modes.light.name'),
-    structured: t('style.modes.structured.name'),
-    formal: t('style.modes.formal.name'),
-  };
-}
-
 interface OverviewProps {
   onOpenHistory?: () => void;
 }
@@ -51,8 +41,7 @@ interface OverviewProps {
 
 export function Overview({ onOpenHistory }: OverviewProps) {
   const { t } = useTranslation();
-  const mobile = useMobileLayout();
-  const modeLabel = useModeLabels();
+  const narrow = useNarrowLayout();
   const [history, setHistory] = useState<DictationSession[]>([]);
   const [historyError, setHistoryError] = useState(false);
   // 减法改造(纯本地):凭据状态卡改为固定展示本地引擎(不再有云端配置态)。
@@ -79,8 +68,8 @@ export function Overview({ onOpenHistory }: OverviewProps) {
   // 活动数据（独立于历史内容存储，清空历史不影响）：年度热力图 + 近 7/30 天指标共用。
   // 加载失败仅隐藏对应卡片。
   //
-  // 热力图在移动端不渲染（issue #861：横向宽度固定，窄屏易溢出并拖慢 WebView），但
-  // 周期指标卡是要渲染的，所以 IPC 不能再按 mobile 跳过 —— 否则移动端周期卡永远空。
+  // 热力图在窄窗口不渲染（issue #861：横向宽度固定，窄屏易溢出并拖慢 WebView），但
+  // 周期指标卡是要渲染的，所以 IPC 不能再按 narrow 跳过 —— 否则窄窗口周期卡永远空。
   const [activity, setActivity] = useState<ActivityDay[] | null>(null);
   const [activityError, setActivityError] = useState(false);
   const refreshActivity = useCallback(() => {
@@ -160,7 +149,7 @@ export function Overview({ onOpenHistory }: OverviewProps) {
     <>
       <PageHeader title={t('overview.title')} />
 
-      <div style={{ display: 'grid', gridTemplateColumns: mobile ? '1fr' : '1fr 1fr', gap: 12, marginBottom: 18 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: narrow ? '1fr' : '1fr 1fr', gap: 12, marginBottom: 18 }}>
         <ModelStatusCard
           kind={t('overview.asrKind')}
           icon="mic"
@@ -179,7 +168,7 @@ export function Overview({ onOpenHistory }: OverviewProps) {
         />
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: mobile ? 'repeat(2, 1fr)' : 'repeat(4, 1fr)', gap: 12, marginBottom: 18 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: narrow ? 'repeat(2, 1fr)' : 'repeat(4, 1fr)', gap: 12, marginBottom: 18 }}>
         <Metric icon="hash" label={t('overview.metricChars')} value={historyError ? '—' : metrics.charsToday.toLocaleString()} trend={historyError ? t('overview.historyLoadError') : t('overview.metricSegments', { count: metrics.segmentsToday })} />
         <Metric icon="mic" label={t('overview.metricDuration')} value={historyError ? '—' : formatDuration(metrics.totalDurationMs, t)} trend={historyError ? t('overview.historyLoadError') : ''} />
         <Metric icon="clock" label={t('overview.metricAvg')} value={historyError ? '—' : formatDuration(metrics.avgLatencyMs, t)} trend={historyError ? t('overview.historyLoadError') : metrics.segmentsToday > 0 ? t('overview.metricAvgTrend') : t('overview.metricNoData')} />
@@ -189,8 +178,8 @@ export function Overview({ onOpenHistory }: OverviewProps) {
       {/* 年度活动热力图（8starlabs Heatmap 规格）：过去一年每日听写次数。
           数据来自独立的 activity 计数存储，与历史保留策略解耦；
           可在设置 → 通用 → 外观 里单独关闭。
-          移动端（useMobileLayout）不渲染，避免窄屏横向溢出（issue #861）。 */}
-      {!mobile &&
+          窄窗口（useNarrowLayout）不渲染，避免窄屏横向溢出（issue #861）。 */}
+      {!narrow &&
         prefs?.showOverviewActivityHeatmap !== false &&
         activity &&
         activity.length > 0 && (
@@ -200,7 +189,7 @@ export function Overview({ onOpenHistory }: OverviewProps) {
       {/* 底部一行 = flex:1 撑满剩余高度（父 wrapper 是 display:flex/column）。
           只有「最近识别」内部允许滚动；其他卡片按内容自然高度，不破裂底部圆角。
           issue #243 follow-up：去掉外层 overflow 后底部圆角被裁的视觉问题。 */}
-      <div style={{ display: 'grid', gridTemplateColumns: mobile ? '1fr' : '1fr 1.4fr', gap: 12, flex: mobile ? undefined : 1, minHeight: mobile ? undefined : 0 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: narrow ? '1fr' : '1fr 1.4fr', gap: 12, flex: narrow ? undefined : 1, minHeight: narrow ? undefined : 0 }}>
         {/* overflow:hidden：窗口过小时这一行 flex:1 会被压到比内容还矮，柱状图（固定高）
             原本会溢出卡片圆角外（issue #782）。裁进卡片内，与右侧「最近识别」卡片一致。 */}
         <PeriodMetricsCard
@@ -231,7 +220,7 @@ export function Overview({ onOpenHistory }: OverviewProps) {
                   </div>
                 )}
                 {history.slice(0, 5).map(s => (
-                  <RecentRow key={s.id} session={s} modeLabel={modeLabel} />
+                  <RecentRow key={s.id} session={s} />
                 ))}
               </>
             )}
@@ -594,7 +583,7 @@ function formatLongDuration(ms: number, t: ReturnType<typeof useTranslation>['t'
   return t('overview.period.hoursMinutes', { hours, minutes });
 }
 
-function RecentRow({ session, modeLabel }: { session: DictationSession; modeLabel: Record<PolishMode, string> }) {
+function RecentRow({ session }: { session: DictationSession }) {
   const { t } = useTranslation();
   const [copied, setCopied] = useState(false);
 
@@ -617,7 +606,6 @@ function RecentRow({ session, modeLabel }: { session: DictationSession; modeLabe
         <span style={{ fontSize: 11, fontFamily: 'var(--ol-font-mono)', color: 'var(--ol-ink-3)' }}>
           {formatTime(session.createdAt)}
         </span>
-        <Pill size="sm" tone="default">{modeLabel[session.mode]}</Pill>
       </div>
       <div style={{ flex: 1, fontSize: 12.5, color: 'var(--ol-ink-2)', whiteSpace: 'pre-line', lineHeight: 1.55, overflow: 'hidden', textOverflow: 'ellipsis', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>
         {session.finalText.split('\n')[0]}

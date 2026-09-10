@@ -15,13 +15,13 @@ const appRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..")
 
 function parseArgs(argv) {
   const options = {
-    buildRoot: join(appRoot, "src-tauri", "target", "release", "build"),
+    runtimeRoot: join(appRoot, "src-tauri", "resources", "qwen3-mlx", "runtime"),
     output: join(appRoot, "src-tauri", "target", "release", "openless-mlx", "mlx.metallib"),
   }
   for (let index = 0; index < argv.length; index += 1) {
     const value = argv[index + 1]
-    if (argv[index] === "--build-root" && value) {
-      options.buildRoot = resolve(value)
+    if (argv[index] === "--runtime-root" && value) {
+      options.runtimeRoot = resolve(value)
       index += 1
     } else if (argv[index] === "--output" && value) {
       options.output = resolve(value)
@@ -37,41 +37,37 @@ function sha256(path) {
   return createHash("sha256").update(readFileSync(path)).digest("hex")
 }
 
-function collectCandidates(buildRoot) {
-  if (!existsSync(buildRoot)) return []
-  return readdirSync(buildRoot, { withFileTypes: true })
-    .filter(entry => entry.isDirectory() && entry.name.startsWith("qwen3-asr-rs-"))
-    .map(entry => join(buildRoot, entry.name, "out", "lib", "mlx.metallib"))
-    .filter(path => existsSync(path) && statSync(path).isFile() && statSync(path).size > 0)
-    .sort()
+function collectCandidates(root) {
+  if (!existsSync(root)) return []
+  const candidates = []
+  const visit = directory => {
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      const path = join(directory, entry.name)
+      if (entry.isDirectory()) visit(path)
+      else if (
+        entry.isFile()
+        && entry.name === "mlx.metallib"
+        && path.endsWith(join("mlx", "lib", "mlx.metallib"))
+        && statSync(path).size > 0
+      ) candidates.push(path)
+    }
+  }
+  visit(root)
+  return candidates.sort()
 }
 
-export function stageMetallib({ buildRoot, output }) {
+export function stageMetallib({ runtimeRoot, output }) {
   rmSync(output, { force: true })
-  const candidates = collectCandidates(buildRoot)
-  if (candidates.length === 0) {
-    throw new Error(`未找到 MLX metallib：${buildRoot}`)
-  }
-
-  const byHash = new Map()
-  for (const candidate of candidates) {
-    const hash = sha256(candidate)
-    const paths = byHash.get(hash) ?? []
-    paths.push(candidate)
-    byHash.set(hash, paths)
-  }
-  if (byHash.size > 1) {
-    const details = [...byHash.entries()]
-      .flatMap(([hash, paths]) => paths.map(path => `  ${hash}  ${path}`))
-      .join("\n")
-    throw new Error(`发现多个内容冲突的 MLX metallib，拒绝猜测构建产物：\n${details}`)
+  const candidates = collectCandidates(runtimeRoot)
+  if (candidates.length !== 1) {
+    const details = candidates.length === 0 ? "  (none)" : candidates.map(path => `  ${path}`).join("\n")
+    throw new Error(`MLX runtime 必须恰好包含一个非空 mlx.metallib（找到 ${candidates.length} 个）：\n${details}`)
   }
 
   mkdirSync(dirname(output), { recursive: true })
   copyFileSync(candidates[0], output)
-  const hash = [...byHash.keys()][0]
   console.log(`✓ staged MLX metallib: ${output}`)
-  console.log(`  sha256=${hash} candidates=${candidates.length}`)
+  console.log(`  sha256=${sha256(candidates[0])} source=${candidates[0]}`)
 }
 
 try {

@@ -1,21 +1,12 @@
 //! 单一活动语音会话闸门(纯本地同步原语)。
-//!
-//! 减法改造:上游用同一个闸门互斥 Dictation / QA / Less Computer /
-//! Selection Voice;后三者已移除,只保留听写会话的资源持有与取消语义。
 
 use std::sync::{Arc, Mutex};
 
 use crate::{BackendError, BackendErrorCode, SessionId};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum VoiceSessionKind {
-    Dictation,
-}
-
 #[derive(Debug)]
 struct ActiveVoiceSession {
     session_id: SessionId,
-    kind: VoiceSessionKind,
     released: bool,
     resources: usize,
     cancel: crate::CancellationToken,
@@ -27,28 +18,17 @@ pub(crate) struct VoiceSessionGate {
 }
 
 impl VoiceSessionGate {
-    pub(crate) fn acquire(
-        &self,
-        session_id: SessionId,
-        kind: VoiceSessionKind,
-    ) -> Result<(), BackendError> {
+    pub(crate) fn acquire(&self, session_id: SessionId) -> Result<(), BackendError> {
         let mut active = self.active.lock().expect("voice session lock poisoned");
         match active.as_ref() {
-            Some(current)
-                if current.session_id == session_id
-                    && current.kind == kind
-                    && !current.released =>
-            {
-                Ok(())
-            }
-            Some(current) => Err(BackendError::new(
+            Some(current) if current.session_id == session_id && !current.released => Ok(()),
+            Some(_) => Err(BackendError::new(
                 BackendErrorCode::Busy,
-                format!("another voice session is active: {:?}", current.kind),
+                "another voice session is active",
             )),
             None => {
                 *active = Some(ActiveVoiceSession {
                     session_id,
-                    kind,
                     released: false,
                     resources: 0,
                     cancel: crate::CancellationToken::new(),
@@ -130,18 +110,13 @@ mod tests {
     fn one_session_is_idempotent_and_exclusive() {
         let gate = VoiceSessionGate::default();
         let session_id = SessionId::new();
-        gate.acquire(session_id, VoiceSessionKind::Dictation)
-            .unwrap();
-        gate.acquire(session_id, VoiceSessionKind::Dictation)
-            .unwrap();
+        gate.acquire(session_id).unwrap();
+        gate.acquire(session_id).unwrap();
         assert_eq!(
-            gate.acquire(SessionId::new(), VoiceSessionKind::Dictation)
-                .unwrap_err()
-                .code,
+            gate.acquire(SessionId::new()).unwrap_err().code,
             BackendErrorCode::Busy
         );
         gate.release(session_id);
-        gate.acquire(SessionId::new(), VoiceSessionKind::Dictation)
-            .unwrap();
+        gate.acquire(SessionId::new()).unwrap();
     }
 }

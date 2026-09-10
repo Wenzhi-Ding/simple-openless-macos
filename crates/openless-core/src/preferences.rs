@@ -152,49 +152,11 @@ impl PreferencesStore {
         *state = preferences;
         Ok(())
     }
-
-    /// Change only a domain's owned fields while holding the persistence lock.
-    /// Long-running model preparation must not write back the whole snapshot
-    /// taken before an await: another settings request may have committed since.
-    /// Work on a clone so a failed disk write leaves the live state unchanged.
-    pub(crate) fn update<R>(
-        &self,
-        update: impl FnOnce(&mut UserPreferences) -> R,
-    ) -> Result<R, BackendError> {
-        let mut state = self
-            .state
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let mut next = state.clone();
-        let result = update(&mut next);
-        let json = serde_json::to_vec_pretty(&next)
-            .map_err(|_| persistence_error("encode preferences"))?;
-        atomic_write(&self.path, &json)?;
-        *state = next;
-        Ok(result)
-    }
-
-    pub fn set_preserving_current_style_preferences(
-        &self,
-        mut preferences: UserPreferences,
-    ) -> Result<(), BackendError> {
-        let mut state = self
-            .state
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        preferences.preserve_style_preferences_from(&state);
-        let json = serde_json::to_vec_pretty(&preferences)
-            .map_err(|_| persistence_error("encode preferences"))?;
-        atomic_write(&self.path, &json)?;
-        *state = preferences;
-        Ok(())
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::shared_types::{builtin_style_pack_id, PolishMode};
 
     fn temporary_preferences_path() -> (PathBuf, PathBuf) {
         let directory =
@@ -233,7 +195,7 @@ mod tests {
     fn corrupt_preferences_are_backed_up_before_salvage() {
         let (directory, path) = temporary_preferences_path();
         let original = br#"{
-            "defaultMode": "totally-removed-mode",
+            "historyRetentionDays": "not-a-number",
             "activeAsrProvider": "preserved-provider"
         }"#;
         fs::write(&path, original).expect("write corrupt preferences");
@@ -261,30 +223,45 @@ mod tests {
     }
 
     #[test]
-    fn store_preserves_style_fields_during_settings_updates() {
+    fn store_round_trips_settings_updates() {
         let (directory, path) = temporary_preferences_path();
         let store = PreferencesStore::open(&path).expect("open preferences");
         store
             .set(UserPreferences {
-                default_mode: PolishMode::Light,
-                active_style_pack_id: "local.light-cleanup".to_string(),
-                ..UserPreferences::default()
-            })
-            .expect("seed preferences");
-
-        store
-            .set_preserving_current_style_preferences(UserPreferences {
-                default_mode: PolishMode::Formal,
-                active_style_pack_id: builtin_style_pack_id(PolishMode::Formal).to_string(),
                 microphone_device_name: "External Mic".to_string(),
                 ..UserPreferences::default()
             })
             .expect("update preferences");
 
         let saved = store.get();
-        assert_eq!(saved.default_mode, PolishMode::Light);
-        assert_eq!(saved.active_style_pack_id, "local.light-cleanup");
         assert_eq!(saved.microphone_device_name, "External Mic");
+
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    /// 旧 preferences.json 残留已删除的风格/翻译/市场字段时必须照常加载，
+    /// 其余有效设置不丢（serde 跳过未知字段）。
+    #[test]
+    fn legacy_preferences_with_removed_feature_fields_still_load() {
+        let (directory, path) = temporary_preferences_path();
+        fs::write(
+            &path,
+            r#"{
+                "microphoneDeviceName": "Legacy Mic",
+                "polishMode": "light",
+                "stylePackId": "builtin.light",
+                "translationTargetLanguage": "English",
+                "translationHotkey": { "primary": "Shift", "modifiers": [] },
+                "chineseScriptPreference": "traditional",
+                "outputLanguagePreference": "en",
+                "marketplaceBaseUrl": "https://api.example.com",
+                "marketplaceDevLogin": "octocat"
+            }"#,
+        )
+        .expect("write legacy preferences");
+
+        let preferences = read_preferences(&path).expect("read legacy preferences");
+        assert_eq!(preferences.microphone_device_name, "Legacy Mic");
 
         let _ = fs::remove_dir_all(directory);
     }

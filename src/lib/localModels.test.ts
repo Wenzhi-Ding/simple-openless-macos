@@ -4,6 +4,8 @@
 // 非 Tauri 预览保持 null → notLoaded。
 
 import {
+  LLM_FIXED_NAME,
+  LLM_FIXED_PROVIDER,
   asrError,
   asrState,
   fetchEngineStatus,
@@ -42,6 +44,8 @@ function asrStatus(overrides: Partial<AsrEngineStatus> = {}): AsrEngineStatus {
 
 // ─── loaded / loading / notFound / failed 映射 ─────────────────────────────
 
+equal(LLM_FIXED_NAME, 'Gemma 4 E4B');
+equal(LLM_FIXED_PROVIDER, 'local-llama');
 equal(asrState(asrStatus({ loaded: true })), 'loaded');
 equal(asrState(asrStatus({ loading: true })), 'loading');
 // loading 优先级低于 loaded：worker 已就绪就不再展示加载中。
@@ -51,7 +55,7 @@ equal(asrState(asrStatus({ error: 'worker failed to load model' })), 'failed');
 equal(asrState(asrStatus()), 'notLoaded');
 equal(asrState(null), 'notLoaded');
 
-equal(llmState({ state: 'loaded', fileName: 'gemma-4-E2B-it-Q4_0.gguf', sizeBytes: 1, error: null }), 'loaded');
+equal(llmState({ state: 'loaded', fileName: 'gemma-4-E4B-it-Q4_0.gguf', sizeBytes: 1, error: null }), 'loaded');
 equal(llmState({ state: 'loading', fileName: 'g', sizeBytes: 1, error: null }), 'loading');
 equal(llmState({ state: 'notFound', fileName: 'g', sizeBytes: 0, error: null }), 'notFound');
 equal(llmState({ state: 'failed', fileName: 'g', sizeBytes: 1, error: 'boom' }), 'failed');
@@ -91,7 +95,7 @@ const loadedSnapshot = {
   asr: asrStatus({ loaded: true, modelId: 'qwen3-asr-1.7b' }),
   llm: {
     state: 'loaded',
-    fileName: 'gemma-4-E2B-it-Q4_0.gguf',
+    fileName: 'gemma-4-E4B-it-Q4_0.gguf',
     sizeBytes: 2_000_000_000,
     error: null,
   } as LlmEngineStatus,

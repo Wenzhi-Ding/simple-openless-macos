@@ -40,12 +40,8 @@ export function getCapsulePillMetrics(os: OS): CapsulePillMetrics {
   };
 }
 
-export function getCapsuleHostMetrics(
-  os: OS,
-  translationActive: boolean,
-): CapsuleHostMetrics {
+export function getCapsuleHostMetrics(os: OS): CapsuleHostMetrics {
   const stage = getCapsulePillMetrics(os);
-  void translationActive;
   return {
     width: stage.width,
     height: stage.height,
@@ -60,9 +56,7 @@ export function getCapsuleMessageLayout(
   os: OS,
   kind: CapsuleMessageKind,
 ): CapsuleMessageLayout {
-  if (os === 'win' && (kind === 'error' || kind === 'processing')) {
-    return { allowWrap: true, lineClamp: 2 };
-  }
-
+  void os;
+  void kind;
   return { allowWrap: false, lineClamp: 1 };
 }

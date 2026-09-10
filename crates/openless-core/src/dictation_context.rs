@@ -3,17 +3,12 @@
 //! Hosts and provider adapters receive this snapshot instead of re-reading
 //! mutable preferences while recording, transcribing, polishing or inserting.
 
-use crate::shared_types::{
-    AndroidInsertStrategy, ChineseScriptPreference, MacosNewlineMode, OutputLanguagePreference,
-    PasteShortcut, PipelineMode, UserPreferences, WindowsInsertionMode,
-    WindowsSendInputNewlineMode,
-};
-use crate::style_packs::{translation_effective, StylePack};
-use crate::types::{DictationSession, PolishMode};
-use crate::screen_ocr::ScreenOcrPending;
 use crate::polish_diagnostics::{
-    PolishContextStatus, PolishContextTrace, screen_ocr_outcome_trace,
+    screen_ocr_outcome_trace, PolishContextStatus, PolishContextTrace,
 };
+use crate::screen_ocr::ScreenOcrPending;
+use crate::shared_types::{MacosNewlineMode, PasteShortcut, UserPreferences};
+use crate::types::DictationSession;
 
 pub const ASR_PROMPT_CHAR_BUDGET: usize = 240;
 
@@ -26,10 +21,8 @@ pub enum DictationAudioSource {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DictationStartOptions {
-    pub translation_requested: bool,
     pub audio_source: DictationAudioSource,
     pub insert_text: bool,
-    pub style_pack_id: Option<String>,
     pub front_app: Option<String>,
     pub cursor_context: Option<String>,
 }
@@ -37,25 +30,12 @@ pub struct DictationStartOptions {
 impl Default for DictationStartOptions {
     fn default() -> Self {
         Self {
-            translation_requested: false,
             audio_source: DictationAudioSource::Microphone,
             insert_text: true,
-            style_pack_id: None,
             front_app: None,
             cursor_context: None,
         }
     }
-}
-
-/// User intent that is only known when a recording is stopped.
-///
-/// Android's overlay keeps the existing gesture contract where a left swipe
-/// while recording means "finish and translate". All mutable settings remain
-/// frozen at start; this option may only select between the already captured
-/// normal and translation polish paths.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct DictationStopOptions {
-    pub translation_requested: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -70,8 +50,7 @@ pub struct ProviderInvocation {
     pub model: Option<String>,
     pub language: Option<String>,
     pub prompt: Option<String>,
-    /// Optional native runtime selector frozen with the session (for example
-    /// Foundry `auto`/`gpu`/`cpu`). Cloud providers normally leave it empty.
+    /// Optional native runtime detail frozen with the session.
     pub runtime: Option<String>,
     /// Native model retention policy captured at session start.
     pub keep_loaded_secs: Option<u32>,
@@ -80,30 +59,18 @@ pub struct ProviderInvocation {
 pub(crate) struct DictationProviderInvocations {
     pub asr: ProviderInvocation,
     pub llm: ProviderInvocation,
-    pub omni: ProviderInvocation,
 }
 
 impl DictationProviderInvocations {
-    pub(crate) fn new(
-        asr: ProviderInvocation,
-        llm: ProviderInvocation,
-        omni: ProviderInvocation,
-    ) -> Self {
-        Self { asr, llm, omni }
+    pub(crate) fn new(asr: ProviderInvocation, llm: ProviderInvocation) -> Self {
+        Self { asr, llm }
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DictationPolishContext {
-    pub mode: PolishMode,
-    pub style_pack_id: String,
-    pub style_system_prompt: String,
     pub hotwords: Vec<String>,
     pub working_languages: Vec<String>,
-    pub translation_target_language: String,
-    pub translation_active: bool,
-    pub chinese_script_preference: ChineseScriptPreference,
-    pub output_language_preference: OutputLanguagePreference,
     pub llm_thinking_enabled: bool,
     pub context_window_minutes: u32,
     pub front_app: Option<String>,
@@ -128,16 +95,11 @@ pub struct PolishHistoryTurn {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DictationInsertionContext {
     pub enabled: bool,
-    pub observe_edits: bool,
     pub streaming: bool,
     pub save_streamed_text_to_clipboard: bool,
     pub restore_clipboard_after_paste: bool,
     pub paste_shortcut: PasteShortcut,
-    pub windows_insertion_mode: WindowsInsertionMode,
-    pub windows_sendinput_newline_mode: WindowsSendInputNewlineMode,
     pub macos_newline_mode: MacosNewlineMode,
-    pub allow_non_tsf_fallback: bool,
-    pub android_insert_strategy: AndroidInsertStrategy,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -157,15 +119,12 @@ pub struct RecordingPlan {
 pub struct DictationContext {
     pub audio_source: DictationAudioSource,
     pub recording: RecordingPlan,
-    pub pipeline_mode: PipelineMode,
-    pub correction_rules: Vec<crate::types::CorrectionRule>,
     pub asr: ProviderInvocation,
     pub llm: ProviderInvocation,
-    /// Raw may start without an LLM. If translation is requested at stop,
-    /// preserve the start-time resolution failure instead of using a disabled
-    /// channel or silently selecting a newly configured provider.
+    /// Raw may start without an LLM. Preserve the start-time resolution
+    /// failure instead of using a disabled channel or silently selecting a
+    /// newly configured provider.
     pub deferred_llm_error: Option<crate::errors::BackendError>,
-    pub omni: ProviderInvocation,
     pub polish: DictationPolishContext,
     /// 本会话的屏幕 OCR 待定槽位（触发时冻结目标、后台识别）。
     pub screen_ocr_pending: ScreenOcrPending,
@@ -175,14 +134,11 @@ pub struct DictationContext {
 impl Default for DictationContext {
     fn default() -> Self {
         let preferences = UserPreferences::default();
-        let style_pack = crate::style_packs::builtin_style_pack_for_mode(preferences.default_mode);
         Self::capture(
             &preferences,
-            &style_pack,
             DictationProviderInvocations::new(
                 ProviderInvocation::for_provider(preferences.active_asr_provider.clone()),
                 ProviderInvocation::for_provider(preferences.active_llm_provider.clone()),
-                ProviderInvocation::for_provider(preferences.active_omni_provider.clone()),
             ),
             Vec::new(),
             Vec::new(),
@@ -194,25 +150,13 @@ impl Default for DictationContext {
 impl DictationContext {
     pub(crate) fn capture(
         preferences: &UserPreferences,
-        style_pack: &StylePack,
         providers: DictationProviderInvocations,
         hotwords: Vec<String>,
         recent_history: Vec<DictationSession>,
         options: &DictationStartOptions,
     ) -> Self {
-        let DictationProviderInvocations {
-            mut asr,
-            mut llm,
-            omni,
-        } = providers;
+        let DictationProviderInvocations { mut asr, llm } = providers;
         let hotwords = normalize_hotwords(hotwords);
-        let translation_target_language =
-            preferences.translation_target_language.trim().to_string();
-        let translation_active = translation_effective(
-            options.translation_requested,
-            &translation_target_language,
-            &preferences.working_languages,
-        );
         let (fallback_asr_model, fallback_asr_language) =
             selected_asr_details(preferences, &asr.provider_type);
         if asr.model.is_none() {
@@ -221,39 +165,9 @@ impl DictationContext {
         if asr.language.is_none() {
             asr.language = fallback_asr_language;
         }
-        if matches!(
-            asr.provider_type.as_str(),
-            "foundry-local" | "foundry-whisper" | "foundry-local-whisper"
-        ) {
-            if asr.runtime.is_none() {
-                asr.runtime = non_blank(&preferences.foundry_local_runtime_source);
-            }
-            if asr.keep_loaded_secs.is_none() {
-                asr.keep_loaded_secs = Some(preferences.foundry_local_asr_keep_loaded_secs);
-            }
-        } else if matches!(
-            asr.provider_type.as_str(),
-            "sherpa-onnx" | "sherpa-onnx-local"
-        ) {
-            if asr.keep_loaded_secs.is_none() {
-                asr.keep_loaded_secs = Some(preferences.sherpa_onnx_keep_loaded_secs);
-            }
-        } else if matches!(
-            asr.provider_type.as_str(),
-            "local-qwen3" | "local-qwen3-mlx" | "local-qwen3-c" | "local-whisper" | "apple-whisper"
-        ) && asr.keep_loaded_secs.is_none()
-        {
-            asr.keep_loaded_secs = Some(preferences.local_asr_keep_loaded_secs);
-        }
+        asr.keep_loaded_secs = Some(preferences.local_asr_keep_loaded_secs);
         asr.prompt = build_asr_prompt(&hotwords);
-        if llm.model.is_none() {
-            llm.model = style_pack
-                .recommended_model
-                .clone()
-                .and_then(non_blank_owned);
-        }
-        let prior_turns =
-            eligible_polish_context_turns(recent_history, &style_pack.id, translation_active);
+        let prior_turns = eligible_polish_context_turns(recent_history);
         Self {
             audio_source: options.audio_source,
             recording: RecordingPlan {
@@ -269,25 +183,12 @@ impl DictationContext {
                     && preferences.hotkey.mode == crate::shared_types::HotkeyMode::Toggle)
                     .then(|| (preferences.silence_auto_stop_seconds * 1_000.0).round() as u64),
             },
-            pipeline_mode: crate::shared_types::effective_pipeline_mode(
-                preferences.multimodal_pipeline_enabled,
-                preferences.pipeline_mode,
-            ),
-            correction_rules: Vec::new(),
             asr,
             llm,
             deferred_llm_error: None,
-            omni,
             polish: DictationPolishContext {
-                mode: style_pack.base_mode,
-                style_pack_id: style_pack.id.clone(),
-                style_system_prompt: style_pack.prompt.clone(),
                 hotwords,
                 working_languages: preferences.working_languages.clone(),
-                translation_target_language,
-                translation_active,
-                chinese_script_preference: preferences.chinese_script_preference,
-                output_language_preference: preferences.output_language_preference,
                 llm_thinking_enabled: preferences.llm_thinking_enabled,
                 context_window_minutes: preferences.polish_context_window_minutes,
                 front_app: options.front_app.clone().and_then(non_blank_owned),
@@ -317,41 +218,27 @@ impl DictationContext {
             screen_ocr_pending: ScreenOcrPending::default(),
             insertion: DictationInsertionContext {
                 enabled: options.insert_text,
-                observe_edits: preferences.cursor_context_enabled,
                 streaming: preferences.streaming_insert,
                 save_streamed_text_to_clipboard: preferences.streaming_insert_save_clipboard,
                 restore_clipboard_after_paste: preferences.restore_clipboard_after_paste,
                 paste_shortcut: preferences.paste_shortcut,
-                windows_insertion_mode: preferences.windows_insertion_mode,
-                windows_sendinput_newline_mode: preferences.windows_sendinput_newline_mode,
                 macos_newline_mode: crate::streaming_insert::resolve_macos_newline_mode(
                     preferences.macos_newline_mode,
                     options.front_app.as_deref(),
                 ),
-                allow_non_tsf_fallback: preferences.allow_non_tsf_insertion_fallback,
-                android_insert_strategy: preferences.android_insert_strategy,
             },
         }
     }
 
+    // Enabled vocabulary frozen at session start; shared by ASR and polish.
+    pub fn enabled_hotwords(&self) -> &[String] {
+        &self.polish.hotwords
+    }
+
     pub fn effective_polish_prompts(&self, raw_text: &str) -> (String, String) {
-        let style_system_prompt = if self.polish.translation_active {
-            crate::prompt_compose::build_polish_translate_system_prompt(
-                &self.polish.style_system_prompt,
-                &self.polish.translation_target_language,
-            )
-        } else {
-            self.polish.style_system_prompt.clone()
-        };
         crate::prompt_compose::compose_polish_prompts(
             raw_text,
-            self.polish.mode,
             &self.polish.hotwords,
-            &style_system_prompt,
-            &self.polish.working_languages,
-            self.polish.chinese_script_preference,
-            self.polish.output_language_preference,
-            self.polish.front_app.as_deref(),
             self.polish.cursor_context.as_deref(),
             self.polish.screen_ocr.as_deref(),
             !self.polish.prior_turns.is_empty(),
@@ -394,25 +281,9 @@ impl DictationContext {
         self.effective_polish_prompts("").0
     }
 
-    /// Match the legacy dictation rule: the untouched built-in Raw style is a
-    /// true passthrough and must not require an LLM channel or open an LLM request.
-    /// A custom Raw prompt and every translation request still use the
-    /// polisher.
+    /// The fixed local polisher always runs: dictation never bypasses the LLM.
     pub fn uses_llm_polisher(&self) -> bool {
-        self.polish.translation_active
-            || self.polish.mode != PolishMode::Raw
-            || self.polish.style_system_prompt
-                != crate::style_packs::default_style_system_prompt_for_mode(PolishMode::Raw)
-    }
-
-    pub(crate) fn with_translation_requested(&self, requested: bool) -> Self {
-        let mut updated = self.clone();
-        updated.polish.translation_active = translation_effective(
-            requested,
-            &updated.polish.translation_target_language,
-            &updated.polish.working_languages,
-        );
-        updated
+        true
     }
 }
 
@@ -456,32 +327,18 @@ pub fn build_asr_prompt(phrases: &[String]) -> Option<String> {
     Some(format!("{}.", included.join(", ")))
 }
 
-/// Keep only recent successful turns from the same style pack. The input and
+/// Keep recent successful turns independent of obsolete style labels. The input and
 /// output are newest-first so providers can reverse them when building chat
 /// messages.
-pub fn eligible_polish_context_turns(
-    sessions: Vec<DictationSession>,
-    active_style_pack_id: &str,
-    current_translation_active: bool,
-) -> Vec<PolishHistoryTurn> {
+pub fn eligible_polish_context_turns(sessions: Vec<DictationSession>) -> Vec<PolishHistoryTurn> {
     const MAX_POLISH_CONTEXT_TURNS: usize = 2;
 
     sessions
         .into_iter()
         .filter(|session| session.error_code.is_none() && !session.final_text.trim().is_empty())
-        .filter(|session| session.style_pack_id.as_deref() == Some(active_style_pack_id))
-        .filter_map(|session| {
-            let polished_text = if session.translation_active && !current_translation_active {
-                session
-                    .polish_source
-                    .filter(|source| !source.trim().is_empty())?
-            } else {
-                session.final_text
-            };
-            Some(PolishHistoryTurn {
-                raw_text: session.raw_transcript,
-                polished_text,
-            })
+        .map(|session| PolishHistoryTurn {
+            raw_text: session.raw_transcript,
+            polished_text: session.final_text,
         })
         .take(MAX_POLISH_CONTEXT_TURNS)
         .collect()
@@ -489,25 +346,9 @@ pub fn eligible_polish_context_turns(
 
 fn selected_asr_details(
     preferences: &UserPreferences,
-    provider: &str,
+    _provider_type: &str,
 ) -> (Option<String>, Option<String>) {
-    match provider {
-        "local-qwen3" | "local-qwen3-mlx" | "local-qwen3-c" => {
-            (non_blank(&preferences.local_asr_active_model), None)
-        }
-        "local-whisper" | "apple-whisper" => {
-            (non_blank(&preferences.local_whisper_active_model), None)
-        }
-        "foundry-local" | "foundry-whisper" | "foundry-local-whisper" => (
-            non_blank(&preferences.foundry_local_asr_model),
-            non_blank(&preferences.foundry_local_asr_language_hint),
-        ),
-        "sherpa-onnx" | "sherpa-onnx-local" => (
-            non_blank(&preferences.sherpa_onnx_model),
-            non_blank(&preferences.sherpa_onnx_language_hint),
-        ),
-        _ => (None, None),
-    }
+    (non_blank(&preferences.local_asr_active_model), None)
 }
 
 fn normalize_hotwords(hotwords: Vec<String>) -> Vec<String> {
@@ -533,7 +374,6 @@ fn non_blank_owned(value: String) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::style_packs::builtin_style_pack_for_mode;
 
     #[test]
     fn context_is_an_owned_snapshot_of_session_preferences() {
@@ -545,25 +385,17 @@ mod tests {
             history_max_entries: Some(100),
             audio_recording_max_entries: Some(7),
             working_languages: vec!["简体中文".to_string(), "English".to_string()],
-            translation_target_language: "English".to_string(),
             ..UserPreferences::default()
         };
-        let pack = builtin_style_pack_for_mode(PolishMode::Structured);
         let context = DictationContext::capture(
             &preferences,
-            &pack,
             DictationProviderInvocations::new(
                 ProviderInvocation::for_provider(preferences.active_asr_provider.clone()),
                 ProviderInvocation::for_provider(preferences.active_llm_provider.clone()),
-                ProviderInvocation::for_provider("omni"),
             ),
             vec!["OpenLess".to_string()],
             Vec::new(),
-            &DictationStartOptions {
-                translation_requested: true,
-                style_pack_id: None,
-                ..DictationStartOptions::default()
-            },
+            &DictationStartOptions::default(),
         );
 
         preferences.microphone_device_name = "changed".to_string();
@@ -577,19 +409,28 @@ mod tests {
         // Audio archives have their own user-visible limit. History retention
         // may be much larger and must not silently override the recording cap.
         assert_eq!(context.recording.max_entries, Some(7));
-        assert_eq!(
-            context.insertion.windows_sendinput_newline_mode,
-            preferences.windows_sendinput_newline_mode
-        );
-        assert_eq!(
-            context.insertion.android_insert_strategy,
-            preferences.android_insert_strategy
-        );
-        assert!(context.polish.translation_active);
         let prompt = context.effective_polish_system_prompt();
-        assert!(prompt.contains("按当前风格润色并翻译"));
-        assert!(prompt.contains("English"));
-        assert!(prompt.contains(crate::prompt_compose::POLISH_TRANSLATE_TGT_MARKER));
+        assert!(prompt.contains(crate::prompts::FIXED_POLISH_PROMPT));
+    }
+
+    #[test]
+    fn frozen_hotwords_are_shared_by_asr_and_polish() {
+        let preferences = UserPreferences::default();
+        let context = DictationContext::capture(
+            &preferences,
+            DictationProviderInvocations::new(
+                ProviderInvocation::for_provider(preferences.active_asr_provider.clone()),
+                ProviderInvocation::for_provider(preferences.active_llm_provider.clone()),
+            ),
+            vec!["OpenLess".into(), "Codex".into()],
+            Vec::new(),
+            &DictationStartOptions::default(),
+        );
+        assert_eq!(context.enabled_hotwords(), ["OpenLess", "Codex"]);
+        assert!(context.asr.prompt.as_deref().unwrap().contains("OpenLess"));
+        let (system_prompt, _) = context.effective_polish_prompts("hello");
+        assert!(system_prompt.contains("OpenLess"));
+        assert!(system_prompt.contains("Codex"));
     }
 
     #[test]

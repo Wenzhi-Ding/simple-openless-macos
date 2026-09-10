@@ -40,3 +40,8 @@ export function retranscribeRecording(sessionId: string): Promise<DictationSessi
         () => mockHistory[0],
     ) as Promise<DictationSession>
 }
+
+/** 历史页「重新润色」：固定管线重跑一次润色，不写回历史记录。 */
+export function repolish(rawText: string): Promise<string> {
+    return invokeOrMock("repolish", { rawText }, () => rawText)
+}

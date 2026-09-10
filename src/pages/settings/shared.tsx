@@ -2,7 +2,7 @@
 
 import type { CSSProperties, ReactNode } from "react"
 import { Tooltip } from "../../components/Tooltip"
-import { useMobileLayout, useReadableLayout, useConservativeLayout } from "../../lib/useMobileLayout"
+import { useNarrowLayout, useReadableLayout, useConservativeLayout } from "../../lib/useResponsiveLayout"
 
 // 带说明的文字统一加虚线下划线 + help 光标，暗示「悬停可看解释」。
 const hintableTextStyle: CSSProperties = {
@@ -18,7 +18,7 @@ export function SectionTitle({
     style,
 }: {
     children: ReactNode
-    /** 悬停在标题文字上时的功能说明，给 Less Computer 这类光看名字猜不出用途的板块。 */
+    /** 悬停在标题文字上时显示功能说明。 */
     hint?: string
     style?: CSSProperties
 }) {
@@ -66,10 +66,10 @@ export function SettingRow({
     children,
     controlWidth,
 }: SettingRowProps) {
-    const mobile = useMobileLayout()
+    const narrow = useNarrowLayout()
     const readable = useReadableLayout()
     const conservative = useConservativeLayout()
-    const stackLayout = mobile || readable || conservative
+    const stackLayout = narrow || readable || conservative
     const labelStyle: CSSProperties = {
         fontSize: 13,
         fontWeight: 500,
@@ -222,31 +222,3 @@ export const inputStyle: CSSProperties = {
     transition:
         "background 0.16s var(--ol-motion-quick), border-color 0.16s var(--ol-motion-quick)",
 }
-
-// React 只保留展示标签。endpoint、model、auth、probe 与能力全部来自
-// Core ProviderDescriptor，避免任一 Host 再拥有一份会漂移的 provider 策略。
-// 这里的顺序和键仅用于本地化回退；协议说明也应写在 Core provider_rules 附近。
-export const ASR_LABELS = [
-  { id: 'volcengine', nameKey: 'asrVolcengine' },
-  { id: 'elevenlabs', nameKey: 'asrElevenLabs' },
-  { id: 'bailian', nameKey: 'asrBailian' },
-  { id: 'bailian-qwen3-realtime', nameKey: 'asrBailianQwen3' },
-  { id: 'bailian-fun-asr-flash', nameKey: 'asrBailianFunAsrFlash' },
-  { id: 'siliconflow', nameKey: 'asrSiliconflow' },
-  { id: 'stepfun', nameKey: 'asrStepfun' },
-  { id: 'zhipu', nameKey: 'asrZhipu' },
-  { id: 'groq', nameKey: 'asrGroq' },
-  { id: 'whisper', nameKey: 'asrWhisper' },
-  { id: 'openrouter', nameKey: 'asrOpenrouter' },
-  { id: 'zenmux', nameKey: 'asrZenmux' },
-  { id: 'openai-compatible', nameKey: 'asrOpenAiCompatible' },
-  { id: 'xiaomi-mimo-asr', nameKey: 'asrXiaomiMimo' },
-  { id: 'iflytek', nameKey: 'asrIflytek' },
-  { id: 'foundry-local-whisper', nameKey: 'asrFoundryLocalWhisper' },
-  { id: 'local-whisper', nameKey: 'asrLocalWhisper' },
-  { id: 'sherpa-onnx-local', nameKey: 'asrSherpaOnnxLocal' },
-  { id: 'local-qwen3-mlx', nameKey: 'asrLocalQwen3Mlx' },
-  { id: 'local-qwen3-c', nameKey: 'asrLocalQwen3C' },
-  { id: 'local-qwen3', nameKey: 'asrLocalQwen3' },
-  { id: 'apple-speech', nameKey: 'asrAppleSpeech' },
-] as const;

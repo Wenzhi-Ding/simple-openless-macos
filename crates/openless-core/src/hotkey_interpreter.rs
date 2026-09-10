@@ -43,10 +43,9 @@ struct Press {
 
 /// Core-owned interpreter for the main dictation hotkey.
 ///
-/// Hosts only allocate a `press_id` and forward timestamped edges. Keeping all
-/// policy here makes the macOS/Windows hook, Tauri window fallback, and Linux
-/// fcitx5 path share the same generation, arbitration, debounce, and cooldown
-/// semantics.
+/// The host allocates a `press_id` and forwards timestamped edges. Keeping all
+/// policy here gives the macOS event tap and Tauri fallback one generation,
+/// arbitration, debounce, and cooldown implementation.
 #[derive(Debug, Default)]
 pub(crate) struct HotkeyInterpreter {
     /// The latest unmatched physical press. Release must carry the same id.
