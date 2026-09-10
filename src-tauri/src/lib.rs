@@ -304,6 +304,12 @@ fn run_desktop() {
                 coordinator.stop_hotkey_listener();
                 coordinator.stop_combo_hotkey_listener();
                 coordinator.stop_open_app_hotkey_listener();
+                // Must be synchronous: the process finalises as soon as this
+                // callback returns, so a spawned task does not get a chance to
+                // run. llama.cpp keeps Metal buffers alive until the model and
+                // backend are dropped, and the ggml rsets assertion aborts the
+                // process when they are still held at exit.
+                coordinator.local_polisher().unload_blocking();
                 let backend = coordinator.backend();
                 tauri::async_runtime::spawn(async move {
                     let _ = backend.shutdown().await;

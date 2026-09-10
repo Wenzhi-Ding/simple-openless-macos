@@ -4,7 +4,8 @@ use std::collections::HashMap;
 use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, TryLockError};
+use std::time::{Duration, Instant};
 
 use encoding_rs::UTF_8;
 use futures_util::future::BoxFuture;
@@ -236,6 +237,49 @@ impl LocalLlamaPolisher {
             }
         }
     }
+
+    /// 退出前同步归还 llama.cpp 资源（幂等）。
+    ///
+    /// llama.cpp 的 Metal 设备由 C++ 静态析构在进程收尾阶段释放，如果那时本
+    /// 进程还留着未释放的模型缓冲，`ggml_metal_rsets_free` 的
+    /// `GGML_ASSERT([rsets->data count] == 0)` 就会直接 abort。Tauri 在
+    /// `RunEvent::Exit` 回调返回后立刻退出进程，异步清理来不及跑，所以这里
+    /// 必须同步完成：先取 `inference` 锁确认没有在途请求还持有模型，再按
+    /// “模型先于 backend”的顺序清空两个 slot（与字段声明顺序一致），把
+    /// Metal 缓冲还给驱动。
+    ///
+    /// 等锁有上限：真在跑的润色会一直握着 `inference`，退出不该为它无限期
+    /// 挂住。拿不到锁就放弃本次清理（保留旧的收尾行为），不让退出变成卡死。
+    ///
+    /// 清理路径不因锁中毒再次 panic：退出阶段任何一次 panic 都会让整个进程
+    /// 以 abort 结束，正是要避免的结果。
+    pub fn unload_blocking(&self) {
+        const UNLOAD_LOCK_TIMEOUT: Duration = Duration::from_secs(2);
+        let deadline = Instant::now() + UNLOAD_LOCK_TIMEOUT;
+        let _inference_guard = loop {
+            match self.inference.try_lock() {
+                Ok(guard) => break guard,
+                Err(TryLockError::Poisoned(poisoned)) => break poisoned.into_inner(),
+                Err(TryLockError::WouldBlock) => {
+                    if Instant::now() >= deadline {
+                        log::warn!(
+                            "[local-llm] 退出时润色仍在进行，跳过模型卸载（保持既有退出路径）"
+                        );
+                        return;
+                    }
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+            }
+        };
+        *lock_ignoring_poison(&self.loaded) = None;
+        *lock_ignoring_poison(&self.backend) = None;
+        *lock_ignoring_poison(&self.state) = LoadState::NotLoaded;
+    }
+}
+
+/// 退出清理专用：忽略 poisoning 取锁，避免收尾阶段二次 panic 变成 abort。
+fn lock_ignoring_poison<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 impl TextPolisher for LocalLlamaPolisher {
@@ -1713,5 +1757,57 @@ mod tests {
             failures.len(),
             failures.join("\n  ")
         );
+    }
+
+    #[test]
+    fn unload_blocking_clears_both_slots_in_model_before_backend_order() {
+        let polisher = LocalLlamaPolisher::new();
+        let backend = Arc::new(LlamaBackend::init().expect("llama backend init"));
+        // 不加载真实模型：这里只验证退出清理会清空两个 slot，以及顺序（模型先于
+        // backend 释放）。Metal 缓冲的归还在真机退出验证里覆盖。
+        *polisher.backend.lock().unwrap() = Some(Arc::clone(&backend));
+        *polisher.state.lock().unwrap() = LoadState::Loaded;
+
+        polisher.unload_blocking();
+
+        assert!(polisher.loaded.lock().unwrap().is_none());
+        assert!(polisher.backend.lock().unwrap().is_none());
+        assert!(matches!(*polisher.state.lock().unwrap(), LoadState::NotLoaded));
+    }
+
+    #[test]
+    fn unload_blocking_gives_up_instead_of_hanging_when_a_request_holds_inference() {
+        let polisher = LocalLlamaPolisher::new();
+        // 模拟在途润色：持有 inference 锁。
+        let held = Arc::clone(&polisher.inference);
+        let guard = held.lock().unwrap();
+
+        let started = Instant::now();
+        polisher.unload_blocking();
+        let elapsed = started.elapsed();
+
+        // 必须放弃清理并返回，不能无限等锁。
+        assert!(
+            elapsed < Duration::from_secs(5),
+            "unload_blocking waited too long: {elapsed:?}"
+        );
+        drop(guard);
+    }
+
+    #[test]
+    fn unload_blocking_is_idempotent_and_survives_a_poisoned_lock() {
+        let polisher = LocalLlamaPolisher::new();
+        polisher.unload_blocking();
+        polisher.unload_blocking();
+
+        // 让 loaded 锁中毒，模拟在途请求 panic 后的退出场景：清理必须照常返回，
+        // 不能因为二次 panic 把退出变成 abort。
+        let loaded = Arc::clone(&polisher.loaded);
+        let _ = std::panic::catch_unwind(move || {
+            let _guard = loaded.lock().unwrap();
+            panic!("simulated in-flight worker panic");
+        });
+        polisher.unload_blocking();
+        assert!(lock_ignoring_poison(&polisher.loaded).is_none());
     }
 }
