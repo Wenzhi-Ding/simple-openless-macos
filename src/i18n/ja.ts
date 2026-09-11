@@ -341,8 +341,6 @@ export const ja = {
       "audioCueDesc": "ホットキーで録音を開始するとき、合成した短い通知音を再生します。カプセルが非表示でも鳴ります。",
       "audioCuePreview": "試聴",
       "insertGroupTitle": "挿入とクリップボード",
-      "restoreClipboardLabel": "入力後にクリップボードを復元",
-      "restoreClipboardDesc": "入力完了後に元のクリップボード内容を復元します。",
       "comboRecordLabel": "ショートカットを記録",
       "comboRecordDesc": "クリック後、希望するキーの組み合わせ（例：⌘⇧D）を押してください。トグル / 押し続けの両方に対応。",
       "comboRecordBtn": "ショートカットを記録",

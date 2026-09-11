@@ -341,8 +341,6 @@ export const en = {
       "audioCueDesc": "Play a short synthesized chime when you press the hotkey to start recording. Plays even when the capsule is hidden.",
       "audioCuePreview": "Preview",
       "insertGroupTitle": "Insertion & clipboard",
-      "restoreClipboardLabel": "Restore clipboard after insert",
-      "restoreClipboardDesc": "Restore your original clipboard after input is complete.",
       "comboRecordLabel": "Record shortcut",
       "comboRecordDesc": "Click, then press your desired key combination (e.g. ⌘⇧D). Supports Toggle and Push-to-talk modes.",
       "comboRecordBtn": "Record shortcut",

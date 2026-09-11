@@ -132,8 +132,6 @@ export function RecordingInputSection() {
     savePrefs({ ...prefs, audioCueOnRecord });
   const onMicrophoneDeviceChange = (microphoneDeviceName: string) =>
     savePrefs({ ...prefs, microphoneDeviceName });
-  const onRestoreClipboardChange = (restoreClipboardAfterPaste: boolean) =>
-    savePrefs({ ...prefs, restoreClipboardAfterPaste });
   const onMacosNewlineModeChange = (macosNewlineMode: MacosNewlineMode) =>
     savePrefs({ ...prefs, macosNewlineMode });
   const onStartMinimizedChange = (startMinimized: boolean) =>
@@ -401,9 +399,6 @@ export function RecordingInputSection() {
       {/* ─── 插入与剪贴板（macOS） ─────────────────────────────────── */}
       {showDesktopInsert && (
       <Collapsible title={t('settings.recording.insertGroupTitle')}>
-        <SettingRow label={t('settings.recording.restoreClipboardLabel')} desc={t('settings.recording.restoreClipboardDesc')}>
-          <Toggle on={prefs.restoreClipboardAfterPaste} onToggle={onRestoreClipboardChange} />
-        </SettingRow>
         {capability.adapter === 'macEventTap' && prefs.streamingInsert && (
           <SettingRow
             label={t('settings.recording.macosNewlineModeLabel')}

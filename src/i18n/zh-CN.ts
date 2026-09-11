@@ -341,8 +341,6 @@ export const zhCN = {
       "audioCueDesc": "按下热键开始录音时播放一段合成提示音，提醒已开始录音。胶囊隐藏时也会响。",
       "audioCuePreview": "试听",
       "insertGroupTitle": "插入与剪贴板",
-      "restoreClipboardLabel": "插入后恢复剪贴板",
-      "restoreClipboardDesc": "输入完成后恢复原来的剪贴板内容。",
       "comboRecordLabel": "录制快捷键",
       "comboRecordDesc": "点击后按下想要的快捷键组合（如 ⌘⇧D）。",
       "comboRecordBtn": "录制快捷键",

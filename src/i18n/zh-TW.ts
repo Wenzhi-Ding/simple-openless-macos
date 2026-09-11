@@ -352,8 +352,6 @@ export const zhTW = {
       "audioCueDesc": "按下熱鍵開始錄音時播放一段合成提示音，提醒已開始錄音。膠囊隱藏時也會響。",
       "audioCuePreview": "試聽",
       "insertGroupTitle": "插入與剪貼板",
-      "restoreClipboardLabel": "插入後恢復剪貼板",
-      "restoreClipboardDesc": "輸入完成後恢復原來的剪貼簿內容。",
       "allowNonTsfFallbackLabel": "允許非 TSF 兜底",
       "macosNewlineModeLabel": "換行怎麼落",
       "macosNewlineModeDesc": "自動會在已知終端應用中使用 Line Feed（U+000A / Ctrl+J），其他應用使用 Shift+Return；Return 會直接發送。",

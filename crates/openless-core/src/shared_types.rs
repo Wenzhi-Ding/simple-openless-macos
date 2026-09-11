@@ -189,10 +189,6 @@ pub struct UserPreferences {
     /// 境外服务可能连不上。实时语音流（WebSocket）与 Less Computer 子进程不受此开关影响。
     #[serde(default = "default_true")]
     pub use_system_proxy: bool,
-    /// Windows/Linux 粘贴成功后是否恢复用户原剪贴板。默认 true 跟历史行为一致；
-    /// 关掉就把听写文本留在剪贴板，让 simulate_paste 实际没生效时用户能 Ctrl+V 找回。
-    /// macOS 走 AX 直写，不受这个开关影响。详见 issue #111。
-    pub restore_clipboard_after_paste: bool,
     /// Windows / Linux 的模拟粘贴键。macOS 走 AX 直写不受影响。详见 issue #360：
     /// kitty 等 Linux 终端不接受 Ctrl+V，只能配 Ctrl+Shift+V。默认 CtrlV 与历史
     /// 行为一致，不破坏既有用户。
@@ -368,7 +364,6 @@ struct UserPreferencesWire {
     llm_thinking_enabled: bool,
     #[serde(default = "default_true")]
     use_system_proxy: bool,
-    restore_clipboard_after_paste: bool,
     #[serde(default)]
     paste_shortcut: PasteShortcut,
     #[serde(default)]
@@ -434,7 +429,6 @@ impl Default for UserPreferencesWire {
             active_llm_provider: prefs.active_llm_provider,
             llm_thinking_enabled: prefs.llm_thinking_enabled,
             use_system_proxy: prefs.use_system_proxy,
-            restore_clipboard_after_paste: prefs.restore_clipboard_after_paste,
             paste_shortcut: prefs.paste_shortcut,
             macos_newline_mode: prefs.macos_newline_mode,
             working_languages: prefs.working_languages,
@@ -498,7 +492,6 @@ impl<'de> Deserialize<'de> for UserPreferences {
             active_llm_provider: wire.active_llm_provider,
             llm_thinking_enabled: wire.llm_thinking_enabled,
             use_system_proxy: wire.use_system_proxy,
-            restore_clipboard_after_paste: wire.restore_clipboard_after_paste,
             paste_shortcut: wire.paste_shortcut,
             macos_newline_mode: wire.macos_newline_mode,
             working_languages: wire.working_languages,
@@ -669,7 +662,6 @@ impl Default for UserPreferences {
             active_llm_provider: "local-llama".into(),
             llm_thinking_enabled: false,
             use_system_proxy: false,
-            restore_clipboard_after_paste: true,
             paste_shortcut: PasteShortcut::default(),
             macos_newline_mode: MacosNewlineMode::default(),
             working_languages: default_working_languages(),
@@ -1265,6 +1257,32 @@ mod split_front_app_label_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn legacy_restore_clipboard_preference_is_ignored_for_true_and_false() {
+        for restore in [true, false] {
+            let json = serde_json::json!({
+                "restoreClipboardAfterPaste": restore,
+                "microphoneDeviceName": "USB Mic",
+                "streamingInsertSaveClipboard": false,
+                "pasteShortcut": "shiftInsert"
+            })
+            .to_string();
+            let preferences: UserPreferences = serde_json::from_str(&json).unwrap();
+            assert_eq!(preferences.microphone_device_name, "USB Mic");
+            assert!(!preferences.streaming_insert_save_clipboard);
+            assert_eq!(preferences.paste_shortcut, PasteShortcut::ShiftInsert);
+            let serialized = serde_json::to_value(&preferences).unwrap();
+            assert!(serialized.get("restoreClipboardAfterPaste").is_none());
+            let loaded: UserPreferences = serde_json::from_value(serialized).unwrap();
+            assert_eq!(loaded.microphone_device_name, "USB Mic");
+            assert!(!loaded.streaming_insert_save_clipboard);
+        }
+        assert!(serde_json::to_value(UserPreferences::default())
+            .unwrap()
+            .get("restoreClipboardAfterPaste")
+            .is_none());
+    }
 
     #[test]
     fn macos_newline_modes_round_trip_legacy_auto_and_line_feed() {

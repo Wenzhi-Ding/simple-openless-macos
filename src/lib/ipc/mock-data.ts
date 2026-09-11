@@ -32,7 +32,6 @@ export let mockSettings: UserPreferences = {
     activeLlmProvider: "local-llama",
     llmThinkingEnabled: false,
     useSystemProxy: false,
-    restoreClipboardAfterPaste: true,
     pasteShortcut: "ctrlV",
     macosNewlineMode: "auto",
     workingLanguages: ["简体中文"],

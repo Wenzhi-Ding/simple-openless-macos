@@ -341,8 +341,6 @@ export const ko = {
       "audioCueDesc": "단축키로 녹음을 시작할 때 합성된 짧은 알림음을 재생합니다. 캡슐이 숨겨져 있어도 재생됩니다.",
       "audioCuePreview": "미리듣기",
       "insertGroupTitle": "삽입 및 클립보드",
-      "restoreClipboardLabel": "입력 후 클립보드 복원",
-      "restoreClipboardDesc": "입력이 끝난 후 원래 클립보드 내용을 복원합니다.",
       "comboRecordLabel": "단축키 녹화",
       "comboRecordDesc": "클릭 후 원하는 단축키 조합(예: ⌘⇧D)을 누르세요. 토글 및 누르기 모드 모두 지원합니다.",
       "comboRecordBtn": "단축키 녹화",

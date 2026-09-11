@@ -1,14 +1,8 @@
-//! 跨平台光标位置文本插入。
+//! macOS 光标位置文本插入。
 //!
-//! 通用步骤：先写剪贴板（模拟失败时用户能手动粘贴）→ 模拟粘贴快捷键。
-//! - macOS：用 CoreGraphics CGEvent 直接 post Cmd+V。
-//! - Windows / Linux：用 enigo 按 `PasteShortcut` 模拟。
+//! 先写剪贴板，再用 CoreGraphics CGEvent post Cmd+V。
+//! 目标应用可能延迟读取剪贴板，因此听写文本必须保留，不读取或恢复旧内容。
 use crate::types::{InsertStatus, PasteShortcut};
-use once_cell::sync::Lazy;
-use parking_lot::Mutex;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Duration;
-const CLIPBOARD_RESTORE_DELAY: Duration = Duration::from_millis(750);
 /// 把一段文字放进剪贴板。供落字失败兜底卡片的「复制」按钮使用。
 ///
 /// 单独开这个入口而不是让前端调 `navigator.clipboard`：卡片浮在别的 app 上、按钮
@@ -25,32 +19,9 @@ impl TextInserter {
     pub fn new() -> Self {
         Self
     }
-    /// macOS 路径：保存原剪贴板 → 写转写文字 → post Cmd+V → 按需恢复原剪贴板。
-    /// `_paste_shortcut` 在 macOS 不使用（固定 Cmd+V），仅为对齐跨平台签名。
-    pub fn insert(
-        &self,
-        text: &str,
-        restore_clipboard_after_paste: bool,
-        _paste_shortcut: PasteShortcut,
-    ) -> InsertStatus {
-        if text.is_empty() {
-            return InsertStatus::CopiedFallback;
-        }
-        let restore_plan = match copy_to_clipboard_with_restore_plan(text) {
-            Ok(plan) => plan,
-            Err(err) => {
-                log::error!("[insertion] clipboard write failed: {}", err);
-                return InsertStatus::Failed;
-            }
-        };
-        if let Err(err) = simulate_paste() {
-            log::warn!("[insertion] simulated paste failed: {}", err);
-            return InsertStatus::CopiedFallback;
-        }
-        if restore_clipboard_after_paste {
-            schedule_clipboard_restore(restore_plan);
-        }
-        insertion_success_status()
+    /// 写入成功后才 post Cmd+V；post 成功不代表目标应用已经读取文本。
+    pub fn insert(&self, text: &str, _paste_shortcut: PasteShortcut) -> InsertStatus {
+        insert_with(text, copy_to_clipboard, simulate_paste)
     }
     /// 只写剪贴板、不模拟粘贴。用于目标控件活跃状态无法验证时的兜底路径。
     pub fn copy_fallback(&self, text: &str) -> InsertStatus {
@@ -69,19 +40,23 @@ impl Default for TextInserter {
         Self::new()
     }
 }
-#[derive(Debug)]
-struct ClipboardRestorePlan {
-    inserted_text: String,
-    previous_text: Option<String>,
+fn insert_with<W, P>(text: &str, write_clipboard: W, paste: P) -> InsertStatus
+where
+    W: FnOnce(&str) -> bool,
+    P: FnOnce() -> Result<(), String>,
+{
+    if text.is_empty() {
+        return InsertStatus::CopiedFallback;
+    }
+    if !write_clipboard(text) {
+        return InsertStatus::Failed;
+    }
+    if let Err(err) = paste() {
+        log::warn!("[insertion] simulated paste failed: {}", err);
+        return InsertStatus::CopiedFallback;
+    }
+    InsertStatus::Inserted
 }
-#[derive(Debug, Clone)]
-struct PendingClipboardRestore {
-    latest_restore_id: u64,
-    original_text: Option<String>,
-}
-static NEXT_CLIPBOARD_RESTORE_ID: AtomicU64 = AtomicU64::new(1);
-static PENDING_CLIPBOARD_RESTORE: Lazy<Mutex<Option<PendingClipboardRestore>>> =
-    Lazy::new(|| Mutex::new(None));
 fn copy_to_clipboard(text: &str) -> bool {
     let mut clipboard = match arboard::Clipboard::new() {
         Ok(c) => c,
@@ -95,108 +70,6 @@ fn copy_to_clipboard(text: &str) -> bool {
         return false;
     }
     true
-}
-fn copy_to_clipboard_with_restore_plan(text: &str) -> Result<ClipboardRestorePlan, String> {
-    let mut clipboard = arboard::Clipboard::new().map_err(|e| e.to_string())?;
-    let previous_text = match clipboard.get_text() {
-        Ok(existing) => Some(existing),
-        Err(err) => {
-            log::warn!(
-                "[insertion] clipboard get_text failed before overwrite: {}",
-                err
-            );
-            None
-        }
-    };
-    clipboard
-        .set_text(text.to_string())
-        .map_err(|e| e.to_string())?;
-    Ok(ClipboardRestorePlan {
-        inserted_text: text.to_string(),
-        previous_text,
-    })
-}
-fn schedule_clipboard_restore(plan: ClipboardRestorePlan) {
-    let (restore_id, original_text) =
-        remember_pending_clipboard_restore(plan.previous_text.clone());
-    std::thread::spawn(move || {
-        restore_clipboard_after_delay(plan, original_text, restore_id, CLIPBOARD_RESTORE_DELAY)
-    });
-}
-fn remember_pending_clipboard_restore(previous_text: Option<String>) -> (u64, Option<String>) {
-    let restore_id = NEXT_CLIPBOARD_RESTORE_ID.fetch_add(1, Ordering::SeqCst);
-    let original_text = {
-        let mut pending = PENDING_CLIPBOARD_RESTORE.lock();
-        let original = pending
-            .as_ref()
-            .map(|batch| batch.original_text.clone())
-            .unwrap_or(previous_text);
-        *pending = Some(PendingClipboardRestore {
-            latest_restore_id: restore_id,
-            original_text: original.clone(),
-        });
-        original
-    };
-    (restore_id, original_text)
-}
-fn restore_clipboard_after_delay(
-    plan: ClipboardRestorePlan,
-    original_text: Option<String>,
-    restore_id: u64,
-    delay: Duration,
-) {
-    std::thread::sleep(delay);
-    if !is_latest_clipboard_restore(restore_id) {
-        return;
-    }
-    let mut clipboard = match arboard::Clipboard::new() {
-        Ok(clipboard) => clipboard,
-        Err(err) => {
-            log::warn!(
-                "[insertion] clipboard re-open failed during restore: {}",
-                err
-            );
-            clear_pending_clipboard_restore(restore_id);
-            return;
-        }
-    };
-    let current_text = match clipboard.get_text() {
-        Ok(current) => Some(current),
-        Err(err) => {
-            log::warn!(
-                "[insertion] clipboard get_text failed during restore: {}",
-                err
-            );
-            None
-        }
-    };
-    if should_restore_clipboard(current_text.as_deref(), &plan.inserted_text) {
-        if let Some(previous_text) = original_text {
-            if let Err(err) = clipboard.set_text(previous_text) {
-                log::warn!("[insertion] clipboard restore failed: {}", err);
-            }
-        }
-    } else {
-        log::info!(
-            "[insertion] skip clipboard restore: latest clipboard no longer matches inserted text"
-        );
-    }
-    clear_pending_clipboard_restore(restore_id);
-}
-fn is_latest_clipboard_restore(restore_id: u64) -> bool {
-    matches!(
-        PENDING_CLIPBOARD_RESTORE.lock().as_ref(), Some(batch) if batch.latest_restore_id
-        == restore_id
-    )
-}
-fn clear_pending_clipboard_restore(restore_id: u64) {
-    let mut pending = PENDING_CLIPBOARD_RESTORE.lock();
-    if matches!(pending.as_ref(), Some(batch) if batch.latest_restore_id == restore_id) {
-        pending.take();
-    }
-}
-fn should_restore_clipboard(current_text: Option<&str>, inserted_text: &str) -> bool {
-    matches!(current_text, Some(current) if current == inserted_text)
 }
 fn simulate_macos_paste_with<P>(
     accessibility_granted: bool,
@@ -223,9 +96,6 @@ fn simulate_paste() -> Result<(), String> {
         crate::unicode_keystroke::is_secure_input_enabled(),
         macos::post_cmd_v,
     )
-}
-fn insertion_success_status() -> InsertStatus {
-    InsertStatus::Inserted
 }
 mod macos {
     use std::ffi::c_void;
@@ -293,67 +163,86 @@ mod macos {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::RefCell;
+
     #[test]
-    fn restore_only_when_clipboard_still_holds_inserted_text() {
-        assert!(should_restore_clipboard(
-            Some("dictated text"),
-            "dictated text"
-        ));
-        assert!(!should_restore_clipboard(
-            Some("user changed clipboard"),
-            "dictated text"
-        ));
-        assert!(!should_restore_clipboard(None, "dictated text"));
+    fn failed_clipboard_write_never_posts_paste() {
+        assert_eq!(
+            insert_with("dictated text", |_| false, || panic!("must not post")),
+            InsertStatus::Failed
+        );
     }
+
+    #[test]
+    fn clipboard_write_precedes_paste() {
+        let calls = RefCell::new(Vec::new());
+        assert_eq!(
+            insert_with(
+                "dictated text",
+                |text| {
+                    assert_eq!(text, "dictated text");
+                    calls.borrow_mut().push("write");
+                    true
+                },
+                || {
+                    calls.borrow_mut().push("post");
+                    Ok(())
+                },
+            ),
+            InsertStatus::Inserted
+        );
+        assert_eq!(*calls.borrow(), ["write", "post"]);
+    }
+
+    #[test]
+    fn failed_paste_keeps_dictated_text_for_manual_paste() {
+        let clipboard = RefCell::new(String::from("old text"));
+        let status = insert_with(
+            "dictated text",
+            |text| {
+                *clipboard.borrow_mut() = text.to_string();
+                true
+            },
+            || {
+                assert_eq!(*clipboard.borrow(), "dictated text");
+                Err("post failed".into())
+            },
+        );
+        assert_eq!(status, InsertStatus::CopiedFallback);
+        assert_eq!(*clipboard.borrow(), "dictated text");
+    }
+
+    #[test]
+    fn successful_paste_keeps_text_for_delayed_reader_without_restoring() {
+        let clipboard = RefCell::new(String::from("old text"));
+        let writes = RefCell::new(Vec::new());
+        let status = insert_with(
+            "dictated text",
+            |text| {
+                *clipboard.borrow_mut() = text.to_string();
+                writes.borrow_mut().push(text.to_string());
+                true
+            },
+            || Ok(()),
+        );
+        assert_eq!(status, InsertStatus::Inserted);
+        std::thread::sleep(std::time::Duration::from_millis(1_000));
+        assert_eq!(*clipboard.borrow(), "dictated text");
+        assert_eq!(*writes.borrow(), ["dictated text"]);
+    }
+
     #[test]
     fn empty_insertions_never_touch_clipboard_or_paste_path() {
+        assert_eq!(
+            insert_with("", |_| panic!("must not write"), || panic!("must not post")),
+            InsertStatus::CopiedFallback
+        );
         let inserter = TextInserter::new();
         assert_eq!(
-            inserter.insert("", true, PasteShortcut::CtrlV),
+            inserter.insert("", PasteShortcut::CtrlV),
             InsertStatus::CopiedFallback
         );
         assert_eq!(inserter.copy_fallback(""), InsertStatus::CopiedFallback);
-    }
-    #[test]
-    fn pending_clipboard_restore_keeps_first_original_until_latest_restore() {
-        *PENDING_CLIPBOARD_RESTORE.lock() = None;
-        let (first_id, first_original) =
-            remember_pending_clipboard_restore(Some("user clipboard".to_string()));
-        let (second_id, second_original) =
-            remember_pending_clipboard_restore(Some("first dictated text".to_string()));
-        assert_ne!(first_id, second_id);
-        assert_eq!(first_original.as_deref(), Some("user clipboard"));
-        assert_eq!(second_original.as_deref(), Some("user clipboard"));
-        assert!(!is_latest_clipboard_restore(first_id));
-        assert!(is_latest_clipboard_restore(second_id));
-        clear_pending_clipboard_restore(first_id);
-        assert!(is_latest_clipboard_restore(second_id));
-        clear_pending_clipboard_restore(second_id);
-        assert!(!is_latest_clipboard_restore(second_id));
-    }
-    #[test]
-    fn clipboard_restore_skips_when_clipboard_no_longer_matches_inserted_text() {
-        assert!(should_restore_clipboard(
-            Some("dictated text"),
-            "dictated text"
-        ));
-        assert!(!should_restore_clipboard(
-            Some("user edited clipboard"),
-            "dictated text"
-        ));
-        assert!(!should_restore_clipboard(None, "dictated text"));
-    }
-    #[test]
-    fn macos_paste_success_reports_inserted_and_guards_restore() {
-        assert_eq!(insertion_success_status(), InsertStatus::Inserted);
-        assert!(should_restore_clipboard(
-            Some("dictated text"),
-            "dictated text"
-        ));
-        assert!(!should_restore_clipboard(
-            Some("user changed clipboard"),
-            "dictated text"
-        ));
     }
     #[test]
     fn macos_paste_preflight_rejects_missing_accessibility_before_posting() {

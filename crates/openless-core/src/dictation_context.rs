@@ -97,7 +97,6 @@ pub struct DictationInsertionContext {
     pub enabled: bool,
     pub streaming: bool,
     pub save_streamed_text_to_clipboard: bool,
-    pub restore_clipboard_after_paste: bool,
     pub paste_shortcut: PasteShortcut,
     pub macos_newline_mode: MacosNewlineMode,
 }
@@ -220,7 +219,6 @@ impl DictationContext {
                 enabled: options.insert_text,
                 streaming: preferences.streaming_insert,
                 save_streamed_text_to_clipboard: preferences.streaming_insert_save_clipboard,
-                restore_clipboard_after_paste: preferences.restore_clipboard_after_paste,
                 paste_shortcut: preferences.paste_shortcut,
                 macos_newline_mode: crate::streaming_insert::resolve_macos_newline_mode(
                     preferences.macos_newline_mode,

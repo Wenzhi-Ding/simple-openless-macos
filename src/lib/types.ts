@@ -240,8 +240,6 @@ export interface UserPreferences {
   llmThinkingEnabled: boolean;
   /** 是否使用系统代理（issue #869）。默认开启；关闭后所有请求直连，境外服务（GitHub 登录/更新等）可能连不上。 */
   useSystemProxy: boolean;
-  /** 仅 Windows/Linux：粘贴成功后是否恢复用户原剪贴板。默认 true。详见 issue #111。 */
-  restoreClipboardAfterPaste: boolean;
   /** 仅 Windows/Linux：模拟粘贴时按下的快捷键。详见 issue #360：kitty/alacritty
    *  等终端只接受 Ctrl+Shift+V，硬编码 Ctrl+V 会被吞掉，听写文本只剩在剪贴板里。
    *  macOS 走 AX 直写不受影响。默认 'ctrlV' 与历史行为一致。 */
