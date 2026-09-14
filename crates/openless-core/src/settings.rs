@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::errors::BackendError;
-use crate::shared_types::{HotkeyMode, ShortcutBinding, UserPreferences};
+use crate::shared_types::{ShortcutBinding, UserPreferences};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -39,16 +39,12 @@ impl SettingsUpdateOptions {
 #[serde(rename_all = "camelCase")]
 pub struct HotkeyRuntimeTarget {
     pub dictation: ShortcutBinding,
-    pub dictation_mode: HotkeyMode,
-    pub open_app: Option<ShortcutBinding>,
 }
 
 impl From<&UserPreferences> for HotkeyRuntimeTarget {
     fn from(preferences: &UserPreferences) -> Self {
         Self {
             dictation: preferences.dictation_hotkey.clone(),
-            dictation_mode: preferences.hotkey.mode,
-            open_app: preferences.open_app_hotkey.clone(),
         }
     }
 }
@@ -161,6 +157,5 @@ impl SettingsRuntime for NoopSettingsRuntime {}
 #[serde(rename_all = "camelCase")]
 pub struct SettingsUpdateOutcome {
     pub preferences: UserPreferences,
-    pub reconciled_hotkey_count: usize,
     pub effects: SettingsEffectPlan,
 }

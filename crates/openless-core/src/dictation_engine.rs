@@ -19,7 +19,7 @@ use crate::ports::{
     EngineStage, PolishAttempt, RecordingProgressSink, TextPolisher, TextStreamChunk,
     TextStreamSink, TranscriptionEngine, TranscriptionSession, VoiceCapture,
 };
-use crate::types::{PolishDelta, SessionId, TranscriptDelta};
+use crate::types::{SessionId, TranscriptDelta};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PolishFailurePolicy {
@@ -508,10 +508,9 @@ impl DictationEngine for PipelineDictationEngine {
                     )
                     .into());
                 }
-                let polish_partials: Arc<dyn TextStreamSink> = Arc::new(PolishProgressForwarder {
-                    session_id,
-                    progress: Arc::clone(&progress),
-                });
+                // 流式上屏已删除：润色仍走 SSE 流式生成，但增量不再向上转发，
+                // 只有最终文本进入 EngineResult 走一次性插入。
+                let polish_partials: Arc<dyn TextStreamSink> = Arc::new(NoopTextStreamSink);
                 let polish_started = std::time::Instant::now();
                 let attempt: PolishAttempt = if let Some(error) = context.deferred_llm_error.clone()
                 {
@@ -585,21 +584,6 @@ impl DictationEngine for PipelineDictationEngine {
                 return Err(
                     cancelled_error("dictation was cancelled after polishing finished").into(),
                 );
-            }
-            // Untouched Raw is ASR passthrough: it never entered Polishing,
-            // so emitting a polish event violates the real backend validator.
-            // Its final text still travels in EngineResult for one-shot input.
-            if uses_polisher {
-                publish_progress(
-                    &session,
-                    session_id,
-                    &progress,
-                    EngineProgress::PolishDelta(PolishDelta {
-                        text: polish_output.text.clone(),
-                        offset: 0,
-                        is_final: true,
-                    }),
-                )?;
             }
 
             remove_session(&sessions, session_id, &session);
@@ -972,21 +956,11 @@ impl TextStreamSink for TranscriptProgressForwarder {
     }
 }
 
-struct PolishProgressForwarder {
-    session_id: SessionId,
-    progress: Arc<dyn EngineProgressSink>,
-}
+struct NoopTextStreamSink;
 
-impl TextStreamSink for PolishProgressForwarder {
-    fn publish(&self, chunk: TextStreamChunk) -> Result<(), BackendError> {
-        self.progress.publish(
-            self.session_id,
-            EngineProgress::PolishDelta(PolishDelta {
-                text: chunk.text,
-                offset: chunk.offset,
-                is_final: false,
-            }),
-        )
+impl TextStreamSink for NoopTextStreamSink {
+    fn publish(&self, _chunk: TextStreamChunk) -> Result<(), BackendError> {
+        Ok(())
     }
 }
 
@@ -1363,11 +1337,6 @@ mod tests {
                 is_final: true,
             }))
         );
-        assert!(events.contains(&EngineProgress::PolishDelta(PolishDelta {
-            text: "polished text".to_string(),
-            offset: 0,
-            is_final: true,
-        })));
     }
 
     #[tokio::test]

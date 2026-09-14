@@ -2,7 +2,7 @@
 //!
 //! 先写剪贴板，再用 CoreGraphics CGEvent post Cmd+V。
 //! 目标应用可能延迟读取剪贴板，因此听写文本必须保留，不读取或恢复旧内容。
-use crate::types::{InsertStatus, PasteShortcut};
+use crate::types::InsertStatus;
 /// 把一段文字放进剪贴板。供落字失败兜底卡片的「复制」按钮使用。
 ///
 /// 单独开这个入口而不是让前端调 `navigator.clipboard`：卡片浮在别的 app 上、按钮
@@ -20,19 +20,8 @@ impl TextInserter {
         Self
     }
     /// 写入成功后才 post Cmd+V；post 成功不代表目标应用已经读取文本。
-    pub fn insert(&self, text: &str, _paste_shortcut: PasteShortcut) -> InsertStatus {
+    pub fn insert(&self, text: &str) -> InsertStatus {
         insert_with(text, copy_to_clipboard, simulate_paste)
-    }
-    /// 只写剪贴板、不模拟粘贴。用于目标控件活跃状态无法验证时的兜底路径。
-    pub fn copy_fallback(&self, text: &str) -> InsertStatus {
-        if text.is_empty() {
-            return InsertStatus::CopiedFallback;
-        }
-        if copy_to_clipboard(text) {
-            InsertStatus::CopiedFallback
-        } else {
-            InsertStatus::Failed
-        }
     }
 }
 impl Default for TextInserter {
@@ -239,10 +228,9 @@ mod tests {
         );
         let inserter = TextInserter::new();
         assert_eq!(
-            inserter.insert("", PasteShortcut::CtrlV),
+            inserter.insert(""),
             InsertStatus::CopiedFallback
         );
-        assert_eq!(inserter.copy_fallback(""), InsertStatus::CopiedFallback);
     }
     #[test]
     fn macos_paste_preflight_rejects_missing_accessibility_before_posting() {

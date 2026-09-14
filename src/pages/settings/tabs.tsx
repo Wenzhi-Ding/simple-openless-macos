@@ -2,40 +2,18 @@
 // 真正的逻辑都在各 *Section 文件里，这里只负责"哪些 section 归到哪个 tab"。
 
 import { useTranslation } from 'react-i18next';
-import { useEffect, useState } from 'react';
 import { RecordingInputSection } from './RecordingInputSection';
-import { ShortcutsSection } from './ShortcutsSection';
 import { LanguageSection } from './LanguageSection';
 import { ThemeSection } from './ThemeSection';
-import { LayoutSection } from './LayoutSection';
 import { PermissionsSection } from './PermissionsSection';
 import { DataStorageSection } from './DataStorageSection';
 import { DebugToolsSection } from './DebugToolsSection';
-import { AboutSection } from './AboutSection';
-import { getPlatformCapabilities } from '../../lib/platform';
-import type { PlatformCapabilities } from '../../lib/types';
 
-// 各 tab 共用的平台能力查询（决定桌面/移动、是否支持热键与自动更新等 gating）。
-function usePlatformCaps(): PlatformCapabilities | null {
-  const [platformCaps, setPlatformCaps] = useState<PlatformCapabilities | null>(null);
-
-  useEffect(() => {
-    void getPlatformCapabilities().then(setPlatformCaps);
-  }, []);
-
-  return platformCaps;
-}
-
-// 通用：录音与输入 · 远程输入 · 快捷键 · 主题 · 语言。
+// 通用：录音与输入 · 主题 · 语言。
 export function GeneralTab() {
-  const platformCaps = usePlatformCaps();
-  const showDesktopShortcuts = platformCaps?.supportsDesktopHotkey === true;
-
   return (
     <>
       <RecordingInputSection />
-      <LayoutSection />
-      {showDesktopShortcuts && <ShortcutsSection />}
       <ThemeSection />
       <LanguageSection />
     </>
@@ -81,9 +59,4 @@ export function PrivacyTab() {
 // 高级：只保留本地调试工具与录音导出入口。
 export function AdvancedTab() {
   return <DebugToolsSection />;
-}
-
-// 关于：版本信息 · 更新渠道 · 自动更新 —— 「我用的是什么版本、怎么更新」归一处。
-export function AboutTab() {
-  return <AboutSection />;
 }

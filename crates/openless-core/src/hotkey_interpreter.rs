@@ -1,13 +1,8 @@
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
-use crate::shared_types::HotkeyMode;
 use crate::types::DictationPhase;
 
-/// Auto mode treats a shorter press as a latched Toggle press and a longer
-/// press as Hold-to-talk. Event timestamps are supplied by the native listener,
-/// so a busy async executor cannot accidentally change the user's gesture.
-const AUTO_HOLD_THRESHOLD: Duration = Duration::from_millis(350);
 /// Suppress switch bounce and accidental press-release-press bursts before they
 /// allocate another recorder or ASR session.
 const HOTKEY_DEBOUNCE: Duration = Duration::from_millis(250);
@@ -34,14 +29,13 @@ pub(crate) enum HotkeyIntent {
 struct Press {
     /// Stable id allocated by the host once per physical down/up cycle.
     id: u64,
-    /// Native monotonic timestamp used for Auto mode duration classification.
-    at: Instant,
     /// False means this press was rejected by debounce/cooldown and its release
     /// must remain a no-op even if a different session is active by then.
     accepted: bool,
 }
 
-/// Core-owned interpreter for the main dictation hotkey.
+/// Core-owned interpreter for the main dictation hotkey (toggle only: one
+/// press starts, the next press stops).
 ///
 /// The host allocates a `press_id` and forwards timestamped edges. Keeping all
 /// policy here gives the macOS event tap and Tauri fallback one generation,
@@ -75,7 +69,6 @@ impl HotkeyInterpreter {
         &mut self,
         press_id: u64,
         at: Instant,
-        mode: HotkeyMode,
         phase: DictationPhase,
         modifier_only: bool,
     ) -> HotkeyIntent {
@@ -89,7 +82,6 @@ impl HotkeyInterpreter {
         self.held = None;
         self.held = Some(Press {
             id: press_id,
-            at,
             accepted: false,
         });
         if self.take_combined(press_id) {
@@ -107,21 +99,14 @@ impl HotkeyInterpreter {
         self.last_dispatch = Some((press_id, at));
         self.held.as_mut().expect("press was just stored").accepted = true;
 
-        let intent = match (mode, phase) {
-            (_, DictationPhase::Idle)
+        let intent = match phase {
+            DictationPhase::Idle
                 if self.cooldown_until.is_some_and(|deadline| at < deadline) =>
             {
                 HotkeyIntent::Noop
             }
-            (HotkeyMode::Hold, DictationPhase::Idle)
-            | (HotkeyMode::Auto, DictationPhase::Idle)
-            | (HotkeyMode::Toggle | HotkeyMode::DoubleClick, DictationPhase::Idle) => {
-                HotkeyIntent::Start { press_id }
-            }
-            (
-                HotkeyMode::Auto | HotkeyMode::Toggle | HotkeyMode::DoubleClick,
-                DictationPhase::Starting | DictationPhase::Recording,
-            ) => HotkeyIntent::Stop,
+            DictationPhase::Idle => HotkeyIntent::Start { press_id },
+            DictationPhase::Starting | DictationPhase::Recording => HotkeyIntent::Stop,
             _ => HotkeyIntent::Noop,
         };
         if matches!(intent, HotkeyIntent::Start { .. }) && modifier_only {
@@ -159,15 +144,11 @@ impl HotkeyInterpreter {
         HotkeyIntent::Start { press_id }
     }
 
-    pub(crate) fn release(
-        &mut self,
-        press_id: u64,
-        at: Instant,
-        mode: HotkeyMode,
-        phase: DictationPhase,
-    ) -> HotkeyIntent {
+    pub(crate) fn release(&mut self, press_id: u64) -> HotkeyIntent {
         // Generation matching is the release-side stale-event guard. An old
-        // key-up can never stop a session opened by a newer press.
+        // key-up can never stop a session opened by a newer press. Toggle mode
+        // acts on the press edge only, so a matched release just clears the
+        // latch; the stop itself is decided by the next press.
         let Some(press) = self.held.filter(|press| press.id == press_id) else {
             return HotkeyIntent::Noop;
         };
@@ -175,19 +156,7 @@ impl HotkeyInterpreter {
         if !press.accepted || self.take_combined(press_id) {
             return HotkeyIntent::Noop;
         }
-        let active = matches!(phase, DictationPhase::Starting | DictationPhase::Recording)
-            && self.session_press_id == Some(press_id);
-        match mode {
-            HotkeyMode::Hold if active => HotkeyIntent::Stop,
-            HotkeyMode::Auto
-                if active && at.saturating_duration_since(press.at) >= AUTO_HOLD_THRESHOLD =>
-            {
-                HotkeyIntent::Stop
-            }
-            HotkeyMode::Toggle | HotkeyMode::DoubleClick | HotkeyMode::Auto | HotkeyMode::Hold => {
-                HotkeyIntent::Noop
-            }
-        }
+        HotkeyIntent::Noop
     }
 
     pub(crate) fn combined(&mut self, press_id: u64) -> HotkeyIntent {
@@ -276,17 +245,11 @@ mod tests {
             "Combined may arrive before Pressed"
         );
         assert_eq!(
-            interpreter.press(1, start, HotkeyMode::Auto, DictationPhase::Idle, true),
+            interpreter.press(1, start, DictationPhase::Idle, true),
             HotkeyIntent::Noop
         );
         assert_eq!(
-            interpreter.press(
-                2,
-                start + Duration::from_millis(10),
-                HotkeyMode::Auto,
-                DictationPhase::Idle,
-                false,
-            ),
+            interpreter.press(2, start + Duration::from_millis(10), DictationPhase::Idle, false),
             HotkeyIntent::Start { press_id: 2 }
         );
     }
@@ -297,7 +260,7 @@ mod tests {
         let mut interpreter = HotkeyInterpreter::default();
 
         assert_eq!(
-            interpreter.press(1, start, HotkeyMode::Auto, DictationPhase::Idle, true,),
+            interpreter.press(1, start, DictationPhase::Idle, true,),
             HotkeyIntent::WaitForModifierGrace { press_id: 1 }
         );
         assert_eq!(interpreter.combined(1), HotkeyIntent::Noop);
@@ -306,43 +269,32 @@ mod tests {
             HotkeyIntent::Noop
         );
         assert_eq!(
-            interpreter.press(
-                2,
-                start + Duration::from_millis(10),
-                HotkeyMode::Auto,
-                DictationPhase::Idle,
-                false,
-            ),
+            interpreter.press(2, start + Duration::from_millis(10), DictationPhase::Idle, false),
             HotkeyIntent::Start { press_id: 2 },
             "an explicit custom combo has no modifier-only ambiguity"
         );
     }
 
     #[test]
-    fn auto_uses_native_press_duration_and_release_generation() {
+    fn stale_release_generation_is_rejected() {
         let start = Instant::now();
         let mut interpreter = HotkeyInterpreter::default();
 
         assert_eq!(
-            interpreter.press(1, start, HotkeyMode::Auto, DictationPhase::Idle, false),
+            interpreter.press(1, start, DictationPhase::Idle, false),
             HotkeyIntent::Start { press_id: 1 }
         );
         assert_eq!(
-            interpreter.release(
-                99,
-                start + Duration::from_millis(500),
-                HotkeyMode::Auto,
-                DictationPhase::Recording,
-            ),
+            interpreter.release(99),
             HotkeyIntent::Noop,
-            "a stale release must not stop the current generation"
+            "a stale release must not affect the current generation"
         );
         assert_eq!(
-            interpreter.release(
-                1,
-                start + Duration::from_millis(500),
-                HotkeyMode::Auto,
+            interpreter.press(
+                2,
+                start + Duration::from_millis(300),
                 DictationPhase::Recording,
+                false
             ),
             HotkeyIntent::Stop
         );
@@ -354,26 +306,12 @@ mod tests {
         let mut interpreter = HotkeyInterpreter::default();
 
         assert_eq!(
-            interpreter.press(1, start, HotkeyMode::Hold, DictationPhase::Idle, false),
+            interpreter.press(1, start, DictationPhase::Idle, false),
             HotkeyIntent::Start { press_id: 1 }
         );
+        assert_eq!(interpreter.release(1), HotkeyIntent::Noop);
         assert_eq!(
-            interpreter.release(
-                1,
-                start + Duration::from_millis(20),
-                HotkeyMode::Hold,
-                DictationPhase::Recording,
-            ),
-            HotkeyIntent::Stop
-        );
-        assert_eq!(
-            interpreter.press(
-                2,
-                start + Duration::from_millis(100),
-                HotkeyMode::Hold,
-                DictationPhase::Idle,
-                false,
-            ),
+            interpreter.press(2, start + Duration::from_millis(100), DictationPhase::Idle, false),
             HotkeyIntent::Noop
         );
     }
@@ -384,40 +322,25 @@ mod tests {
         let mut interpreter = HotkeyInterpreter::default();
 
         assert_eq!(
-            interpreter.press(1, start, HotkeyMode::Toggle, DictationPhase::Idle, false),
+            interpreter.press(1, start, DictationPhase::Idle, false),
             HotkeyIntent::Start { press_id: 1 }
         );
         assert_eq!(
             interpreter.press(
                 2,
                 start + Duration::from_millis(300),
-                HotkeyMode::Toggle,
                 DictationPhase::Recording,
-                false,
+                false
             ),
             HotkeyIntent::Stop
         );
         interpreter.terminal(start + Duration::from_millis(310));
         assert_eq!(
-            interpreter.press(
-                3,
-                start + Duration::from_millis(600),
-                HotkeyMode::Toggle,
-                DictationPhase::Idle,
-                false,
-            ),
+            interpreter.press(3, start + Duration::from_millis(600), DictationPhase::Idle, false),
             HotkeyIntent::Noop,
             "#545: the third press must not restart during the terminal animation"
         );
-        assert_eq!(
-            interpreter.release(
-                3,
-                start + Duration::from_millis(610),
-                HotkeyMode::Toggle,
-                DictationPhase::Idle,
-            ),
-            HotkeyIntent::Noop
-        );
+        assert_eq!(interpreter.release(3), HotkeyIntent::Noop);
     }
 
     #[test]
@@ -426,34 +349,14 @@ mod tests {
         let mut interpreter = HotkeyInterpreter::default();
 
         assert_eq!(
-            interpreter.press(
-                1,
-                start,
-                HotkeyMode::Toggle,
-                DictationPhase::Transcribing,
-                false,
-            ),
+            interpreter.press(1, start, DictationPhase::Transcribing, false),
             HotkeyIntent::Noop,
             "#856: a press dequeued during processing is not a future start request"
         );
         interpreter.terminal(start + Duration::from_millis(10));
+        assert_eq!(interpreter.release(1), HotkeyIntent::Noop);
         assert_eq!(
-            interpreter.release(
-                1,
-                start + Duration::from_millis(20),
-                HotkeyMode::Toggle,
-                DictationPhase::Idle,
-            ),
-            HotkeyIntent::Noop
-        );
-        assert_eq!(
-            interpreter.press(
-                2,
-                start + Duration::from_millis(100),
-                HotkeyMode::Toggle,
-                DictationPhase::Idle,
-                false,
-            ),
+            interpreter.press(2, start + Duration::from_millis(100), DictationPhase::Idle, false),
             HotkeyIntent::Noop,
             "a queued follow-up edge inside terminal cooldown must also be dropped"
         );
@@ -465,7 +368,7 @@ mod tests {
         let mut interpreter = HotkeyInterpreter::default();
 
         assert_eq!(
-            interpreter.press(1, start, HotkeyMode::Hold, DictationPhase::Idle, false),
+            interpreter.press(1, start, DictationPhase::Idle, false),
             HotkeyIntent::Start { press_id: 1 }
         );
         assert_eq!(
@@ -474,13 +377,7 @@ mod tests {
         );
         interpreter.combo_cancelled(1);
         assert_eq!(
-            interpreter.press(
-                2,
-                start + Duration::from_millis(1),
-                HotkeyMode::Hold,
-                DictationPhase::Idle,
-                false,
-            ),
+            interpreter.press(2, start + Duration::from_millis(1), DictationPhase::Idle, false),
             HotkeyIntent::Start { press_id: 2 },
             "a cancelled keyboard combo must not consume the next debounce window"
         );
@@ -492,7 +389,7 @@ mod tests {
         let mut interpreter = HotkeyInterpreter::default();
 
         assert_eq!(
-            interpreter.press(7, start, HotkeyMode::Hold, DictationPhase::Idle, false),
+            interpreter.press(7, start, DictationPhase::Idle, false),
             HotkeyIntent::Start { press_id: 7 }
         );
         assert_eq!(
@@ -513,14 +410,13 @@ mod tests {
         assert_eq!(interpreter.combined(11), HotkeyIntent::Noop);
         assert_eq!(interpreter.combined(12), HotkeyIntent::Noop);
         assert_eq!(
-            interpreter.press(11, start, HotkeyMode::Hold, DictationPhase::Idle, true),
+            interpreter.press(11, start, DictationPhase::Idle, true),
             HotkeyIntent::Noop
         );
         assert_eq!(
             interpreter.press(
                 12,
                 start + Duration::from_millis(1),
-                HotkeyMode::Hold,
                 DictationPhase::Idle,
                 true,
             ),
@@ -530,7 +426,6 @@ mod tests {
             interpreter.press(
                 13,
                 start + Duration::from_millis(2),
-                HotkeyMode::Hold,
                 DictationPhase::Idle,
                 false,
             ),

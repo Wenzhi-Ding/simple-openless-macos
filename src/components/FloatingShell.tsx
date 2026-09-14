@@ -18,17 +18,9 @@ import { Vocab } from '../pages/Vocab';
 // LocalAsr 不再作为主 nav tab——本地 ASR 模型管理已合并到 Settings → Advanced 中
 // 通过 <LocalAsr embedded /> 渲染。这里之前的 import 与 NAV_BASE 条目都已移除。
 import { APP_VERSION_LABEL, IS_BETA_BUILD } from '../lib/appVersion';
-import {
-  HOTKEY_MODE_MIGRATION_ACK_KEY,
-  HOTKEY_MODE_MIGRATION_DEFERRED_KEY,
-  shouldShowHotkeyModeMigrationPrompt,
-} from '../lib/hotkeyMigration';
 import { applyFontScale, readFontScale } from '../lib/fontScale';
 import { type SettingsSectionId } from './SettingsModal';
-import { applyStackedLayoutFromPrefs } from '../lib/stackedLayout';
-import { applyConservativeLayout } from '../lib/conservativeLayout';
-import { useNarrowLayout, useConservativeLayout } from '../lib/useResponsiveLayout';
-import { useHotkeySettings } from '../state/HotkeySettingsContext';
+import { useNarrowLayout } from '../lib/useResponsiveLayout';
 import { useAppState, type AppTab } from '../state/useAppState';
 
 
@@ -68,11 +60,8 @@ export function FloatingShell({ os: osProp, initialTab = 'overview', initialSett
 function FloatingShellBody({ os, initialTab, initialSettings }: { os: OS; initialTab: AppTab; initialSettings: boolean }) {
   const { t } = useTranslation();
   const narrow = useNarrowLayout();
-  const conservative = useConservativeLayout();
-  const { prefs } = useHotkeySettings();
   const { currentTab, setCurrentTab, settingsOpen, setSettingsOpen } = useAppState(initialTab, initialSettings);
   const [settingsInitialSection, setSettingsInitialSection] = useState<SettingsSectionId | undefined>();
-  const [hotkeyModePromptOpen, setHotkeyModePromptOpen] = useState(false);
 
   // tab 切换的 cross-fade：旧页 blur+fade out（180ms），结束后挂载新页（走 ol-page-slide enter）。
   // displayTab 是实际渲染的 tab，currentTab 是用户点中的目标 tab。
@@ -93,29 +82,7 @@ function FloatingShellBody({ os, initialTab, initialSettings }: { os: OS; initia
     applyFontScale(readFontScale());
   }, []);
 
-  useEffect(() => {
-    applyStackedLayoutFromPrefs(prefs?.stackedRowLayout);
-    applyConservativeLayout(prefs?.conservativeLayout === true);
-  }, [prefs?.stackedRowLayout, prefs?.conservativeLayout]);
-
   const Page = PAGE_CMP[displayTab] ?? Overview;
-
-  useEffect(() => {
-    const acknowledgedValue = window.localStorage.getItem(HOTKEY_MODE_MIGRATION_ACK_KEY);
-    const deferredValue = window.sessionStorage.getItem(HOTKEY_MODE_MIGRATION_DEFERRED_KEY);
-    if (shouldShowHotkeyModeMigrationPrompt(acknowledgedValue, deferredValue)) {
-      setHotkeyModePromptOpen(true);
-    }
-  }, []);
-
-  // 之前监听的 NAVIGATE_LOCAL_ASR_EVENT 已无意义——「模型设置」独立 tab 已下线，
-  // 模型管理 UI 现在通过 Settings → Advanced 的 <LocalAsr embedded /> 渲染，
-  // 用户在 Settings 内即可一站式管理，无需跨页跳转。
-
-  const deferHotkeyModePrompt = () => {
-    window.sessionStorage.setItem(HOTKEY_MODE_MIGRATION_DEFERRED_KEY, '1');
-    setHotkeyModePromptOpen(false);
-  };
 
   const openSettings = (section?: SettingsSectionId) => {
     setSettingsInitialSection(section);
@@ -133,12 +100,6 @@ function FloatingShellBody({ os, initialTab, initialSettings }: { os: OS; initia
     window.addEventListener('keydown', onKeyDown, true);
     return () => window.removeEventListener('keydown', onKeyDown, true);
   }, []);
-
-  const openHotkeyRecordingSettings = () => {
-    window.localStorage.setItem(HOTKEY_MODE_MIGRATION_ACK_KEY, '1');
-    setHotkeyModePromptOpen(false);
-    openSettings('general');
-  };
 
   const narrowTitle = settingsOpen ? t('shell.footer.settings') : t(`nav.${currentTab}`);
 
@@ -323,10 +284,7 @@ function FloatingShellBody({ os, initialTab, initialSettings }: { os: OS; initia
               {displayTab === 'overview' ? (
                 <Overview onOpenHistory={() => setCurrentTab('history')} />
               ) : (
-                <div
-                  className={conservative ? 'ol-conservative-scope' : undefined}
-                  style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}
-                >
+                <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
                   <Page />
                 </div>
               )}
@@ -526,96 +484,3 @@ const navBtnStyle: CSSProperties = {
   transition: 'color 0.16s var(--ol-motion-quick), background 0.16s var(--ol-motion-quick)',
   textAlign: 'left',
 };
-
-function HotkeyModeMigrationPrompt({ onLater, onOpenSettings }: { onLater: () => void; onOpenSettings: () => void }) {
-  const { t } = useTranslation();
-  return (
-    <div
-      style={{
-        position: 'absolute',
-        inset: 0,
-        zIndex: 70,
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        padding: 28,
-        background: 'rgba(15,17,22,0.28)',
-        backdropFilter: 'blur(6px) saturate(140%)',
-        WebkitBackdropFilter: 'blur(6px) saturate(140%)',
-        animation: 'ol-prompt-fade 0.2s var(--ol-motion-soft)',
-      }}
-    >
-      <div
-        style={{
-          width: 380,
-          borderRadius: 12,
-          background: 'var(--ol-surface)',
-          border: '0.5px solid rgba(0,0,0,.08)',
-          boxShadow: '0 24px 70px -24px rgba(15,17,22,.38), 0 0 0 0.5px rgba(0,0,0,.06)',
-          padding: 20,
-          animation: 'ol-prompt-pop 0.26s var(--ol-motion-spring)',
-        }}
-      >
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 }}>
-          <div
-            style={{
-              width: 34,
-              height: 34,
-              borderRadius: 8,
-              background: 'rgba(37,99,235,0.10)',
-              color: 'var(--ol-blue)',
-              display: 'inline-flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              flexShrink: 0,
-            }}
-          >
-            <Icon name="mic" size={17} />
-          </div>
-          <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--ol-ink)' }}>{t('shell.hotkeyModePrompt.title')}</div>
-        </div>
-        <div style={{ fontSize: 12.5, color: 'var(--ol-ink-3)', lineHeight: 1.55 }}>
-          {t('shell.hotkeyModePrompt.body')}
-        </div>
-        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 18 }}>
-          <button
-            onClick={onLater}
-            style={{
-              height: 32,
-              padding: '0 13px',
-              borderRadius: 8,
-              border: '0.5px solid var(--ol-line-strong)',
-              background: 'var(--ol-surface)',
-              color: 'var(--ol-ink-3)',
-              fontFamily: 'inherit',
-              fontSize: 12.5,
-              fontWeight: 500,
-              cursor: 'default',
-              transition: 'background 0.16s var(--ol-motion-quick), border-color 0.16s var(--ol-motion-quick)',
-            }}
-          >
-            {t('shell.hotkeyModePrompt.later')}
-          </button>
-          <button
-            onClick={onOpenSettings}
-            style={{
-              height: 32,
-              padding: '0 14px',
-              borderRadius: 8,
-              border: 0,
-              background: 'var(--ol-primary-solid-bg)',
-              color: 'var(--ol-primary-solid-ink)',
-              fontFamily: 'inherit',
-              fontSize: 12.5,
-              fontWeight: 500,
-              cursor: 'default',
-              transition: 'background 0.16s var(--ol-motion-quick), transform 0.12s var(--ol-motion-quick)',
-            }}
-          >
-            {t('shell.hotkeyModePrompt.openSettings')}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}

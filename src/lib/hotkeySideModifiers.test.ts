@@ -3,7 +3,6 @@ import {
   formatComboLabel,
   genericModifiersFromPressedCodes,
   modifiersFromPressedCodes,
-  shortcutFromLegacyTrigger,
   sideModifiersFromPressedCodes,
 } from './hotkey';
 
@@ -23,12 +22,6 @@ function mockNavigator(platform: string, userAgent = '') {
     configurable: true,
   });
 }
-
-assertEqual(
-  shortcutFromLegacyTrigger('leftCommand').primary,
-  'LeftCommand',
-  'maps leftCommand trigger primary',
-);
 
 assertDeepEqual(
   sideModifiersFromPressedCodes(new Set(['MetaLeft', 'ShiftRight'])),

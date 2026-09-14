@@ -7,7 +7,7 @@ const result = spawnSync(
     '--locked',
     '-p',
     'openless-core',
-    'hotkey_interpreter::tests::auto_uses_native_press_duration_and_release_generation',
+    'hotkey_interpreter::tests',
     '--',
     '--nocapture',
   ],
@@ -26,7 +26,9 @@ if (result.status !== 0) {
   process.exit(result.status ?? 1);
 }
 
-if (!output.includes('test hotkey_interpreter::tests::auto_uses_native_press_duration_and_release_generation ... ok')) {
+// 录音方式收敛为切换式后，Auto/Hold 专用测试随功能一起删除；守门对象改为
+// 仍保留的切换式边界测试（终态冷却 + 防抖 + Combined 代次仲裁）。
+if (!output.includes('test hotkey_interpreter::tests::terminal_cooldown_drops_issue_545_third_press ... ok')) {
   console.error('Core hotkey edge gate did not execute the expected test.');
   process.exit(1);
 }

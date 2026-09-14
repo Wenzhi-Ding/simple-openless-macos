@@ -77,14 +77,13 @@ pub(crate) fn is_valid_session_id(s: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use crate::types::{
-        ComboBinding, HotkeyBinding, HotkeyMode, HotkeyTrigger, ShortcutBinding, UserPreferences,
+        ComboBinding, HotkeyBinding, HotkeyTrigger, ShortcutBinding, UserPreferences,
     };
     #[test]
     fn sync_dictation_hotkey_sets_modifier_trigger_and_clears_combo() {
         let mut prefs = UserPreferences {
             hotkey: HotkeyBinding {
                 trigger: HotkeyTrigger::Custom,
-                mode: HotkeyMode::Toggle,
                 keys: None,
             },
             custom_combo_hotkey: Some(ComboBinding {
@@ -106,7 +105,6 @@ mod tests {
         let mut prefs = UserPreferences {
             hotkey: HotkeyBinding {
                 trigger: HotkeyTrigger::RightControl,
-                mode: HotkeyMode::Toggle,
                 keys: None,
             },
             dictation_hotkey: ShortcutBinding {
@@ -129,7 +127,6 @@ mod tests {
         let mut prefs = UserPreferences {
             hotkey: HotkeyBinding {
                 trigger: HotkeyTrigger::RightControl,
-                mode: HotkeyMode::Toggle,
                 keys: None,
             },
             custom_combo_hotkey: Some(ComboBinding {

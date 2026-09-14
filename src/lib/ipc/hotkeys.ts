@@ -35,10 +35,6 @@ export function setDictationHotkey(binding: ShortcutBinding): Promise<void> {
     return invokeOrMock("set_dictation_hotkey", { binding }, () => undefined)
 }
 
-export function setOpenAppHotkey(binding: ShortcutBinding | null): Promise<void> {
-    return invokeOrMock("set_open_app_hotkey", { binding }, () => undefined)
-}
-
 export function setShortcutRecordingActive(active: boolean): Promise<void> {
     return invokeOrMock(
         "set_shortcut_recording_active",

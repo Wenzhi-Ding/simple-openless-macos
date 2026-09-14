@@ -57,12 +57,6 @@ export const ko = {
         "docs": "도움말 센터 ↗"
       }
     },
-    "hotkeyModePrompt": {
-      "title": "녹음 방식 확인",
-      "body": "기본값이 토글로 변경되었습니다. 이전에 트리거 방식을 변경한 경우 녹음 설정에서 확인하세요.",
-      "later": "나중에 알림",
-      "openSettings": "녹음 설정 열기"
-    },
     "screenOcrBanner": {
       "title": "화면 문자 인식이 허가되지 않아 페이지 배경을 읽을 수 없습니다",
       "action": "화면 기록 허가",
@@ -309,17 +303,10 @@ export const ko = {
       "hotkeyLabel": "녹음 단축키",
       "hotkeyDescAcc": "누르면 음성 캡처 시작(전역). 접근성 권한이 필요합니다.",
       "hotkeyDescNoAcc": "누르면 음성 캡처 시작(전역). 추가 권한 불필요.",
-      "modeLabel": "녹음 방식",
-      "modeDesc": "토글 방식 = 한 번 누르면 시작, 다시 누르면 종료; 눌러서 말하기 = 누르고 있는 동안만 녹음.",
-      "modeToggle": "토글 방식",
-      "modeHold": "눌러서 말하기",
-      "modeAuto": "자동",
       "silenceAutoStopLabel": "침묵 시 자동 중지",
-      "silenceAutoStopDesc": "토글 모드에서만 동작합니다. 음성이 감지된 후 선택한 시간 동안 침묵이 이어지면 녹음을 자동으로 종료하고 제출합니다. 말을 전혀 하지 않으면 10초 후 취소됩니다. 기본적으로 꺼져 있으며, 두 번째 키 누름으로 중지하고 Esc로 취소하는 동작은 그대로 유지됩니다.",
+      "silenceAutoStopDesc": "음성이 감지된 후 선택한 시간 동안 침묵이 이어지면 녹음을 자동으로 종료하고 제출합니다. 말을 전혀 하지 않으면 10초 후 취소됩니다. 기본적으로 꺼져 있습니다.",
       "silenceAutoStopSecondsLabel": "침묵 시간",
       "silenceAutoStopSecondsValue": "{{value}}초",
-      "migrationNoticeTitle": "기본값이 토글 방식으로 변경됨",
-      "migrationNoticeDesc": "이전에 트리거 방식을 변경했다면 여기서 다시 한 번 확인해 주세요. 이번 업데이트는 단축키 방식의 기본값과 읽기 로직을 조정했습니다. \"눌러서 말하기\"가 더 익숙하다면 다시 전환할 수 있습니다.",
       "microphoneLabel": "기본 선택 마이크",
       "microphoneDesc": "우선 사용할 입력 장치를 선택합니다. 장치를 일시적으로 사용할 수 없으면 시스템 기본 마이크를 사용하고, 다시 연결되면 자동으로 우선 장치로 돌아갑니다.",
       "microphoneDefault": "시스템 기본 마이크",
@@ -340,7 +327,6 @@ export const ko = {
       "audioCueLabel": "녹음 시작음",
       "audioCueDesc": "단축키로 녹음을 시작할 때 합성된 짧은 알림음을 재생합니다. 캡슐이 숨겨져 있어도 재생됩니다.",
       "audioCuePreview": "미리듣기",
-      "insertGroupTitle": "삽입 및 클립보드",
       "comboRecordLabel": "단축키 녹화",
       "comboRecordDesc": "클릭 후 원하는 단축키 조합(예: ⌘⇧D)을 누르세요. 토글 및 누르기 모드 모두 지원합니다.",
       "comboRecordBtn": "단축키 녹화",
@@ -353,12 +339,6 @@ export const ko = {
       "comboClear": "지우기",
       "comboConflict": "이 단축키 조합은 사용할 수 없습니다",
       "allowNonTsfFallbackLabel": "비 TSF 폴백 허용",
-      "macosNewlineModeLabel": "줄바꿈 처리",
-      "macosNewlineModeDesc": "자동은 알려진 터미널 앱에서 Line Feed(U+000A / Ctrl+J)를, 그 밖의 앱에서는 Shift+Return을 사용합니다. 일반 Return은 메시지를 전송합니다.",
-      "macosNewlineModeAuto": "자동(터미널에서는 Line Feed)",
-      "macosNewlineModeShiftReturn": "Shift+Return(채팅에서 줄바꿈)",
-      "macosNewlineModeLineFeed": "Line Feed(터미널 CLI / Ctrl+J)",
-      "macosNewlineModeReturn": "Return(여러 메시지로 분할)",
       "historyGroupTitle": "기록 및 컨텍스트",
       "historyRetentionLabel": "기록 보관 기간(일)",
       "historyRetentionDesc": "보관 기간을 초과한 기록은 새 항목 작성 시 정리됩니다. 0 = 시간 기반 정리 비활성화.",
@@ -380,11 +360,7 @@ export const ko = {
       "startupAtBootError": "자동 시작 전환 실패: {{message}}"
     },
     "shortcuts": {
-      "title": "단축키 설정",
-      "startStop": "녹음 시작 / 정지",
-      "cancel": "이번 녹음 취소",
       "confirm": "캡슐 입력 확정",
-      "openApp": "OpenLess 열기",
       "disable": "비활성화"
     },
     "permissions": {
@@ -412,10 +388,6 @@ export const ko = {
       "hotkeyStarting": "설치 중…",
       "hotkeyFailed": "감지 실패",
     },
-    "advanced": {
-      "streamingInsertLabel": "스트리밍 입력",
-      "streamingInsertSaveClipboardLabel": "클립보드에 저장"
-    },
     "language": {
       "title": "인터페이스 언어",
       "label": "언어",
@@ -426,17 +398,10 @@ export const ko = {
       "ja": "日本語 (Beta)",
       "ko": "한국어 (Beta)"
     },
-    "layout": {
-      "title": "레이아웃"
-    },
     "theme": {
       "title": "모양",
       "label": "테마",
       "activityHeatmapLabel": "개요 페이지에 연간 활동 표시",
-      "stackedRowLayoutLabel": "읽기 쉬운 레이아웃(넘침 방지 줄바꿈)",
-      "stackedRowLayoutDesc": "작은 화면이나 큰 글꼴에서 한 줄에 맞지 않는 버튼과 옵션은 다음 줄로 넘어가 가로 넘침과 글자 눌림을 방지합니다.",
-      "conservativeLayoutLabel": "보수적 레이아웃",
-      "conservativeLayoutDesc": "홈, 상단 바, 하단 바 외 설정·기능 페이지를 단일 열·전체 너비로 표시하여 가로 넘침을 최대한 방지합니다.",
       "system": "시스템 따르기",
       "light": "라이트",
       "dark": "다크"
@@ -447,13 +412,9 @@ export const ko = {
       "general": "일반",
       "privacy": "개인정보 및 권한",
       "advanced": "고급",
-      "about": "정보"
     },
     "about": {
       "localFirst": "완전한 로컬 처리",
-      "tagline": "자연스럽게 말하고, 정확하게 작성하세요",
-      "qq": "커뮤니티 QQ 그룹",
-      "copyQq": "그룹 번호 복사",
       "exportErrorLog": "오류 로그 내보내기",
       "exportErrorLogBtn": "내보내기",
       "exporting": "내보내는 중…",
@@ -461,31 +422,5 @@ export const ko = {
       "exportFailed": "내보내기 실패",
       "privacyDesc": "음성 인식, 다듬기 및 기록은 모두 이 Mac에서만 처리되며 업로드되지 않습니다.",
     }
-  },
-  "hotkey": {
-    "triggers": {
-      "rightOption": "오른쪽 Option",
-      "leftOption": "왼쪽 Option",
-      "rightControl": "오른쪽 Control",
-      "leftControl": "왼쪽 Control",
-      "rightCommand": "오른쪽 Command",
-      "leftCommand": "왼쪽 Command",
-      "leftShift": "왼쪽 Shift",
-      "rightShift": "오른쪽 Shift",
-      "fn": "Fn",
-      "rightAlt": "오른쪽 Option",
-      "mediaPlayPause": "재생 / 일시 정지 키",
-      "custom": "사용자 지정 조합…"
-    },
-    "fallback": "전역 단축키",
-    "unset": "설정되지 않음",
-    "modeHoldSuffix": "(눌러서 말하기)",
-    "modeToggleSuffix": "(시작 / 정지)",
-    "modeDoubleClickSuffix": "(두 번 누르기)",
-    "modeAutoSuffix": "(자동 인식)",
-    "usageHold": "{{trigger}} 를 누르고 말한 후 떼면 종료.",
-    "usageToggle": "{{trigger}} 로 녹음 시작, 다시 누르면 종료.",
-    "usageDoubleClick": "{{trigger}} 를 두 번 눌러 녹음을 시작하고, 다시 두 번 눌러 종료합니다.",
-    "usageAuto": "{{trigger}} 를 짧게 누르면 시작 / 정지, 길게 누르면 말한 뒤 떼면 종료."
   }
 } as const;

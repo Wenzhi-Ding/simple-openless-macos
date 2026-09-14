@@ -57,7 +57,6 @@ pub(crate) fn enforce_fixed_preferences(preferences: &mut UserPreferences) {
     preferences.cursor_context_enabled = true;
     preferences.screen_ocr_context_enabled = true;
     preferences.active_llm_provider = "local-llama".to_string();
-    preferences.use_system_proxy = false;
     // 纯本地构建没有更新通道:自动检查更新一律关闭。
     preferences.auto_update_check = false;
 }
@@ -91,13 +90,11 @@ mod tests {
         let mut preferences = UserPreferences::default();
         preferences.active_asr_provider = "legacy-remote-asr".to_string();
         preferences.active_llm_provider = "legacy-remote-llm".to_string();
-        preferences.use_system_proxy = true;
 
         enforce_fixed_preferences(&mut preferences);
 
         assert_eq!(preferences.active_asr_provider, "local-qwen3-mlx");
         assert_eq!(preferences.active_llm_provider, "local-llama");
-        assert!(!preferences.use_system_proxy);
     }
 
     /// 固定项没有选择空间：旧 provider、错误的模型 id、关掉的 OCR/光标上下文、
@@ -138,7 +135,6 @@ mod tests {
             "activeLlmProvider": "openai",
             "pipelineMode": "translate",
             "multimodalPipelineEnabled": true,
-            "useSystemProxy": true,
             "hotkey": { "trigger": "rightCommand", "mode": "toggle", "keys": null },
             "polishMode": "light",
             "stylePackId": "builtin.light",
@@ -161,7 +157,6 @@ mod tests {
         let serialized = serde_json::to_value(&preferences).unwrap();
         assert!(serialized.get("pipelineMode").is_none());
         assert!(serialized.get("multimodalPipelineEnabled").is_none());
-        assert!(!preferences.use_system_proxy);
 
         let _ = std::fs::remove_dir_all(directory);
     }

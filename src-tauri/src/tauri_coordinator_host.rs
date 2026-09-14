@@ -457,13 +457,6 @@ impl TauriCoordinatorHost {
     pub(crate) fn block_on<F: Future>(&self, future: F) -> F::Output {
         tauri::async_runtime::block_on(future)
     }
-    pub(crate) fn show_main_window(&self) {
-        let Some(app) = self.app() else {
-            return;
-        };
-        let app_for_main = app.clone();
-        let _ = app.run_on_main_thread(move || crate::show_main_window(&app_for_main));
-    }
     pub(crate) fn emit_insert_fallback(&self, payload: &crate::types::InsertFallbackCardPayload) {
         if let Some(app) = self.app() {
             let _ = app.emit_to("capsule", "insert:fallback", payload);

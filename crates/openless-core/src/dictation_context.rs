@@ -7,7 +7,7 @@ use crate::polish_diagnostics::{
     screen_ocr_outcome_trace, PolishContextStatus, PolishContextTrace,
 };
 use crate::screen_ocr::ScreenOcrPending;
-use crate::shared_types::{MacosNewlineMode, PasteShortcut, UserPreferences};
+use crate::shared_types::UserPreferences;
 use crate::types::DictationSession;
 
 pub const ASR_PROMPT_CHAR_BUDGET: usize = 240;
@@ -95,10 +95,6 @@ pub struct PolishHistoryTurn {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DictationInsertionContext {
     pub enabled: bool,
-    pub streaming: bool,
-    pub save_streamed_text_to_clipboard: bool,
-    pub paste_shortcut: PasteShortcut,
-    pub macos_newline_mode: MacosNewlineMode,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -178,8 +174,7 @@ impl DictationContext {
                 // Recordings and transcript history have independent caps in
                 // the UI; only the age limit is shared with history.
                 max_entries: preferences.audio_recording_max_entries,
-                silence_after_ms: (preferences.silence_auto_stop_enabled
-                    && preferences.hotkey.mode == crate::shared_types::HotkeyMode::Toggle)
+                silence_after_ms: preferences.silence_auto_stop_enabled
                     .then(|| (preferences.silence_auto_stop_seconds * 1_000.0).round() as u64),
             },
             asr,
@@ -217,13 +212,6 @@ impl DictationContext {
             screen_ocr_pending: ScreenOcrPending::default(),
             insertion: DictationInsertionContext {
                 enabled: options.insert_text,
-                streaming: preferences.streaming_insert,
-                save_streamed_text_to_clipboard: preferences.streaming_insert_save_clipboard,
-                paste_shortcut: preferences.paste_shortcut,
-                macos_newline_mode: crate::streaming_insert::resolve_macos_newline_mode(
-                    preferences.macos_newline_mode,
-                    options.front_app.as_deref(),
-                ),
             },
         }
     }

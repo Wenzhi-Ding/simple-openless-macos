@@ -278,7 +278,6 @@ struct Inner {
     /// 代替 modifier-only 的 hotkey monitor。`None` 表示不使用自定义组合键或还没成功安装。
     combo_hotkey: Mutex<Option<ComboHotkeyMonitor>>,
     side_aware_combo: Mutex<Option<crate::side_aware_combo::SideAwareComboMonitor>>,
-    open_app_hotkey: Mutex<Option<ComboHotkeyMonitor>>,
     /// 最近一次 emit_capsule 下发的 state，纯内省/测试用途（在 app 句柄校验之前写入，
     /// 因此无 GUI 的测试环境也能断言「按下热键 → 弹了哪种胶囊」）。写入是单次廉价
     /// 加锁，对 ~30Hz 录音回调可忽略。
@@ -298,11 +297,6 @@ struct Inner {
     /// supervisor 线程，但 integration test 和未来 RunEvent::Exit 钩子需要这条
     /// 显式退出路径。审计 3.1.2。
     shutdown: AtomicBool,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ActionHotkeyKind {
-    OpenApp,
 }
 
 impl Coordinator {
@@ -358,7 +352,6 @@ impl Coordinator {
                 shortcut_recording_active: AtomicBool::new(false),
                 combo_hotkey: Mutex::new(None),
                 side_aware_combo: Mutex::new(None),
-                open_app_hotkey: Mutex::new(None),
                 last_capsule_state: Mutex::new(None),
                 capsule_event_epoch: AtomicU64::new(0),
                 capsule_event_lock: Mutex::new(()),
@@ -492,18 +485,6 @@ impl Coordinator {
         take_combo_hotkey_on_main_thread(&self.inner);
     }
 
-    pub fn start_open_app_hotkey_listener(&self) {
-        let inner = Arc::clone(&self.inner);
-        std::thread::Builder::new()
-            .name("openless-open-app-hotkey-supervisor".into())
-            .spawn(move || action_hotkey_supervisor_loop(inner, ActionHotkeyKind::OpenApp))
-            .ok();
-    }
-
-    pub fn stop_open_app_hotkey_listener(&self) {
-        take_action_hotkey_on_main_thread(&self.inner, ActionHotkeyKind::OpenApp);
-    }
-
     /// 用户在设置里改了自定义组合键时调用。
     pub(crate) fn update_combo_hotkey_binding(&self) {
         let target = hotkey_runtime_target(&self.inner);
@@ -579,53 +560,6 @@ impl Coordinator {
         }
     }
 
-    pub(crate) fn update_open_app_hotkey_binding(&self) {
-        self.update_action_hotkey_binding(ActionHotkeyKind::OpenApp);
-    }
-
-    fn update_action_hotkey_binding(&self, kind: ActionHotkeyKind) {
-        // None = 用户主动停用：反注册全局键，立即生效。
-        let Some(binding) = action_hotkey_binding(&self.inner, kind) else {
-            take_action_hotkey_on_main_thread(&self.inner, kind);
-            log::info!("[coord] action hotkey {kind:?} 已停用（用户清空）");
-            return;
-        };
-        if is_modifier_only_shortcut(&binding) {
-            take_action_hotkey_on_main_thread(&self.inner, kind);
-            log::warn!("[coord] action hotkey {kind:?} 使用了不支持的 modifier-only 绑定，已关闭");
-            return;
-        }
-
-        let inner_clone = Arc::clone(&self.inner);
-        if self
-            .inner
-            .host
-            .run_on_main_thread(move || {
-                if let Some(monitor) = action_hotkey_slot(&inner_clone, kind).lock().as_ref() {
-                    if let Err(e) = monitor.update_binding(binding.clone()) {
-                        log::warn!("[coord] update action hotkey {kind:?} binding 失败: {e}");
-                    }
-                    return;
-                }
-                let (tx, rx) = mpsc::channel::<ComboHotkeyEvent>();
-                match ComboHotkeyMonitor::start(binding, tx) {
-                    Ok(monitor) => {
-                        *action_hotkey_slot(&inner_clone, kind).lock() = Some(monitor);
-                        let bridge_inner = Arc::clone(&inner_clone);
-                        std::thread::Builder::new()
-                            .name(action_hotkey_bridge_thread_name(kind).into())
-                            .spawn(move || action_hotkey_bridge_loop(bridge_inner, rx, kind))
-                            .ok();
-                    }
-                    Err(e) => log::warn!("[coord] update action hotkey {kind:?} binding 失败: {e}"),
-                }
-            })
-            .is_err()
-        {
-            log::warn!("[coord] update action hotkey binding: AppHandle 未 bind，跳过");
-        }
-    }
-
     /// 设置保存后立即把胶囊样式同步进 Tauri Host 缓存。
     /// emit_capsule 的 ~30Hz 主线程闭包本来也会同步，但入场帧的 payload 是在闭包
     /// 同步之前克隆的（会带一帧旧样式），且 Windows 上主线程拥塞时闭包可能延迟
@@ -654,7 +588,6 @@ impl Coordinator {
         let dictation_trigger = crate::shortcut_binding::legacy_modifier_trigger(&target.dictation);
         let binding = crate::types::HotkeyBinding {
             trigger: dictation_trigger.unwrap_or(crate::types::HotkeyTrigger::Custom),
-            mode: target.dictation_mode,
             keys: None,
         };
         if dictation_trigger.is_some() {
@@ -672,9 +605,8 @@ impl Coordinator {
             return;
         }
         let (tx, rx) = mpsc::channel::<HotkeyEvent>();
-        let cancel_tx = spawn_esc_cancel_bridge(&self.inner);
         let combo_tx = spawn_combo_abort_bridge(&self.inner, handle_trigger_combined);
-        match HotkeyMonitor::start(binding, tx, cancel_tx, combo_tx) {
+        match HotkeyMonitor::start(binding, tx, combo_tx) {
             Ok(monitor) => {
                 let adapter = monitor.kind();
                 *self.inner.hotkey.lock() = Some(monitor);
@@ -716,14 +648,9 @@ impl Coordinator {
         let previous = &change.previous;
         let next = &change.next;
         *self.inner.hotkey_runtime_target.lock() = next.clone();
-        if previous.dictation != next.dictation || previous.dictation_mode != next.dictation_mode {
-            self.update_hotkey_binding();
-        }
         if previous.dictation != next.dictation {
+            self.update_hotkey_binding();
             self.update_combo_hotkey_binding();
-        }
-        if previous.open_app != next.open_app {
-            self.update_open_app_hotkey_binding();
         }
         Ok(())
     }
@@ -768,15 +695,6 @@ impl Coordinator {
         );
     }
 
-    pub async fn handle_window_hotkey_event(
-        &self,
-        event_type: String,
-        key: String,
-        code: String,
-        repeat: bool,
-    ) -> Result<(), String> {
-        handle_window_hotkey_event(&self.inner, event_type, key, code, repeat).await
-    }
 
     #[cfg(any(debug_assertions, test))]
     pub async fn inject_hotkey_click_for_dev(&self) -> Result<(), String> {

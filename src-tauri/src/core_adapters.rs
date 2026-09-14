@@ -4,7 +4,7 @@ use futures_util::future::BoxFuture;
 use openless_core::{
     ActiveRecording, AudioConsumer as CoreAudioConsumer, AudioRecorder, BackendError,
     BackendErrorCode, DictationContext, DictationEngine, HostAction, HostActions, InsertOutcome,
-    InsertWriteResult, RecordingArchive, RecordingProgressSink, SessionId,
+    RecordingArchive, RecordingProgressSink, SessionId,
     TextInserter as CoreTextInserter, TextInsertionSession, TextPolisher, TextStreamChunk,
     TextStreamSink, TranscriptOutput, TranscriptionEngine, TranscriptionSession,
 };
@@ -735,28 +735,6 @@ impl TauriTextInserter {
         }
     }
 }
-/// 只有实际流式输入才切 ABC。TIS 失败是平台能力降级，不能阻断无需 TIS 的
-/// 一次性粘贴；Core 读取 supports_streaming 回执，仍独占 reconciliation 策略。
-async fn prepare_streaming_input_source<T: Default, E: std::fmt::Display, F>(
-    streaming: bool,
-    switch: impl FnOnce() -> F,
-) -> (T, bool)
-where
-    F: std::future::Future<Output = Result<T, E>>,
-{
-    if !streaming {
-        return (T::default(), false);
-    }
-    match switch().await {
-        Ok(previous) => (previous, true),
-        Err(error) => {
-            log::warn!(
-                "[core-adapter] ASCII input source unavailable; use one-shot insertion: {error}"
-            );
-            (T::default(), false)
-        }
-    }
-}
 impl CoreTextInserter for TauriTextInserter {
     fn capture_target(&self) -> Option<Arc<dyn CoreTextInserter>> {
         Some(Arc::new(Self {
@@ -774,30 +752,16 @@ impl CoreTextInserter for TauriTextInserter {
         Box::pin(async move {
             let insertion_target =
                 insertion_target.or_else(crate::focus_target::InsertionTarget::capture);
-            let (app_handle, previous_input_source, streaming_ready) = {
-                let app_handle = app.lock().clone().ok_or_else(|| {
-                    BackendError::new(
-                        BackendErrorCode::InvalidState,
-                        "Tauri AppHandle is not bound yet",
-                    )
-                })?;
-                let (previous, streaming_ready) = prepare_streaming_input_source(
-                    context.uses_llm_polisher()
-                        && openless_core::streaming_insert::streaming_insert_eligible(
-                            context.insertion.streaming,
-                        ),
-                    || crate::unicode_keystroke::switch_to_ascii(&app_handle),
+            let _app_handle = app.lock().clone().ok_or_else(|| {
+                BackendError::new(
+                    BackendErrorCode::InvalidState,
+                    "Tauri AppHandle is not bound yet",
                 )
-                .await;
-                (app_handle, previous, streaming_ready)
-            };
+            })?;
             Ok(Arc::new(TauriTextInsertionSession {
                 context,
                 insertion_target,
                 finished: Arc::new(AtomicBool::new(false)),
-                app: app_handle,
-                previous_input_source: Arc::new(Mutex::new(previous_input_source)),
-                streaming_ready,
             }) as Arc<dyn TextInsertionSession>)
         })
     }
@@ -807,9 +771,6 @@ struct TauriTextInsertionSession {
     context: Arc<DictationContext>,
     insertion_target: Option<crate::focus_target::InsertionTarget>,
     finished: Arc<AtomicBool>,
-    app: AppHandle,
-    previous_input_source: Arc<Mutex<Option<crate::unicode_keystroke::PreviousInputSource>>>,
-    streaming_ready: bool,
 }
 impl TauriTextInsertionSession {
     fn restore_insertion_target(&self) -> Result<(), BackendError> {
@@ -823,45 +784,13 @@ impl TauriTextInsertionSession {
                 )
             })
     }
-    async fn write_chunk(&self, text: String) -> Result<InsertWriteResult, BackendError> {
-        self.restore_insertion_target()?;
-        {
-            let chunk = text.clone();
-            let newline_mode = self.context.insertion.macos_newline_mode;
-            let finished = Arc::clone(&self.finished);
-            let written = tauri::async_runtime::spawn_blocking(move || {
-                if finished.load(Ordering::Acquire) {
-                    return 0;
-                }
-                let result =
-                    crate::unicode_keystroke::type_unicode_chunk_with_options(&chunk, newline_mode);
-                match result {
-                    Ok(written) => written,
-                    Err(error) => error.typed_chars(),
-                }
-            })
-            .await
-            .map_err(|error| {
-                BackendError::new(
-                    BackendErrorCode::Internal,
-                    format!("join Tauri streaming insertion task: {error}"),
-                )
-            })?;
-            Ok(InsertWriteResult {
-                written_chars: written,
-            })
-        }
-    }
     async fn insert_final(&self, text: String) -> Result<InsertOutcome, BackendError> {
         if let Err(error) = self.restore_insertion_target() {
             return Err(error);
         }
         {
-            let shortcut = self.context.insertion.paste_shortcut;
             tauri::async_runtime::spawn_blocking(move || {
-                map_insert_status(
-                    crate::insertion::TextInserter::new().insert(&text, shortcut),
-                )
+                map_insert_status(crate::insertion::TextInserter::new().insert(&text))
             })
             .await
             .map_err(|error| {
@@ -872,50 +801,8 @@ impl TauriTextInsertionSession {
             })?
         }
     }
-    async fn copy_fallback(&self, text: String) -> Result<InsertOutcome, BackendError> {
-        tauri::async_runtime::spawn_blocking(move || {
-            map_insert_status(crate::insertion::TextInserter::new().copy_fallback(&text))
-        })
-        .await
-        .map_err(|error| {
-            BackendError::new(
-                BackendErrorCode::Internal,
-                format!("join Tauri clipboard fallback task: {error}"),
-            )
-        })?
-    }
-    async fn restore_platform_state(&self) -> Result<(), BackendError> {
-        {
-            let previous_input_source = self.previous_input_source.lock().take();
-            crate::unicode_keystroke::restore_input_source(&self.app, previous_input_source)
-                .await
-                .map_err(|error| {
-                    BackendError::new(BackendErrorCode::Platform, error.to_string())
-                })?;
-        }
-        Ok(())
-    }
 }
 impl TextInsertionSession for TauriTextInsertionSession {
-    fn supports_streaming(&self) -> bool {
-        self.streaming_ready
-    }
-    fn write(&self, text: String) -> BoxFuture<'static, Result<InsertWriteResult, BackendError>> {
-        if self.finished.load(Ordering::Acquire) {
-            return Box::pin(async {
-                Err(BackendError::new(
-                    BackendErrorCode::Cancelled,
-                    "text insertion session is closed",
-                ))
-            });
-        }
-        let session = self.clone();
-        Box::pin(async move { session.write_chunk(text).await })
-    }
-    fn copy(&self, text: String) -> BoxFuture<'static, Result<(), BackendError>> {
-        let session = self.clone();
-        Box::pin(async move { session.copy_fallback(text).await.map(|_| ()) })
-    }
     fn finish(
         &self,
         final_text: String,
@@ -928,35 +815,31 @@ impl TextInsertionSession for TauriTextInsertionSession {
                     "text insertion session is already closed",
                 ));
             }
-            let result = if final_text.is_empty() {
-                Ok(InsertOutcome::Inserted)
-            } else {
-                session.insert_final(final_text).await
-            };
-            if let Err(error) = session.restore_platform_state().await {
-                log::warn!("[core-adapter] restore input state after insertion failed: {error}");
+            if final_text.is_empty() {
+                return Ok(InsertOutcome::Inserted);
             }
-            result
+            session.insert_final(final_text).await
         })
     }
     fn cancel(&self) -> BoxFuture<'static, Result<(), BackendError>> {
         let session = self.clone();
         Box::pin(async move {
-            if session.finished.swap(true, Ordering::AcqRel) {
-                return Ok(());
-            }
-            session.restore_platform_state().await
+            session.finished.store(true, Ordering::Release);
+            Ok(())
         })
     }
 }
 fn map_insert_status(status: crate::types::InsertStatus) -> Result<InsertOutcome, BackendError> {
     match status {
         crate::types::InsertStatus::Inserted => Ok(InsertOutcome::Inserted),
-        crate::types::InsertStatus::PasteSent => Ok(InsertOutcome::PasteSent),
         crate::types::InsertStatus::CopiedFallback => Ok(InsertOutcome::CopiedFallback),
-        crate::types::InsertStatus::Failed | crate::types::InsertStatus::NotRequested => Err(
-            BackendError::new(BackendErrorCode::Platform, "Tauri text insertion failed"),
-        ),
+        // PasteSent 是持久化历史里兼容 Windows 时代的残留状态，macOS 运行时不产生。
+        crate::types::InsertStatus::PasteSent
+        | crate::types::InsertStatus::Failed
+        | crate::types::InsertStatus::NotRequested => Err(BackendError::new(
+            BackendErrorCode::Platform,
+            "Tauri text insertion failed",
+        )),
     }
 }
 struct TauriHostContextAdapter;
@@ -1124,27 +1007,6 @@ mod tests {
     }
     struct IgnoreTextStreamSink;
     #[tokio::test]
-    async fn input_source_preparation_skips_one_shot_and_degrades_on_tis_failure() {
-        let (previous, streaming) = prepare_streaming_input_source(false, || async {
-            panic!("one-shot insertion must not access TIS");
-            #[allow(unreachable_code)]
-            Ok::<Option<u8>, &str>(Some(1))
-        })
-        .await;
-        assert_eq!(previous, None);
-        assert!(!streaming);
-        let (previous, streaming) = prepare_streaming_input_source(true, || async {
-            Err::<Option<u8>, _>("TIS select failed")
-        })
-        .await;
-        assert_eq!(previous, None);
-        assert!(!streaming);
-        assert_eq!(
-            prepare_streaming_input_source(true, || async { Ok::<_, &str>(Some(7_u8)) }).await,
-            (Some(7), true)
-        );
-    }
-    #[tokio::test]
     async fn fixed_qwen_runtime_reports_missing_model_files() {
         use openless_core::ModelRuntimeAdapter;
         let adapter = TauriLocalAsrRuntimeAdapter::new(TauriNativeAsrDependencies::new());
@@ -1212,10 +1074,6 @@ mod tests {
         assert_eq!(
             map_insert_status(crate::types::InsertStatus::CopiedFallback).unwrap(),
             InsertOutcome::CopiedFallback
-        );
-        assert_eq!(
-            map_insert_status(crate::types::InsertStatus::PasteSent).unwrap(),
-            InsertOutcome::PasteSent
         );
         assert_eq!(
             map_insert_status(crate::types::InsertStatus::Failed)

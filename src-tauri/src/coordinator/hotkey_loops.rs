@@ -9,34 +9,6 @@ use super::*;
 
 //// ─────────────────────────── hotkey bridging// ───────────────────────────
 
-/// Esc 取消专用消费线程。为什么不并入 `hotkey_bridge_loop`：bridge 为修 #468/#475
-/// 的 latch 竞态把 Pressed/Released 改成了串行 block_on —— Hold 松手后 `end_session`
-/// 会在 bridge 线程上同步跑完整段转写 + 润色，期间 bridge 无法 recv。若 Esc 与其同
-/// 队列，取消事件只能排队等流程跑完（此时 phase 已回 Idle，cancel 变 no-op），#798
-/// 在 `end_session` 里的 select! 取消赛跑永远等不到 `cancelled` 旗标 ——「转写 / 润色
-/// 中按 Esc 停不下来」。独立通道 + 本线程保证 `cancel_session` 随到随执行（它是纯同步
-/// 快路径：置旗标 + 清资源，不 await）。
-pub(super) fn esc_cancel_bridge_loop(inner: Arc<Inner>, rx: mpsc::Receiver<()>) {
-    esc_cancel_bridge_loop_with(inner, rx, |inner| {
-        inner
-            .host
-            .block_on(super::dictation::cancel_active_session(inner));
-    });
-}
-
-fn esc_cancel_bridge_loop_with(
-    inner: Arc<Inner>,
-    rx: mpsc::Receiver<()>,
-    cancel: impl Fn(&Arc<Inner>),
-) {
-    while rx.recv().is_ok() {
-        if inner.shortcut_recording_active.load(Ordering::SeqCst) {
-            continue;
-        }
-        cancel(&inner);
-    }
-}
-
 /// 组合键撤销专用消费线程。撤销事件携带触发键按下代次，避免独立通道的迟到事件
 /// 误取消下一次按下开启的会话。
 pub(super) fn combo_abort_bridge_loop(
@@ -50,20 +22,6 @@ pub(super) fn combo_abort_bridge_loop(
         }
         handler(&inner, edge);
     }
-}
-
-pub(super) fn spawn_esc_cancel_bridge(inner: &Arc<Inner>) -> mpsc::Sender<()> {
-    let (cancel_tx, cancel_rx) = mpsc::channel::<()>();
-    let bridge_inner = Arc::clone(inner);
-    if let Err(e) = std::thread::Builder::new()
-        .name("openless-esc-cancel-bridge".into())
-        .spawn(move || esc_cancel_bridge_loop(bridge_inner, cancel_rx))
-    {
-        // 线程建不起来 = 取消通道没有消费者，Esc 取消会静默失效——这正是本 PR 想修的
-        // bug 以另一种方式回归，必须留 error 日志以便排查。
-        log::error!("[hotkey] esc-cancel-bridge 线程启动失败，Esc 取消将不可用: {e}");
-    }
-    cancel_tx
 }
 
 pub(super) fn spawn_combo_abort_bridge(
@@ -101,13 +59,11 @@ pub(super) fn hotkey_supervisor_loop(inner: Arc<Inner>) {
             .unwrap_or(crate::types::HotkeyTrigger::Custom);
         let binding = crate::types::HotkeyBinding {
             trigger,
-            mode: target.dictation_mode,
             keys: None,
         };
         let (tx, rx) = mpsc::channel::<HotkeyEvent>();
-        let cancel_tx = spawn_esc_cancel_bridge(&inner);
         let combo_tx = spawn_combo_abort_bridge(&inner, handle_trigger_combined);
-        match HotkeyMonitor::start(binding, tx, cancel_tx, combo_tx) {
+        match HotkeyMonitor::start(binding, tx, combo_tx) {
             Ok(monitor) => {
                 let adapter = monitor.kind();
                 *inner.hotkey.lock() = Some(monitor);
@@ -286,107 +242,6 @@ pub(super) fn combo_hotkey_bridge_loop(inner: Arc<Inner>, rx: mpsc::Receiver<Com
     }
 }
 
-pub(super) fn action_hotkey_supervisor_loop(inner: Arc<Inner>, kind: ActionHotkeyKind) {
-    let mut attempts: u32 = 0;
-    loop {
-        if inner.shutdown.load(Ordering::SeqCst) {
-            return;
-        }
-        // None = 用户主动停用：反注册后退出守护（由 update_action_hotkey_binding 主动路径重装）。
-        let Some(binding) = action_hotkey_binding(&inner, kind) else {
-            take_action_hotkey_on_main_thread(&inner, kind);
-            // 对齐主 supervisor 的 exit-on-success：装/卸交给 update_action_hotkey_binding 主动路径，issue #470
-            return;
-        };
-        if is_modifier_only_shortcut(&binding) {
-            take_action_hotkey_on_main_thread(&inner, kind);
-            // 对齐主 supervisor 的 exit-on-success：装/卸交给 update_action_hotkey_binding 主动路径，issue #470
-            return;
-        }
-
-        if action_hotkey_slot(&inner, kind).lock().is_some() {
-            // 对齐主 supervisor 的 exit-on-success：装/卸交给 update_action_hotkey_binding 主动路径，issue #470
-            return;
-        }
-
-        let (tx, rx) = mpsc::channel::<ComboHotkeyEvent>();
-        let (init_tx, init_rx) =
-            mpsc::sync_channel::<Result<ComboHotkeyMonitor, ComboHotkeyError>>(1);
-        let binding_for_main = binding.clone();
-        if inner
-            .host
-            .run_on_main_thread(move || {
-                let result = ComboHotkeyMonitor::start(binding_for_main, tx);
-                let _ = init_tx.send(result);
-            })
-            .is_err()
-        {
-            std::thread::sleep(std::time::Duration::from_secs(1));
-            continue;
-        }
-
-        let init_result = match init_rx.recv_timeout(std::time::Duration::from_secs(5)) {
-            Ok(r) => r,
-            Err(_) => {
-                attempts += 1;
-                if attempts <= 3 || attempts % 10 == 0 {
-                    log::warn!(
-                        "[coord] action hotkey {kind:?} 第 {attempts} 次注册超时；3s 后重试"
-                    );
-                }
-                std::thread::sleep(std::time::Duration::from_secs(3));
-                continue;
-            }
-        };
-
-        match init_result {
-            Ok(monitor) => {
-                *action_hotkey_slot(&inner, kind).lock() = Some(monitor);
-                log::info!(
-                    "[coord] action hotkey {kind:?} listener installed after {} attempt(s)",
-                    attempts + 1
-                );
-                let inner_clone = Arc::clone(&inner);
-                std::thread::Builder::new()
-                    .name(action_hotkey_bridge_thread_name(kind).into())
-                    .spawn(move || action_hotkey_bridge_loop(inner_clone, rx, kind))
-                    .ok();
-                attempts = 0;
-            }
-            Err(e) => {
-                attempts += 1;
-                if attempts <= 3 || attempts % 10 == 0 {
-                    log::warn!(
-                        "[coord] action hotkey {kind:?} 第 {attempts} 次注册失败: {e}; 3s 后重试"
-                    );
-                }
-                std::thread::sleep(std::time::Duration::from_secs(3));
-            }
-        }
-    }
-}
-
-pub(super) fn action_hotkey_bridge_loop(
-    inner: Arc<Inner>,
-    rx: mpsc::Receiver<ComboHotkeyEvent>,
-    kind: ActionHotkeyKind,
-) {
-    while let Ok(evt) = rx.recv() {
-        if inner.shortcut_recording_active.load(Ordering::SeqCst) {
-            continue;
-        }
-        if matches!(evt, ComboHotkeyEvent::Pressed { .. }) {
-            handle_action_hotkey_pressed(&inner, kind);
-        }
-    }
-}
-
-pub(super) fn handle_action_hotkey_pressed(inner: &Arc<Inner>, kind: ActionHotkeyKind) {
-    match kind {
-        ActionHotkeyKind::OpenApp => inner.host.show_main_window(),
-    }
-}
-
 pub(super) fn take_combo_hotkey_on_main_thread(inner: &Arc<Inner>) {
     let main_inner = Arc::clone(inner);
     if inner
@@ -400,56 +255,12 @@ pub(super) fn take_combo_hotkey_on_main_thread(inner: &Arc<Inner>) {
     }
 }
 
-pub(super) fn take_action_hotkey_on_main_thread(inner: &Arc<Inner>, kind: ActionHotkeyKind) {
-    let main_inner = Arc::clone(inner);
-    if inner
-        .host
-        .run_on_main_thread(move || {
-            action_hotkey_slot(&main_inner, kind).lock().take();
-        })
-        .is_err()
-    {
-        action_hotkey_slot(inner, kind).lock().take();
-    }
-}
-
-pub(super) fn action_hotkey_slot(
-    inner: &Arc<Inner>,
-    kind: ActionHotkeyKind,
-) -> &Mutex<Option<ComboHotkeyMonitor>> {
-    match kind {
-        ActionHotkeyKind::OpenApp => &inner.open_app_hotkey,
-    }
-}
-
-pub(super) fn action_hotkey_binding(
-    inner: &Arc<Inner>,
-    kind: ActionHotkeyKind,
-) -> Option<crate::types::ShortcutBinding> {
-    let target = hotkey_runtime_target(inner);
-    match kind {
-        ActionHotkeyKind::OpenApp => target.open_app,
-    }
-}
-
 pub(super) fn hotkey_runtime_target(inner: &Arc<Inner>) -> openless_core::HotkeyRuntimeTarget {
     inner.hotkey_runtime_target.lock().clone()
 }
 
-pub(super) fn is_modifier_only_shortcut(binding: &crate::types::ShortcutBinding) -> bool {
-    binding.modifiers.is_empty()
-        && (binding.primary.eq_ignore_ascii_case("shift")
-            || crate::shortcut_binding::legacy_modifier_trigger(binding).is_some())
-}
-
 pub(super) fn is_unconfigured_shortcut(binding: &crate::types::ShortcutBinding) -> bool {
     binding.primary.trim().is_empty()
-}
-
-pub(super) fn action_hotkey_bridge_thread_name(kind: ActionHotkeyKind) -> &'static str {
-    match kind {
-        ActionHotkeyKind::OpenApp => "openless-open-app-hotkey-bridge",
-    }
 }
 
 pub(super) fn hotkey_bridge_loop(inner: Arc<Inner>, rx: mpsc::Receiver<HotkeyEvent>) {
@@ -485,9 +296,9 @@ pub(super) fn hotkey_bridge_loop(inner: Arc<Inner>, rx: mpsc::Receiver<HotkeyEve
                     handle_released_edge(&inner_cloned, at, press_id).await;
                 });
             }
-            // Esc 取消与组合键撤销都不在此枚举里：分别走 esc_cancel_bridge_loop /
-            // combo_abort_bridge_loop，避免被上面 Released → end_session /
-            // Pressed → begin_session 的同步流程堵在队列里（见各自函数注释）。
+            // 组合键撤销不在此枚举里：走 combo_abort_bridge_loop，避免被上面
+            // Released → end_session / Pressed → begin_session 的同步流程堵在
+            // 队列里（见函数注释）。
             // 非录制态不会出现（CGEventTap 仅在 recording_active 时上报）；防御性忽略。
             HotkeyEvent::FnRecordingPressed => {}
         }
@@ -509,34 +320,4 @@ pub(super) fn reset_shortcut_held_state(inner: &Arc<Inner>) {
     if let Some(monitor) = inner.hotkey.lock().as_ref() {
         monitor.reset_held_state();
     }
-    let target = hotkey_runtime_target(inner);
-    if let Some(open_app) = target.open_app.as_ref() {
-        if !is_modifier_only_shortcut(open_app) {
-            if let Some(monitor) = inner.open_app_hotkey.lock().as_ref() {
-                if let Err(e) = monitor.update_binding(open_app.clone()) {
-                    log::warn!("[coord] reset open-app hotkey latch failed: {e}");
-                }
-            }
-        }
-    }
-}
-
-pub(super) async fn handle_window_hotkey_event(
-    inner: &Arc<Inner>,
-    event_type: String,
-    key: String,
-    code: String,
-    repeat: bool,
-) -> Result<(), String> {
-    if inner.shortcut_recording_active.load(Ordering::SeqCst) {
-        return Ok(());
-    }
-    if event_type == "keydown" && key == "Escape" {
-        // Esc 路由（issue #161，减法改造后仅剩本地听写）：直接走听写取消通路。
-        super::dictation::cancel_active_session(inner).await;
-        return Ok(());
-    }
-
-    let _ = (inner, event_type, key, code, repeat);
-    Ok(())
 }

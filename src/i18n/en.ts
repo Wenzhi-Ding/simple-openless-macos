@@ -57,12 +57,6 @@ export const en = {
         "docs": "Help center ↗"
       }
     },
-    "hotkeyModePrompt": {
-      "title": "Review your recording mode",
-      "body": "Default is now Toggle. If you changed the trigger mode before, please confirm it in Recording settings.",
-      "later": "Remind me later",
-      "openSettings": "Open Recording"
-    },
     "screenOcrBanner": {
       "title": "Screen text recognition is not authorized; page background cannot be read",
       "action": "Authorize Screen Recording",
@@ -309,17 +303,10 @@ export const en = {
       "hotkeyLabel": "Recording hotkey",
       "hotkeyDescAcc": "Press to capture voice globally (requires Accessibility permission).",
       "hotkeyDescNoAcc": "Press to capture voice globally.",
-      "modeLabel": "Trigger mode",
-      "modeDesc": "Toggle = tap once to start, again to stop. Push-to-talk = hold to record.",
-      "modeToggle": "Toggle",
-      "modeHold": "Push-to-talk",
-      "modeAuto": "Auto",
       "silenceAutoStopLabel": "Auto-stop after silence",
-      "silenceAutoStopDesc": "Toggle only. After speech is detected, recording stops and submits automatically once silence lasts the chosen duration. Off by default; a second hotkey press and Esc still work.",
+      "silenceAutoStopDesc": "After speech is detected, recording stops and submits automatically once silence lasts the chosen duration. Off by default.",
       "silenceAutoStopSecondsLabel": "Silence duration",
       "silenceAutoStopSecondsValue": "{{value}}s",
-      "migrationNoticeTitle": "Default recording mode is now Toggle",
-      "migrationNoticeDesc": "This update changes the default; if you prefer push-to-talk, switch it back here.",
       "microphoneLabel": "Preferred microphone",
       "microphoneDesc": "Choose the preferred input device; falls back to system default when unavailable.",
       "microphoneDefault": "System default microphone",
@@ -340,7 +327,6 @@ export const en = {
       "audioCueLabel": "Recording start sound",
       "audioCueDesc": "Play a short synthesized chime when you press the hotkey to start recording. Plays even when the capsule is hidden.",
       "audioCuePreview": "Preview",
-      "insertGroupTitle": "Insertion & clipboard",
       "comboRecordLabel": "Record shortcut",
       "comboRecordDesc": "Click, then press your desired key combination (e.g. ⌘⇧D). Supports Toggle and Push-to-talk modes.",
       "comboRecordBtn": "Record shortcut",
@@ -353,12 +339,6 @@ export const en = {
       "comboClear": "Clear",
       "comboConflict": "This shortcut combination is not available",
       "allowNonTsfFallbackLabel": "Allow non-TSF fallback",
-      "macosNewlineModeLabel": "Line breaks",
-      "macosNewlineModeDesc": "Auto uses Line Feed (U+000A / Ctrl+J) in known terminal apps and Shift+Return elsewhere. Plain Return sends the message.",
-      "macosNewlineModeAuto": "Auto (Line Feed in terminals)",
-      "macosNewlineModeShiftReturn": "Shift+Return (newline in chat)",
-      "macosNewlineModeLineFeed": "Line Feed (terminal CLI / Ctrl+J)",
-      "macosNewlineModeReturn": "Return (split into messages)",
       "historyGroupTitle": "History & context",
       "historyRetentionLabel": "History retention (days)",
       "historyRetentionDesc": "Entries older than this are pruned on new writes; 0 = no time-based pruning.",
@@ -380,11 +360,7 @@ export const en = {
       "startupAtBootError": "Failed to toggle launch at login: {{message}}"
     },
     "shortcuts": {
-      "title": "Shortcut settings",
-      "startStop": "Start / Stop recording",
-      "cancel": "Cancel current recording",
       "confirm": "Confirm capsule insertion",
-      "openApp": "Open OpenLess",
       "disable": "Disable"
     },
     "permissions": {
@@ -412,10 +388,6 @@ export const en = {
       "hotkeyStarting": "Installing…",
       "hotkeyFailed": "Listener failed",
     },
-    "advanced": {
-      "streamingInsertLabel": "Streaming insertion",
-      "streamingInsertSaveClipboardLabel": "Copy to clipboard"
-    },
     "language": {
       "title": "Interface language",
       "label": "Language",
@@ -426,17 +398,10 @@ export const en = {
       "ja": "日本語 (Beta)",
       "ko": "한국어 (Beta)"
     },
-    "layout": {
-      "title": "Layout"
-    },
     "theme": {
       "title": "Appearance",
       "label": "Theme",
       "activityHeatmapLabel": "Show annual activity heatmap on Overview",
-      "stackedRowLayoutLabel": "Readable layout (wrap rows)",
-      "stackedRowLayoutDesc": "On small screens or with large text, buttons and controls that no longer fit on one line move to the next line instead of overflowing or squashing text.",
-      "conservativeLayoutLabel": "Conservative layout",
-      "conservativeLayoutDesc": "Outside the home page, top bar, and bottom bar, settings and feature pages use a single full-width column to minimize horizontal overflow.",
       "system": "Follow system",
       "light": "Light",
       "dark": "Dark"
@@ -447,13 +412,9 @@ export const en = {
       "general": "General",
       "privacy": "Privacy & Permissions",
       "advanced": "Advanced",
-      "about": "About"
     },
     "about": {
       "localFirst": "Fully local",
-      "tagline": "Speak naturally, write perfectly",
-      "qq": "Community QQ Group",
-      "copyQq": "Copy group number",
       "exportErrorLog": "Export error log",
       "exportErrorLogBtn": "Export",
       "exporting": "Exporting…",
@@ -461,31 +422,5 @@ export const en = {
       "exportFailed": "Export failed",
       "privacyDesc": "Transcription, polishing, and history are processed entirely on this Mac and never uploaded.",
     }
-  },
-  "hotkey": {
-    "triggers": {
-      "rightOption": "Right Option",
-      "leftOption": "Left Option",
-      "rightControl": "Right Control",
-      "leftControl": "Left Control",
-      "rightCommand": "Right Command",
-      "leftCommand": "Left Command",
-      "leftShift": "Left Shift",
-      "rightShift": "Right Shift",
-      "fn": "Fn",
-      "rightAlt": "Right Option",
-      "mediaPlayPause": "Play / Pause key",
-      "custom": "Custom combination…"
-    },
-    "fallback": "Global hotkey",
-    "unset": "Not set",
-    "modeHoldSuffix": " (push-to-talk)",
-    "modeToggleSuffix": " (start / stop)",
-    "modeDoubleClickSuffix": " (double-click)",
-    "modeAutoSuffix": " (auto-detect)",
-    "usageHold": "Hold {{trigger}} to talk, release to stop.",
-    "usageToggle": "Press {{trigger}} to start, press again to stop.",
-    "usageDoubleClick": "Double-click {{trigger}} to start, then double-click again to stop.",
-    "usageAuto": "Tap {{trigger}} to start / stop; hold it to talk and release to stop."
   }
 } as const;

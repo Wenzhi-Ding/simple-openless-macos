@@ -2,7 +2,7 @@
 
 import type { CSSProperties, ReactNode } from "react"
 import { Tooltip } from "../../components/Tooltip"
-import { useNarrowLayout, useReadableLayout, useConservativeLayout } from "../../lib/useResponsiveLayout"
+import { useNarrowLayout } from "../../lib/useResponsiveLayout"
 
 // 带说明的文字统一加虚线下划线 + help 光标，暗示「悬停可看解释」。
 const hintableTextStyle: CSSProperties = {
@@ -67,9 +67,7 @@ export function SettingRow({
     controlWidth,
 }: SettingRowProps) {
     const narrow = useNarrowLayout()
-    const readable = useReadableLayout()
-    const conservative = useConservativeLayout()
-    const stackLayout = narrow || readable || conservative
+    const stackLayout = narrow
     const labelStyle: CSSProperties = {
         fontSize: 13,
         fontWeight: 500,

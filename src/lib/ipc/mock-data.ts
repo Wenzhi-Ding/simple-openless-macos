@@ -9,18 +9,13 @@ import type {
     MicrophoneDevice,
 } from "../types"
 import { OL_DATA } from "../mockData"
-import {
-    defaultAppShortcutModifiers,
-} from "../hotkey"
 
 export let mockSettings: UserPreferences = {
     hotkey: {
         trigger: "rightCommand",
-        mode: "toggle",
         keys: [{ code: "MetaRight" }],
     },
     dictationHotkey: { primary: "RightCommand", modifiers: [] },
-    launchAtLogin: false,
     showCapsule: true,
     capsuleStyle: 'siri',
     muteDuringRecording: false,
@@ -31,26 +26,17 @@ export let mockSettings: UserPreferences = {
     activeAsrProvider: "local-qwen3-mlx",
     activeLlmProvider: "local-llama",
     llmThinkingEnabled: false,
-    useSystemProxy: false,
-    pasteShortcut: "ctrlV",
-    macosNewlineMode: "auto",
     workingLanguages: ["简体中文"],
     customComboHotkey: null,
-    openAppHotkey: { primary: "O", modifiers: defaultAppShortcutModifiers() },
     localAsrActiveModel: "qwen3-asr-1.7b",
     localAsrKeepLoadedSecs: 300,
     historyRetentionDays: 7,
     polishContextWindowMinutes: 5,
     startMinimized: false,
     themeMode: "system",
-    streamingInsert: true,
-    streamingInsertDefaultMigrated: true,
-    streamingInsertSaveClipboard: true,
     cursorContextEnabled: true,
     screenOcrContextEnabled: true,
     showOverviewActivityHeatmap: true,
-    stackedRowLayout: false,
-    conservativeLayout: false,
     autoUpdateCheck: false,
     historyMaxEntries: null,
     recordAudioForDebug: false,

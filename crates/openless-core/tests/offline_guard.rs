@@ -85,8 +85,10 @@ fn fixed_polish_ui_has_no_style_entry_points() {
     let shell =
         std::fs::read_to_string(repo_root().join("src/components/FloatingShell.tsx")).unwrap();
     let history = std::fs::read_to_string(repo_root().join("src/pages/History.tsx")).unwrap();
-    let shortcuts =
-        std::fs::read_to_string(repo_root().join("src/pages/settings/ShortcutsSection.tsx"))
+    // 快捷键设置节（含风格热键）已整体删除；录音快捷键唯一入口在 RecordingInputSection。
+    assert!(!repo_root().join("src/pages/settings/ShortcutsSection.tsx").exists());
+    let recording_input =
+        std::fs::read_to_string(repo_root().join("src/pages/settings/RecordingInputSection.tsx"))
             .unwrap();
     assert!(!shell.contains("import { Style }"));
     assert!(!shell.contains("id: 'style'"));
@@ -106,9 +108,7 @@ fn fixed_polish_ui_has_no_style_entry_points() {
             assert!(!ui.contains(obsolete), "obsolete style UI: {obsolete}");
         }
     }
-    assert!(!shortcuts.contains("setSwitchStyleHotkey"));
-    assert!(!shortcuts.contains("setStylePackHotkeys"));
-    assert!(shortcuts.contains("setDictationHotkey"));
+    assert!(recording_input.contains("setDictationHotkey"));
     assert!(!repo_root().join("src/pages/Style.tsx").exists());
 }
 

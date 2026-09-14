@@ -6,7 +6,7 @@ use futures_util::future::BoxFuture;
 
 use crate::dictation_context::DictationContext;
 use crate::errors::{BackendError, BackendErrorCode};
-use crate::types::{InsertStatus, PolishDelta, SessionId, TranscriptDelta};
+use crate::types::{InsertStatus, SessionId, TranscriptDelta};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HostAction {
@@ -346,7 +346,6 @@ pub enum EngineProgress {
     Notification(crate::types::NotificationPayload),
     Stage(EngineStage),
     TranscriptDelta(TranscriptDelta),
-    PolishDelta(PolishDelta),
 }
 
 pub trait EngineProgressSink: Send + Sync {
@@ -646,24 +645,9 @@ pub trait TextInserter: Send + Sync {
 }
 
 pub trait TextInsertionSession: Send + Sync {
-    /// Native preparation can decline streaming while retaining final paste
-    /// support (for example when macOS cannot switch the keyboard input source).
-    /// Core owns the fallback decision; adapters must never acknowledge chunks
-    /// they did not consume just to keep the stream alive.
-    fn supports_streaming(&self) -> bool {
-        true
-    }
-
-    fn write(&self, text: String) -> BoxFuture<'static, Result<InsertWriteResult, BackendError>>;
-    fn copy(&self, text: String) -> BoxFuture<'static, Result<(), BackendError>>;
     fn finish(&self, final_text: String)
         -> BoxFuture<'static, Result<InsertOutcome, BackendError>>;
     fn cancel(&self) -> BoxFuture<'static, Result<(), BackendError>>;
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct InsertWriteResult {
-    pub written_chars: usize,
 }
 
 pub struct UnsupportedTextInserter;
@@ -687,7 +671,6 @@ impl TextInserter for UnsupportedTextInserter {
 #[serde(rename_all = "camelCase")]
 pub enum InsertOutcome {
     Inserted,
-    PasteSent,
     CopiedFallback,
 }
 
@@ -695,7 +678,6 @@ impl InsertOutcome {
     pub fn into_status(self) -> InsertStatus {
         match self {
             Self::Inserted => InsertStatus::Inserted,
-            Self::PasteSent => InsertStatus::PasteSent,
             Self::CopiedFallback => InsertStatus::CopiedFallback,
         }
     }

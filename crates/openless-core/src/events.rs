@@ -8,7 +8,7 @@ use crate::domains::LocalAsrRuntimeStatus;
 use crate::shared_types::HotkeyStatus;
 use crate::types::{
     DictationResult, DictationStateSnapshot, HistoryChange, InsertFallbackPayload,
-    NotificationPayload, PermissionSnapshot, PolishDelta, PreferencesChange, SessionId,
+    NotificationPayload, PermissionSnapshot, PreferencesChange, SessionId,
     TranscriptDelta, VocabularyChange,
 };
 
@@ -70,7 +70,6 @@ pub enum BackendEventKind {
     BackendStopping,
     DictationStateChanged(DictationStateSnapshot),
     TranscriptDelta(TranscriptDelta),
-    PolishDelta(PolishDelta),
     DictationCompleted(DictationResult),
     RecordingControlRequested(RecordingControlRequest),
     InsertFallback(InsertFallbackPayload),

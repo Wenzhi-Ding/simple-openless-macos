@@ -4,39 +4,7 @@ use serde::{Deserialize, Serialize};
 
 pub use crate::types::HistorySource;
 
-/// 模拟粘贴时实际按下的快捷键。macOS 走 AX 直写 / Cmd+V，本枚举只在
-/// Windows / Linux 的 simulate_paste 路径生效。详见 issue #360：kitty 等
-/// Linux 终端只接受 Ctrl+Shift+V，硬编码 Ctrl+V 会被吞掉，听写文本只剩
-/// 在剪贴板里。默认 `CtrlV` 与历史行为一致；用户在 Settings 里改成
-/// `CtrlShiftV`（kitty/alacritty/wezterm/gnome-terminal/foot/...）或
-/// `ShiftInsert`（xterm/urxvt）后，simulate_paste 用对应组合。
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
-#[serde(rename_all = "camelCase")]
-pub enum PasteShortcut {
-    #[default]
-    CtrlV,
-    CtrlShiftV,
-    ShiftInsert,
-}
-
-/// macOS 逐字上屏时换行符怎么发。仅流式插入路径生效。
-///
-/// 默认 `Auto`：按会话开始时冻结的前台应用选择。Terminal/TUI 使用 U+000A，
-/// 其它和未知应用安全回退为 Shift+Return。
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
-#[serde(rename_all = "camelCase")]
-pub enum MacosNewlineMode {
-    /// 按会话开始时捕获的前台应用自动选择。
-    #[default]
-    Auto,
-    /// Shift+Return：聊天框软换行，不发送。
-    ShiftReturn,
-    /// U+000A：Terminal/TUI 中等价于 Ctrl+J 软换行。
-    LineFeed,
-    /// Return：聊天框里等于发送。
-    Return,
-}
-
+/// UI theme: follow OS, force light, or force dark.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "camelCase")]
 pub enum ThemeMode {
@@ -152,7 +120,6 @@ fn default_silence_auto_stop_seconds() -> f32 {
 pub struct UserPreferences {
     pub hotkey: HotkeyBinding,
     pub dictation_hotkey: ShortcutBinding,
-    pub launch_at_login: bool,
     pub show_capsule: bool,
     /// 录音胶囊样式：'siri' = 流光 Siri 光效版（默认）；'classic' = Openless 经典药丸版。
     /// 由 capsule:state 事件的 capsuleStyle 字段下发到胶囊 webview，下次录音即生效。
@@ -187,28 +154,15 @@ pub struct UserPreferences {
     /// 是否使用系统代理（issue #869）。默认 true 跟随系统代理，与历史行为一致；
     /// 关闭后所有 reqwest 请求直连（国内服务通常延迟更低），GitHub 登录、更新等
     /// 境外服务可能连不上。实时语音流（WebSocket）与 Less Computer 子进程不受此开关影响。
-    #[serde(default = "default_true")]
-    pub use_system_proxy: bool,
-    /// Windows / Linux 的模拟粘贴键。macOS 走 AX 直写不受影响。详见 issue #360：
-    /// kitty 等 Linux 终端不接受 Ctrl+V，只能配 Ctrl+Shift+V。默认 CtrlV 与历史
-    /// 行为一致，不破坏既有用户。
-    #[serde(default)]
-    pub paste_shortcut: PasteShortcut,
-    /// macOS 逐字上屏的换行模拟方式。
-    #[serde(default)]
-    pub macos_newline_mode: MacosNewlineMode,
     /// 用户的工作语言（多选，原生名）。会作为前提注入 LLM polish 的 system prompt 头部，
     /// 让模型知道该用户在哪些语言间工作。详见 issue #4。
     #[serde(default = "default_working_languages")]
     pub working_languages: Vec<String>,
     /// 自定义录音组合键。当 `hotkey.trigger == Custom` 时，coordinator 用
-    /// `global-hotkey` crate 注册此组合键（支持 Toggle + Hold 模式）。
+    /// `global-hotkey` crate 注册此组合键。
     /// `None` 且 trigger == Custom 表示用户选了自定义但还没录制。
     #[serde(default)]
     pub custom_combo_hotkey: Option<ComboBinding>,
-    /// 「唤起 App」全局快捷键。`None` = 停用；`Some(...)` = 注册。默认 `Some(默认键)`。
-    #[serde(default = "default_open_app_hotkey")]
-    pub open_app_hotkey: Option<ShortcutBinding>,
     /// 本地 Qwen3-ASR 当前激活的模型 id（"qwen3-asr-0.6b" / "qwen3-asr-1.7b"）。
     /// 仅在 active_asr_provider 为 local-qwen3 / local-qwen3-mlx / local-qwen3-c 时有意义。
     #[serde(default = "default_local_asr_model")]
@@ -240,35 +194,6 @@ pub struct UserPreferences {
     /// UI theme: follow OS, force light, or force dark. Frontend applies via data-ol-theme.
     #[serde(default)]
     pub theme_mode: ThemeMode,
-    /// 流式输入：润色 SSE 一边到达一边逐字模拟键盘事件输出到当前焦点。开启后用户感知到
-    /// 的处理时延显著降低（润色 LLM 第一个 token 即开始落字）。
-    ///
-    /// 平台原语：
-    /// - macOS：CGEvent Unicode FFI；CJK / 日文 IME 会拦截，session 期间临时切到 ABC
-    /// - Windows：SendInput Unicode（绕过 TSF）；不需要切输入法
-    /// - Linux：通过 fcitx5 插件 commitString 直写或剪贴板回落。
-    ///
-    /// 限制：
-    /// - 不再走剪贴板路径，对 secure input 框（密码框 / 1Password）静默拒绝
-    /// - 仅 OpenAI-compatible provider 实装（v1）；Gemini / Codex provider 走原一次性
-    ///   插入路径
-    ///
-    /// 默认 true（自 1.3.2-3 起）—— 流式落字感知延迟低，所有 fallback case 都已经接好，
-    /// 让开箱即用就能体验。CJK IME / Codex / Gemini provider 自动回落到一次性路径，
-    /// 用户无感。详见上面「限制」段。
-    #[serde(default = "default_true")]
-    pub streaming_insert: bool,
-    /// issue #440 的一次性迁移标记。老版本会把默认 `streamingInsert:false`
-    /// 写进 preferences.json，升级后仅看 bool 无法区分「老默认」和「用户手动关」。
-    /// 缺少此标记的旧文件统一迁到 true；迁移后用户再关会带着标记保存，后续保留 false。
-    #[serde(default)]
-    pub streaming_insert_default_migrated: bool,
-    /// 流式输入成功后是否把最终润色文本写回剪贴板。一次性路径天然走剪贴板，所以
-    /// Cmd+V 可以重复粘贴；流式路径直接合成键盘事件、不动剪贴板，会让用户失去这层
-    /// 兜底。开启后流式成功收尾时把 final text 写到系统剪贴板，跟一次性行为对齐。
-    /// 默认 true（更接近用户习惯）。
-    #[serde(default = "default_true")]
-    pub streaming_insert_save_clipboard: bool,
     /// 是否把「用户正在写的那篇文档」中光标附近的原文送进 LLM 润色当上下文。
     ///
     /// **默认 false，且必须保持 false。** 开启后每次听写都会读取前台 app 的正文并把
@@ -292,12 +217,6 @@ pub struct UserPreferences {
     /// 活动计数照常记录（persistence/activity.rs），再打开时全年数据仍在。
     #[serde(default = "default_true")]
     pub show_overview_activity_heatmap: bool,
-    /// 易读布局：小屏或大字号时强制同行控件换行，避免横向溢出与文字被压扁。默认 false。
-    #[serde(default)]
-    pub stacked_row_layout: bool,
-    /// 保守排版：除首页、顶栏、底栏与胶囊窗外，内容区强制单列满宽。默认 false。
-    #[serde(default)]
-    pub conservative_layout: bool,
     /// 主窗口启动 + 后台每 60 分钟自动检查更新。默认 true。
     /// 关闭后仅 Settings 手动「检查更新」按钮可用。
     #[serde(default = "default_true")]
@@ -344,7 +263,6 @@ fn default_active_asr_provider() -> String {
 struct UserPreferencesWire {
     hotkey: HotkeyBinding,
     dictation_hotkey: Option<ShortcutBinding>,
-    launch_at_login: bool,
     show_capsule: bool,
     #[serde(default)]
     capsule_style: CapsuleStyle,
@@ -362,15 +280,9 @@ struct UserPreferencesWire {
     active_llm_provider: String,
     #[serde(default)]
     llm_thinking_enabled: bool,
-    #[serde(default = "default_true")]
-    use_system_proxy: bool,
-    #[serde(default)]
-    paste_shortcut: PasteShortcut,
-    #[serde(default)]
-    macos_newline_mode: MacosNewlineMode,
+    #[serde(default = "default_working_languages")]
     working_languages: Vec<String>,
     custom_combo_hotkey: Option<ComboBinding>,
-    open_app_hotkey: Option<ShortcutBinding>,
     #[serde(default = "default_local_asr_model")]
     local_asr_active_model: String,
     #[serde(default = "default_local_asr_keep_loaded_secs")]
@@ -385,22 +297,12 @@ struct UserPreferencesWire {
     start_minimized: bool,
     #[serde(default)]
     theme_mode: ThemeMode,
-    #[serde(default = "default_true")]
-    streaming_insert: bool,
-    #[serde(default)]
-    streaming_insert_default_migrated: bool,
-    #[serde(default = "default_true")]
-    streaming_insert_save_clipboard: bool,
     #[serde(default)]
     cursor_context_enabled: bool,
     #[serde(default)]
     screen_ocr_context_enabled: bool,
     #[serde(default = "default_true")]
     show_overview_activity_heatmap: bool,
-    #[serde(default)]
-    stacked_row_layout: bool,
-    #[serde(default)]
-    conservative_layout: bool,
     #[serde(default = "default_true")]
     auto_update_check: bool,
     #[serde(default)]
@@ -417,7 +319,6 @@ impl Default for UserPreferencesWire {
         Self {
             hotkey: prefs.hotkey,
             dictation_hotkey: None,
-            launch_at_login: prefs.launch_at_login,
             show_capsule: prefs.show_capsule,
             capsule_style: prefs.capsule_style,
             mute_during_recording: prefs.mute_during_recording,
@@ -428,12 +329,8 @@ impl Default for UserPreferencesWire {
             active_asr_provider: prefs.active_asr_provider,
             active_llm_provider: prefs.active_llm_provider,
             llm_thinking_enabled: prefs.llm_thinking_enabled,
-            use_system_proxy: prefs.use_system_proxy,
-            paste_shortcut: prefs.paste_shortcut,
-            macos_newline_mode: prefs.macos_newline_mode,
             working_languages: prefs.working_languages,
             custom_combo_hotkey: prefs.custom_combo_hotkey,
-            open_app_hotkey: prefs.open_app_hotkey,
             local_asr_active_model: prefs.local_asr_active_model,
             // 新字段必须保持 None：旧配置反序列化时需要区分“字段缺失”和显式值。
             local_asr_keep_loaded_secs: prefs.local_asr_keep_loaded_secs,
@@ -442,14 +339,9 @@ impl Default for UserPreferencesWire {
             polish_context_window_minutes: prefs.polish_context_window_minutes,
             start_minimized: prefs.start_minimized,
             theme_mode: prefs.theme_mode,
-            streaming_insert: prefs.streaming_insert,
-            streaming_insert_default_migrated: prefs.streaming_insert_default_migrated,
-            streaming_insert_save_clipboard: prefs.streaming_insert_save_clipboard,
             cursor_context_enabled: prefs.cursor_context_enabled,
             screen_ocr_context_enabled: prefs.screen_ocr_context_enabled,
             show_overview_activity_heatmap: prefs.show_overview_activity_heatmap,
-            stacked_row_layout: prefs.stacked_row_layout,
-            conservative_layout: prefs.conservative_layout,
             auto_update_check: prefs.auto_update_check,
             history_max_entries: prefs.history_max_entries,
             record_audio_for_debug: prefs.record_audio_for_debug,
@@ -469,18 +361,11 @@ impl<'de> Deserialize<'de> for UserPreferences {
             None => default_dictation_hotkey_from_legacy(&wire.hotkey, &wire.custom_combo_hotkey)
                 .map_err(serde::de::Error::custom)?,
         };
-        let streaming_insert_default_migrated = wire.streaming_insert_default_migrated;
-        let streaming_insert = if streaming_insert_default_migrated {
-            wire.streaming_insert
-        } else {
-            true
-        };
         let local_asr_active_model = wire.local_asr_active_model;
 
         Ok(Self {
             hotkey: wire.hotkey,
             dictation_hotkey,
-            launch_at_login: wire.launch_at_login,
             show_capsule: wire.show_capsule,
             capsule_style: wire.capsule_style,
             mute_during_recording: wire.mute_during_recording,
@@ -491,12 +376,8 @@ impl<'de> Deserialize<'de> for UserPreferences {
             active_asr_provider: wire.active_asr_provider,
             active_llm_provider: wire.active_llm_provider,
             llm_thinking_enabled: wire.llm_thinking_enabled,
-            use_system_proxy: wire.use_system_proxy,
-            paste_shortcut: wire.paste_shortcut,
-            macos_newline_mode: wire.macos_newline_mode,
             working_languages: wire.working_languages,
             custom_combo_hotkey: wire.custom_combo_hotkey,
-            open_app_hotkey: wire.open_app_hotkey,
             local_asr_active_model,
             local_asr_keep_loaded_secs: wire.local_asr_keep_loaded_secs,
             local_asr_models_base_dir: wire.local_asr_models_base_dir,
@@ -504,14 +385,9 @@ impl<'de> Deserialize<'de> for UserPreferences {
             polish_context_window_minutes: wire.polish_context_window_minutes,
             start_minimized: wire.start_minimized,
             theme_mode: wire.theme_mode,
-            streaming_insert,
-            streaming_insert_default_migrated: true,
-            streaming_insert_save_clipboard: wire.streaming_insert_save_clipboard,
             cursor_context_enabled: wire.cursor_context_enabled,
             screen_ocr_context_enabled: wire.screen_ocr_context_enabled,
             show_overview_activity_heatmap: wire.show_overview_activity_heatmap,
-            stacked_row_layout: wire.stacked_row_layout,
-            conservative_layout: wire.conservative_layout,
             auto_update_check: wire.auto_update_check,
             history_max_entries: wire.history_max_entries,
             record_audio_for_debug: wire.record_audio_for_debug,
@@ -599,24 +475,6 @@ fn salvage_without_incomplete_legacy_hotkey(
     serde_json::from_value::<UserPreferences>(serde_json::Value::Object(map)).ok()
 }
 
-fn default_open_app_hotkey() -> Option<ShortcutBinding> {
-    Some(ShortcutBinding {
-        primary: "O".into(),
-        modifiers: default_app_shortcut_modifiers(),
-    })
-}
-
-fn default_app_shortcut_modifiers() -> Vec<String> {
-    #[cfg(target_os = "macos")]
-    {
-        vec!["cmd".into(), "shift".into()]
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        vec!["ctrl".into(), "shift".into()]
-    }
-}
-
 fn default_dictation_hotkey_from_legacy(
     hotkey: &HotkeyBinding,
     custom_combo_hotkey: &Option<ComboBinding>,
@@ -650,7 +508,6 @@ impl Default for UserPreferences {
                 &None,
             )
             .expect("default legacy hotkey is not custom"),
-            launch_at_login: false,
             show_capsule: true,
             capsule_style: CapsuleStyle::Siri,
             mute_during_recording: false,
@@ -661,12 +518,8 @@ impl Default for UserPreferences {
             active_asr_provider: default_active_asr_provider(),
             active_llm_provider: "local-llama".into(),
             llm_thinking_enabled: false,
-            use_system_proxy: false,
-            paste_shortcut: PasteShortcut::default(),
-            macos_newline_mode: MacosNewlineMode::default(),
             working_languages: default_working_languages(),
             custom_combo_hotkey: None,
-            open_app_hotkey: default_open_app_hotkey(),
             local_asr_active_model: default_local_asr_model(),
             local_asr_keep_loaded_secs: default_local_asr_keep_loaded_secs(),
             local_asr_models_base_dir: String::new(),
@@ -674,14 +527,9 @@ impl Default for UserPreferences {
             polish_context_window_minutes: default_polish_context_window_minutes(),
             start_minimized: false,
             theme_mode: ThemeMode::default(),
-            streaming_insert: true,
-            streaming_insert_default_migrated: true,
-            streaming_insert_save_clipboard: true,
             cursor_context_enabled: false,
             screen_ocr_context_enabled: false,
             show_overview_activity_heatmap: true,
-            stacked_row_layout: false,
-            conservative_layout: false,
             auto_update_check: true,
             history_max_entries: None,
             record_audio_for_debug: false,
@@ -798,17 +646,6 @@ impl HotkeyTrigger {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-pub enum HotkeyMode {
-    Toggle,
-    Hold,
-    DoubleClick,
-    /// 自动识别：按下即开录；松手时按「按住时长」决定语义 —— 短按（< AUTO_HOLD_THRESHOLD）
-    /// 当作 Toggle（锁存，保持录音，下次按下再停），长按当作 Hold（松手即停）。
-    Auto,
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
 pub enum HotkeyAdapterKind {
     MacEventTap,
     WindowsLowLevel,
@@ -844,7 +681,6 @@ impl HotkeyKey {
 #[serde(default, rename_all = "camelCase")]
 pub struct HotkeyBinding {
     pub trigger: HotkeyTrigger,
-    pub mode: HotkeyMode,
     pub keys: Option<Vec<HotkeyKey>>,
 }
 
@@ -1095,15 +931,14 @@ impl Default for HotkeyBinding {
         //
         // 原因：HotkeyBinding 用 `#[serde(default)]` **结构级 default**——反序列化时
         // 整个 struct 先按 Default 填充再让 JSON 字段覆盖。如果这里 keys 预填了
-        // Some([...])，那么旧 prefs 里只写 `{"trigger":"rightControl","mode":"toggle"}`
-        // （不带 keys 字段）会被反序列化成 `{trigger=RightControl, keys=Some([默认值])}`
+        // Some([...])，那么旧 prefs 里只写 `{"trigger":"rightControl"}`（不带 keys
+        // 字段）会被反序列化成 `{trigger=RightControl, keys=Some([默认值])}`
         // 即 trigger 跟 keys 完全不一致——effective_codes() 直接信任 keys，导致
         // 实际生效的快捷键跟用户当年选的 trigger 对不上。
         // 现在 keys=None 时 effective_codes() 走 legacy_trigger_code(trigger) 路径，
         // 跟 trigger 自动同步。
         Self {
             trigger: HotkeyTrigger::RightCommand,
-            mode: HotkeyMode::Toggle,
             keys: None,
         }
     }
@@ -1264,39 +1099,19 @@ mod tests {
             let json = serde_json::json!({
                 "restoreClipboardAfterPaste": restore,
                 "microphoneDeviceName": "USB Mic",
-                "streamingInsertSaveClipboard": false,
-                "pasteShortcut": "shiftInsert"
             })
             .to_string();
             let preferences: UserPreferences = serde_json::from_str(&json).unwrap();
             assert_eq!(preferences.microphone_device_name, "USB Mic");
-            assert!(!preferences.streaming_insert_save_clipboard);
-            assert_eq!(preferences.paste_shortcut, PasteShortcut::ShiftInsert);
             let serialized = serde_json::to_value(&preferences).unwrap();
             assert!(serialized.get("restoreClipboardAfterPaste").is_none());
             let loaded: UserPreferences = serde_json::from_value(serialized).unwrap();
             assert_eq!(loaded.microphone_device_name, "USB Mic");
-            assert!(!loaded.streaming_insert_save_clipboard);
         }
         assert!(serde_json::to_value(UserPreferences::default())
             .unwrap()
             .get("restoreClipboardAfterPaste")
             .is_none());
-    }
-
-    #[test]
-    fn macos_newline_modes_round_trip_legacy_auto_and_line_feed() {
-        assert_eq!(MacosNewlineMode::default(), MacosNewlineMode::Auto);
-        for (wire, expected) in [
-            ("\"auto\"", MacosNewlineMode::Auto),
-            ("\"shiftReturn\"", MacosNewlineMode::ShiftReturn),
-            ("\"lineFeed\"", MacosNewlineMode::LineFeed),
-            ("\"return\"", MacosNewlineMode::Return),
-        ] {
-            let decoded: MacosNewlineMode = serde_json::from_str(wire).unwrap();
-            assert_eq!(decoded, expected);
-            assert_eq!(serde_json::to_string(&decoded).unwrap(), wire);
-        }
     }
 
     #[test]
@@ -1482,119 +1297,6 @@ mod tests {
     }
 
     #[test]
-    fn open_app_hotkey_defaults_to_enabled() {
-        // issue #576：默认仍开启（Some 默认键），对老用户零行为变化。
-        let prefs = UserPreferences::default();
-        assert!(prefs.open_app_hotkey.is_some());
-    }
-
-    #[test]
-    fn missing_open_app_hotkey_defaults_to_enabled() {
-        // 老用户/缺字段：wire 的 struct-default 落到 Some(默认键)，不应被当成停用。
-        let prefs: UserPreferences = serde_json::from_str("{}").unwrap();
-        assert!(prefs.open_app_hotkey.is_some());
-    }
-
-    #[test]
-    fn disabled_open_app_hotkey_round_trips_as_null() {
-        // issue #576：用户清空（None=停用）后存盘→读回必须仍是 None，
-        // 不能像旧逻辑那样被 unwrap_or_else 塌缩回默认键。
-        let disabled = UserPreferences {
-            open_app_hotkey: None,
-            ..Default::default()
-        };
-        let json = serde_json::to_string(&disabled).unwrap();
-        assert!(
-            json.contains("\"openAppHotkey\":null"),
-            "停用应序列化成 null，实际: {json}"
-        );
-        let restored: UserPreferences = serde_json::from_str(&json).unwrap();
-        assert!(restored.open_app_hotkey.is_none());
-    }
-
-    #[test]
-    fn explicit_open_app_hotkey_binding_round_trips() {
-        // 旧 preferences.json 里带实际绑定 → 读回应保留为 Some（启用）。
-        let prefs: UserPreferences = serde_json::from_str(
-            r#"{"openAppHotkey":{"primary":"O","modifiers":["cmd","shift"]}}"#,
-        )
-        .unwrap();
-        let binding = prefs.open_app_hotkey.expect("应保留为 Some");
-        assert_eq!(binding.primary, "O");
-        assert_eq!(
-            binding.modifiers,
-            vec!["cmd".to_string(), "shift".to_string()]
-        );
-    }
-
-    /// issue #360: 默认值必须是 CtrlV，跟历史行为一致；老配置文件没有
-    /// pasteShortcut 字段时反序列化也得回到 CtrlV，否则会把现有用户的粘贴
-    /// 行为静默改掉。
-    #[test]
-    fn paste_shortcut_defaults_to_ctrl_v() {
-        let prefs = UserPreferences::default();
-        assert_eq!(prefs.paste_shortcut, PasteShortcut::CtrlV);
-
-        let from_empty: UserPreferences = serde_json::from_str("{}").unwrap();
-        assert_eq!(from_empty.paste_shortcut, PasteShortcut::CtrlV);
-    }
-
-    /// issue #440: 老版本会把默认 `streamingInsert:false` 写进 preferences.json。
-    /// 缺少迁移标记的旧文件统一迁到 true；带有迁移标记后，用户再手动关掉的 false
-    /// 必须保留。
-    #[test]
-    fn streaming_insert_defaults_to_enabled_for_missing_or_legacy_unmigrated_pref() {
-        let prefs = UserPreferences::default();
-        assert!(prefs.streaming_insert);
-        assert!(prefs.streaming_insert_default_migrated);
-        assert!(prefs.streaming_insert_save_clipboard);
-
-        let from_empty: UserPreferences = serde_json::from_str("{}").unwrap();
-        assert!(from_empty.streaming_insert);
-        assert!(from_empty.streaming_insert_default_migrated);
-        assert!(from_empty.streaming_insert_save_clipboard);
-
-        let from_legacy_false: UserPreferences = serde_json::from_str(
-            r#"{
-                "streamingInsert": false,
-                "streamingInsertSaveClipboard": true
-            }"#,
-        )
-        .unwrap();
-        assert!(from_legacy_false.streaming_insert);
-        assert!(from_legacy_false.streaming_insert_default_migrated);
-    }
-
-    #[test]
-    fn streaming_insert_preserves_explicit_disabled_value() {
-        let prefs: UserPreferences = serde_json::from_str(
-            r#"{
-                "streamingInsert": false,
-                "streamingInsertDefaultMigrated": true,
-                "streamingInsertSaveClipboard": false
-            }"#,
-        )
-        .unwrap();
-
-        assert!(!prefs.streaming_insert);
-        assert!(prefs.streaming_insert_default_migrated);
-        assert!(!prefs.streaming_insert_save_clipboard);
-    }
-
-    #[test]
-    fn paste_shortcut_round_trips_explicit_values() {
-        for (raw, expected) in [
-            ("ctrlV", PasteShortcut::CtrlV),
-            ("ctrlShiftV", PasteShortcut::CtrlShiftV),
-            ("shiftInsert", PasteShortcut::ShiftInsert),
-        ] {
-            let json = format!(r#"{{ "pasteShortcut": "{raw}" }}"#);
-            let prefs: UserPreferences = serde_json::from_str(&json).unwrap();
-            assert_eq!(prefs.paste_shortcut, expected, "raw={raw}");
-        }
-    }
-
-    #[test]
     fn legacy_custom_hotkey_without_custom_binding_is_rejected() {
         let result = serde_json::from_str::<UserPreferences>(
             r#"{
@@ -1657,10 +1359,9 @@ mod tests {
     }
 
     #[test]
-    fn hotkey_binding_supports_combo_side_keys_mouse_and_double_click_mode() {
+    fn hotkey_binding_supports_combo_side_keys() {
         let binding = HotkeyBinding {
             trigger: HotkeyTrigger::RightControl,
-            mode: HotkeyMode::DoubleClick,
             keys: Some(vec![
                 HotkeyKey::new("ControlLeft"),
                 HotkeyKey::new("AltLeft"),
@@ -1677,9 +1378,6 @@ mod tests {
             ]
         );
         assert_eq!(binding.display_label(), "左Ctrl+左Alt+Mouse4");
-
-        let json = serde_json::to_value(&binding).unwrap();
-        assert_eq!(json["mode"], "doubleClick");
     }
 
     #[test]

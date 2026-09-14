@@ -165,10 +165,6 @@ type TextInsertionPreparation = futures_util::future::Shared<
 
 struct ActiveTextInsertion {
     platform: Arc<dyn TextInsertionSession>,
-    streaming: bool,
-    save_streamed_text_to_clipboard: bool,
-    state: Mutex<ActiveTextInsertionState>,
-    drained: tokio::sync::Notify,
     task_spawner: Arc<dyn TaskSpawner>,
     _resources: Arc<crate::voice_session::VoiceResourceHold>,
     cancel_result: std::sync::OnceLock<Result<(), BackendError>>,
@@ -180,12 +176,9 @@ struct ActiveTextInsertion {
     // Cancellation must join state 1 or 2 rather
     // than release the next voice session while its committed input continues.
     terminal: AtomicU8,
-}
-
-#[derive(Default)]
-struct ActiveTextInsertionState {
-    stream: crate::streaming_insert::StreamingInsertState,
-    scheduled: bool,
+    /// finish / cancel 的原生收尾都在独立任务里跑；两者通过 terminal 状态 +
+    /// 本 Notify 会合，保证后来的取消能等到在途收尾结束。
+    drained: tokio::sync::Notify,
 }
 
 impl ActiveTextInsertion {
@@ -195,15 +188,8 @@ impl ActiveTextInsertion {
         task_spawner: Arc<dyn TaskSpawner>,
         resources: Arc<crate::voice_session::VoiceResourceHold>,
     ) -> Arc<Self> {
-        let platform_streaming = platform.supports_streaming();
         Arc::new(Self {
             platform,
-            streaming: context.uses_llm_polisher()
-                && platform_streaming
-                && crate::streaming_insert::streaming_insert_eligible(context.insertion.streaming),
-            save_streamed_text_to_clipboard: context.insertion.save_streamed_text_to_clipboard,
-            state: Mutex::new(ActiveTextInsertionState::default()),
-            drained: tokio::sync::Notify::new(),
             task_spawner,
             _resources: resources,
             cancel_result: std::sync::OnceLock::new(),
@@ -211,109 +197,17 @@ impl ActiveTextInsertion {
                 context.polish.cursor_context.as_deref(),
             ),
             terminal: AtomicU8::new(0),
+            drained: tokio::sync::Notify::new(),
         })
     }
 
-    fn push(self: &Arc<Self>, delta: &crate::types::PolishDelta) {
-        if !self.streaming || delta.is_final {
-            return;
-        }
-        let should_spawn = {
-            let mut state = self.state.lock().expect("text insertion lock poisoned");
-            state.stream.push_delta(delta.offset, &delta.text);
-            if state.scheduled || state.stream.pending.is_empty() || state.stream.failed.is_some() {
-                false
-            } else {
-                state.scheduled = true;
-                true
-            }
-        };
-        if should_spawn {
-            let insertion = Arc::clone(self);
-            self.task_spawner
-                .spawn(Box::pin(async move { insertion.flush_loop().await }));
-        }
-    }
-
-    async fn flush_loop(self: Arc<Self>) {
-        loop {
-            tokio::time::sleep(std::time::Duration::from_millis(
-                crate::streaming_insert::STREAMING_FLUSH_INTERVAL_MS,
-            ))
-            .await;
-            let delta = {
-                let mut state = self.state.lock().expect("text insertion lock poisoned");
-                if state.stream.failed.is_some() {
-                    state.scheduled = false;
-                    self.drained.notify_waiters();
-                    return;
-                }
-                let mut delta = std::mem::take(&mut state.stream.pending);
-                // 衔接调整只作用于第一段真正写入的文本。此时流式增量的 offset
-                // 记账已经完成,在写入平台前变换不会打乱后续增量的对账;先改这里,
-                // finish 里的最终文本做同一份变换,前缀才能逐字符对齐。
-                if !delta.is_empty() && state.stream.typed_text.is_empty() {
-                    if let Some(tail) = &self.boundary_tail {
-                        delta = crate::insertion_boundary::adjust_for_boundary(&delta, Some(tail));
-                    }
-                }
-                delta
-            };
-            let expected = delta.chars().count();
-            let result = if delta.is_empty() {
-                Ok(crate::ports::InsertWriteResult { written_chars: 0 })
-            } else {
-                self.platform.write(delta.clone()).await
-            };
-            let mut state = self.state.lock().expect("text insertion lock poisoned");
-            match result {
-                Ok(result) if result.written_chars >= expected => {
-                    state.stream.typed_text.push_str(&delta);
-                }
-                Ok(result) => {
-                    let written = crate::streaming_insert::append_typed_prefix(
-                        &mut state.stream.typed_text,
-                        &delta,
-                        result.written_chars,
-                    );
-                    state.stream.failed = Some(format!(
-                        "host inserted only {written}/{expected} characters"
-                    ));
-                }
-                Err(error) => state.stream.failed = Some(error.to_string()),
-            }
-            if state.stream.failed.is_some() || state.stream.pending.is_empty() {
-                state.scheduled = false;
-                self.drained.notify_waiters();
-                return;
-            }
-        }
-    }
-
-    async fn wait_for_stream_drain(&self) {
-        loop {
-            let notified = self.drained.notified();
-            if !self
-                .state
-                .lock()
-                .expect("text insertion lock poisoned")
-                .scheduled
-            {
-                break;
-            }
-            notified.await;
-        }
-    }
-
     async fn finish(self: &Arc<Self>, final_text: String) -> Result<InsertOutcome, BackendError> {
-        // 最终文本做与流式首段同一份衔接调整,已写入前缀才能与最终文本逐字符
-        // 对齐(reconcile 靠 strip_prefix 决定补写还是回退);非流式路径在此
-        // 统一获得调整。历史与诊断保存的是调整前的润色原始输出。
+        // 上屏文本做与冻结光标尾部同源的衔接调整(补空格/首字母大小写)。
+        // 历史与诊断保存的是调整前的润色原始输出。
         let final_text = match &self.boundary_tail {
             Some(tail) => crate::insertion_boundary::adjust_for_boundary(&final_text, Some(tail)),
             None => final_text,
         };
-        self.wait_for_stream_drain().await;
         self.terminal
             .compare_exchange(0, 1, Ordering::AcqRel, Ordering::Acquire)
             .map_err(|_| {
@@ -343,56 +237,10 @@ impl ActiveTextInsertion {
     }
 
     async fn finish_committed(&self, final_text: String) -> Result<InsertOutcome, BackendError> {
-        let reconciliation = self
-            .state
-            .lock()
-            .expect("text insertion lock poisoned")
-            .stream
-            .reconcile_final(&final_text);
-        use crate::streaming_insert::FinalReconciliation;
-        match reconciliation {
-            FinalReconciliation::InsertFinal(text) => self.platform.finish(text).await,
-            FinalReconciliation::WriteTail(tail) => {
-                let expected = tail.chars().count();
-                let written = self.platform.write(tail).await;
-                let complete = matches!(written, Ok(result) if result.written_chars >= expected);
-                if complete {
-                    if self.save_streamed_text_to_clipboard {
-                        if let Err(error) = self.platform.copy(final_text).await {
-                            log::warn!("failed to preserve streamed text on clipboard: {error}");
-                        }
-                    }
-                    self.platform.finish(String::new()).await
-                } else {
-                    self.finish_with_fallback(final_text).await
-                }
-            }
-            FinalReconciliation::Complete => {
-                if self.save_streamed_text_to_clipboard {
-                    if let Err(error) = self.platform.copy(final_text).await {
-                        log::warn!("failed to preserve streamed text on clipboard: {error}");
-                    }
-                }
-                self.platform.finish(String::new()).await
-            }
-            FinalReconciliation::CopyFallback(text) => self.finish_with_fallback(text).await,
-        }
-    }
-
-    async fn finish_with_fallback(&self, text: String) -> Result<InsertOutcome, BackendError> {
-        let copied = self.platform.copy(text).await;
-        let closed = self.platform.finish(String::new()).await;
-        copied?;
-        closed?;
-        Ok(InsertOutcome::CopiedFallback)
+        self.platform.finish(final_text).await
     }
 
     async fn cancel(self: &Arc<Self>) -> Result<(), BackendError> {
-        {
-            let mut state = self.state.lock().expect("text insertion lock poisoned");
-            state.stream.pending.clear();
-            state.stream.failed = Some("text insertion session was cancelled".to_string());
-        }
         if self
             .terminal
             .compare_exchange(0, 2, Ordering::AcqRel, Ordering::Acquire)
@@ -404,7 +252,6 @@ impl ActiveTextInsertion {
             // the remaining keys can be interpreted by the restored IME.
             let insertion = Arc::clone(self);
             self.task_spawner.spawn(Box::pin(async move {
-                insertion.wait_for_stream_drain().await;
                 let result = insertion.platform.cancel().await;
                 let _ = insertion.cancel_result.set(result);
                 insertion.terminal.store(4, Ordering::Release);
@@ -435,7 +282,6 @@ struct BackendEngineProgress {
     events: Arc<EventBus>,
     state: Arc<RwLock<MutableState>>,
     phase_changed: Arc<tokio::sync::Notify>,
-    text_insertions: Arc<Mutex<HashMap<SessionId, TextInsertionPreparation>>>,
 }
 
 impl EngineProgressSink for BackendEngineProgress {
@@ -558,30 +404,6 @@ impl EngineProgressSink for BackendEngineProgress {
                 drop(state);
                 self.events
                     .publish(Some(session_id), BackendEventKind::TranscriptDelta(delta));
-            }
-            EngineProgress::PolishDelta(delta) => {
-                let state = self.state.read().expect("backend state lock poisoned");
-                ensure_active_session(&state, session_id)?;
-                if state.dictation.phase != DictationPhase::Polishing {
-                    return Err(BackendError::new(
-                        BackendErrorCode::InvalidState,
-                        "polish delta arrived outside the polishing phase",
-                    ));
-                }
-                drop(state);
-                if let Some(insertion) = self
-                    .text_insertions
-                    .lock()
-                    .expect("text insertion registry lock poisoned")
-                    .get(&session_id)
-                    .and_then(|preparation| preparation.peek())
-                    .and_then(|result| result.as_ref().ok())
-                    .cloned()
-                {
-                    insertion.push(&delta);
-                }
-                self.events
-                    .publish(Some(session_id), BackendEventKind::PolishDelta(delta));
             }
         }
         Ok(())
@@ -805,7 +627,6 @@ impl OpenLessBackend {
             events: Arc::clone(&self.events),
             state: Arc::clone(&self.state),
             phase_changed: Arc::clone(&self.phase_changed),
-            text_insertions: Arc::clone(&self.text_insertions),
         })
     }
 
@@ -923,7 +744,7 @@ impl OpenLessBackend {
         }
     }
 
-    /// Apply physical dictation-key edges using the shared hotkey-mode rules.
+    /// Apply physical dictation-key edges using the shared toggle hotkey rules.
     ///
     /// Native listeners provide a stable physical-press id plus monotonic event
     /// timestamps; Core owns deduplication, arbitration, duration and cooldown.
@@ -957,7 +778,7 @@ impl OpenLessBackend {
     ///
     /// Start options are consumed only when the edge creates a session. This
     /// preserves desktop modifier semantics without making the host duplicate
-    /// the Toggle/Hold/Auto state machine.
+    /// the toggle state machine.
     pub async fn dispatch_dictation_hotkey_edge_with_session_options(
         &self,
         edge: DictationHotkeyEdge,
@@ -975,7 +796,6 @@ impl OpenLessBackend {
             Some(self.hotkey_dispatch_gate.lock().await)
         };
         let preferences = self.get_preferences();
-        let mode = preferences.hotkey.mode;
         let modifier_only =
             crate::shortcut_types::legacy_modifier_trigger(&preferences.dictation_hotkey).is_some();
         let (intent, reservation) = {
@@ -986,11 +806,9 @@ impl OpenLessBackend {
             let phase = self.snapshot().dictation.phase;
             let intent = match edge {
                 DictationHotkeyEdge::Pressed { press_id, at } => {
-                    hotkey.press(press_id, at, mode, phase, modifier_only)
+                    hotkey.press(press_id, at, phase, modifier_only)
                 }
-                DictationHotkeyEdge::Released { press_id, at } => {
-                    hotkey.release(press_id, at, mode, phase)
-                }
+                DictationHotkeyEdge::Released { press_id, at: _ } => hotkey.release(press_id),
                 DictationHotkeyEdge::Combined { press_id, at: _ } => hotkey.combined(press_id),
             };
             // Bind an accepted physical press to its actual Starting session
@@ -1125,30 +943,6 @@ impl OpenLessBackend {
         crate::sync_dictation_hotkey_legacy_fields(&mut previous);
         crate::sync_dictation_hotkey_legacy_fields(&mut preferences);
 
-        let reconciled_hotkey_count = match crate::reject_hotkey_collisions(&preferences) {
-            Ok(()) => 0,
-            Err(message)
-                if options.collision_policy == crate::SettingsCollisionPolicy::Reconcile =>
-            {
-                let adjusted = crate::reconcile_hotkey_collisions(&mut preferences, &previous);
-                crate::reject_hotkey_collisions(&preferences).map_err(|leftover| {
-                    BackendError::new(
-                        BackendErrorCode::InvalidArgument,
-                        format!(
-                            "{message}; reconciled {adjusted} shortcuts but validation still failed: {leftover}"
-                        ),
-                    )
-                })?;
-                adjusted
-            }
-            Err(message) => {
-                return Err(BackendError::new(
-                    BackendErrorCode::InvalidArgument,
-                    message,
-                ));
-            }
-        };
-
         let effects = crate::SettingsEffectPlan::between(&previous, &preferences);
         let mut receipt = match runtime.prepare(&effects) {
             Ok(receipt) => receipt,
@@ -1197,7 +991,6 @@ impl OpenLessBackend {
         self.publish_preferences_changed();
         Ok(crate::SettingsUpdateOutcome {
             preferences,
-            reconciled_hotkey_count,
             effects,
         })
     }
@@ -1933,7 +1726,6 @@ impl OpenLessBackend {
         state.dictation.phase = DictationPhase::Completed;
         state.dictation.message = Some(match insert_outcome {
             Some(InsertOutcome::Inserted) => "inserted".to_string(),
-            Some(InsertOutcome::PasteSent) => "paste_sent".to_string(),
             Some(InsertOutcome::CopiedFallback) => "copied_fallback".to_string(),
             None => "insertion_not_requested".to_string(),
         });
@@ -1985,7 +1777,6 @@ impl OpenLessBackend {
             crate::shared_types::split_front_app_opt(context.polish.front_app.as_deref());
         let insert_status = match insert_outcome {
             Some(InsertOutcome::Inserted) => HistoryInsertStatus::Inserted,
-            Some(InsertOutcome::PasteSent) => HistoryInsertStatus::PasteSent,
             Some(InsertOutcome::CopiedFallback) => HistoryInsertStatus::CopiedFallback,
             None => HistoryInsertStatus::NotRequested,
         };

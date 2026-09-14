@@ -310,16 +310,6 @@ fn is_supported_shortcut_character(character: char) -> bool {
         )
 }
 
-pub fn reject_modifier_only_action_shortcut(binding: &ShortcutBinding) -> Result<(), String> {
-    if binding.modifiers.is_empty()
-        && (binding.primary.eq_ignore_ascii_case("shift")
-            || legacy_modifier_trigger(binding).is_some())
-    {
-        return Err("该快捷键需要使用组合键或非修饰主键".into());
-    }
-    Ok(())
-}
-
 pub fn reject_bare_shift_dictation_shortcut(binding: &ShortcutBinding) -> Result<(), String> {
     if binding.modifiers.is_empty() && binding.primary.eq_ignore_ascii_case("shift") {
         return Err("Shift 单键不能作为快捷键，请使用组合键".into());
@@ -342,104 +332,6 @@ pub fn sync_dictation_hotkey_legacy_fields(preferences: &mut UserPreferences) {
             modifiers: preferences.dictation_hotkey.modifiers.clone(),
         })
     };
-}
-
-fn reject_overlap(
-    left: &ShortcutBinding,
-    right: &ShortcutBinding,
-    message: &'static str,
-) -> Result<(), String> {
-    if bindings_overlap(left, right) {
-        return Err(message.into());
-    }
-    Ok(())
-}
-
-pub fn reject_non_dictation_side_specific_shortcuts(
-    preferences: &UserPreferences,
-) -> Result<(), String> {
-    for binding in [preferences.open_app_hotkey.as_ref()].into_iter().flatten() {
-        reject_side_specific_non_dictation(binding)?;
-    }
-    Ok(())
-}
-
-/// Resolve shortcut conflicts in a full settings document without rejecting
-/// unrelated preference changes.
-///
-/// Dictation is the highest-priority binding and is never changed. Other
-/// bindings are considered in product-priority order: an invalid or colliding
-/// value first falls back to its previous value, then is disabled when no safe
-/// fallback exists.
-pub fn reconcile_hotkey_collisions(
-    preferences: &mut UserPreferences,
-    previous: &UserPreferences,
-) -> usize {
-    #[derive(Clone, Copy, PartialEq, Eq)]
-    enum NonCoreHotkey {
-        OpenApp,
-    }
-
-    impl NonCoreHotkey {
-        fn get(self, preferences: &UserPreferences) -> Option<ShortcutBinding> {
-            match self {
-                Self::OpenApp => preferences.open_app_hotkey.clone(),
-            }
-        }
-
-        fn set(self, preferences: &mut UserPreferences, value: Option<ShortcutBinding>) {
-            match self {
-                Self::OpenApp => preferences.open_app_hotkey = value,
-            }
-        }
-
-        fn binding_is_valid(self, binding: &ShortcutBinding) -> bool {
-            if reject_side_specific_non_dictation(binding).is_err() {
-                return false;
-            }
-            match self {
-                _ => true,
-            }
-        }
-    }
-
-    const ORDER: [NonCoreHotkey; 1] = [NonCoreHotkey::OpenApp];
-    let mut higher = vec![preferences.dictation_hotkey.clone()];
-    let mut adjusted = 0;
-    for key in ORDER {
-        let Some(current) = key.get(preferences) else {
-            continue;
-        };
-        let collides = higher.iter().any(|held| bindings_overlap(held, &current));
-        if !collides && key.binding_is_valid(&current) {
-            higher.push(current);
-            continue;
-        }
-        let resolved = key.get(previous).filter(|candidate| {
-            !higher.iter().any(|held| bindings_overlap(held, candidate))
-                && key.binding_is_valid(candidate)
-        });
-        key.set(preferences, resolved.clone());
-        adjusted += 1;
-        if let Some(value) = resolved {
-            higher.push(value);
-        }
-    }
-
-    adjusted
-}
-
-pub fn reject_hotkey_collisions(preferences: &UserPreferences) -> Result<(), String> {
-    reject_non_dictation_side_specific_shortcuts(preferences)?;
-    let open_app = preferences.open_app_hotkey.as_ref();
-    if let Some(binding) = open_app {
-        reject_overlap(
-            &preferences.dictation_hotkey,
-            binding,
-            "打开应用快捷键不能和听写快捷键相同",
-        )?;
-    }
-    Ok(())
 }
 
 #[cfg(test)]

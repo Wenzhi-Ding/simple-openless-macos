@@ -47,7 +47,6 @@ export {
     startDictation,
     stopDictation,
     cancelDictation,
-    handleWindowHotkeyEvent,
 } from "./dictation"
 
 // permissions
@@ -68,7 +67,6 @@ export {
     setComboHotkey,
     validateShortcutBinding,
     setDictationHotkey,
-    setOpenAppHotkey,
     setShortcutRecordingActive,
 } from "./hotkeys"
 

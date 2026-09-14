@@ -96,7 +96,6 @@ macro_rules! app_invoke_handler_desktop {
             commands::stop_dictation,
             commands::cancel_dictation,
             commands::repolish,
-            commands::handle_window_hotkey_event,
             #[cfg(debug_assertions)]
             commands::inject_hotkey_click_for_dev,
             commands::check_accessibility_permission,
@@ -109,7 +108,6 @@ macro_rules! app_invoke_handler_desktop {
             commands::trigger_microphone_prompt,
             commands::validate_shortcut_binding,
             commands::set_dictation_hotkey,
-            commands::set_open_app_hotkey,
             commands::validate_combo_hotkey,
             commands::set_combo_hotkey,
             commands::local_asr_engine_status,
@@ -287,7 +285,6 @@ fn run_desktop() {
             RunEvent::Ready => {
                 let coordinator = app.state::<Arc<coordinator::Coordinator>>();
                 coordinator.start_combo_hotkey_listener();
-                coordinator.start_open_app_hotkey_listener();
             }
             RunEvent::Reopen { .. } => show_main_window(app),
             RunEvent::WindowEvent { label, event, .. } => {
@@ -303,7 +300,6 @@ fn run_desktop() {
                 let coordinator = app.state::<Arc<coordinator::Coordinator>>();
                 coordinator.stop_hotkey_listener();
                 coordinator.stop_combo_hotkey_listener();
-                coordinator.stop_open_app_hotkey_listener();
                 // Must be synchronous: the process finalises as soon as this
                 // callback returns, so a spawned task does not get a chance to
                 // run. llama.cpp keeps Metal buffers alive until the model and

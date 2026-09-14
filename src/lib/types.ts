@@ -148,15 +148,12 @@ export type HotkeyTrigger =
   | 'mediaPlayPause'
   | 'custom';
 
-export type HotkeyMode = 'toggle' | 'hold' | 'doubleClick' | 'auto';
-
 export interface HotkeyKey {
   code: string;
 }
 
 export interface HotkeyBinding {
   trigger: HotkeyTrigger;
-  mode: HotkeyMode;
   keys?: HotkeyKey[] | null;
 }
 
@@ -201,8 +198,6 @@ export type ComboBinding = ShortcutBinding;
  *  - ctrlShiftV  : kitty / alacritty / wezterm / gnome-terminal / foot 等终端
  *  - shiftInsert : xterm / urxvt 等老派 X11 终端
  *  详见 issue #360。 */
-export type PasteShortcut = 'ctrlV' | 'ctrlShiftV' | 'shiftInsert';
-
 /** Windows 听写文本插入策略。 */
 export type WindowsInsertionMode = 'tsf' | 'sendInput' | 'paste';
 
@@ -211,14 +206,11 @@ export type WindowsSendInputNewlineMode = 'enter' | 'shiftEnter' | 'crlf';
 
 /** macOS 逐字上屏时换行符怎么发。`auto` 按前台应用选择；`lineFeed` 供终端使用；
  *  `return` 在聊天框里等于发送 —— 靠换行拆多条消息的风格包要的就是这个。 */
-export type MacosNewlineMode = 'auto' | 'shiftReturn' | 'lineFeed' | 'return';
-
 export type ThemeMode = 'system' | 'light' | 'dark';
 
 export interface UserPreferences {
   hotkey: HotkeyBinding;
   dictationHotkey: ShortcutBinding;
-  launchAtLogin: boolean;
   showCapsule: boolean;
   /** 录音胶囊样式（'siri' | 'classic'）。见 CapsulePayload.capsuleStyle 的运行时下发。 */
   capsuleStyle: CapsuleStyle;
@@ -239,18 +231,13 @@ export interface UserPreferences {
   /** LLM 思考模式开关。默认关闭；OpenAI 普通 chat 模型会跳过不支持的字段。详见 issue #402。 */
   llmThinkingEnabled: boolean;
   /** 是否使用系统代理（issue #869）。默认开启；关闭后所有请求直连，境外服务（GitHub 登录/更新等）可能连不上。 */
-  useSystemProxy: boolean;
   /** 仅 Windows/Linux：模拟粘贴时按下的快捷键。详见 issue #360：kitty/alacritty
    *  等终端只接受 Ctrl+Shift+V，硬编码 Ctrl+V 会被吞掉，听写文本只剩在剪贴板里。
    *  macOS 走 AX 直写不受影响。默认 'ctrlV' 与历史行为一致。 */
-  pasteShortcut: PasteShortcut;
-  macosNewlineMode: MacosNewlineMode;
   /** 用户的工作语言（多选，原生名）；作为前提注入 LLM polish prompt 头部。 */
   workingLanguages: string[];
   /** 自定义录音组合键。当 hotkey.trigger == 'custom' 时使用。null = 未设置。 */
   customComboHotkey: ComboBinding | null;
-  /** 打开 OpenLess 主窗口的全局快捷键。null = 用户已停用（issue #576）。 */
-  openAppHotkey: ShortcutBinding | null;
   /** 本地 Qwen3-ASR 当前激活的模型 id。仅在 local-qwen3 系列 provider 时有意义。 */
   localAsrActiveModel: string;
   /** 本地 ASR 引擎在内存中的保留时长（秒）。0 = 说完话即释放；
@@ -265,16 +252,6 @@ export interface UserPreferences {
   startMinimized: boolean;
   /** UI theme preference: follow OS, light, or dark. */
   themeMode: ThemeMode;
-  /** 流式输入：润色 SSE 一边到达一边逐字模拟键盘事件输出到当前焦点。开启后用户感知到
-   *  的处理时延显著降低。v1 限定 macOS + OpenAI-compatible provider，其他配置自动回落
-   *  到原一次性插入。默认 true。 */
-  streamingInsert: boolean;
-  /** issue #440 一次性迁移标记：旧配置缺少该字段时后端会把老默认 false 迁到 true；
-   *  迁移后用户再手动关掉 streamingInsert 时保留 false。 */
-  streamingInsertDefaultMigrated: boolean;
-  /** 流式输入成功后是否把最终润色文本写回剪贴板。开启后 Cmd+V 还能重复粘贴该次输出，
-   *  与一次性路径行为对齐。默认 true。 */
-  streamingInsertSaveClipboard: boolean;
   /** 是否把「用户正在写的那篇文档」中光标附近的原文送进 LLM 润色当上下文。
    *  默认 false —— 开启后每次听写都会读取前台 app 的正文并把其中一段发给 LLM 服务商。
    *  仅 macOS 有实现；密码框 / Secure Input / 密码管理器 / 终端一律硬拦。 */
@@ -285,10 +262,6 @@ export interface UserPreferences {
   screenOcrContextEnabled: boolean;
   /** 概览页是否显示「年度活动」热力图卡。默认 true；关闭只隐藏卡片，活动计数照常记录。 */
   showOverviewActivityHeatmap: boolean;
-  /** 易读布局：小屏或大字号时强制同行控件换行，避免横向溢出。默认 false。 */
-  stackedRowLayout: boolean;
-  /** 保守排版：除首页、顶栏、底栏与胶囊窗外，内容区强制单列满宽。默认 false。 */
-  conservativeLayout: boolean;
   /** 主窗口启动 + 后台每 60 分钟自动检查更新。默认 true。
    *  桌面：开启后自动检查，发现更新弹窗由用户确认安装。
    *  关闭后仅 Settings 手动「检查更新」按钮可用。 */

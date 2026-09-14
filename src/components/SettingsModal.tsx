@@ -13,18 +13,17 @@ import { useTranslation } from 'react-i18next';
 import { Icon } from './Icon';
 import { SavedToast } from './SavedToast';
 import { useSavedToastListener } from '../lib/savedEvent';
-import { useNarrowLayout, useConservativeLayout } from '../lib/useResponsiveLayout';
+import { useNarrowLayout } from '../lib/useResponsiveLayout';
 import type { OS } from './WindowChrome';
-import { AboutTab, GeneralTab, PrivacyTab, AdvancedTab } from '../pages/settings/tabs';
+import { GeneralTab, PrivacyTab, AdvancedTab } from '../pages/settings/tabs';
 import { chipSelectedStyle } from '../pages/settings/shared';
 
 // 稳定 tab ID（与 i18n key `modal.sections.*` 一致）。
-// 「服务」tab 已随模型固定化删除：模型/引擎由构建固定，状态改在概览页展示。
+// 「服务」tab 已随模型固定化删除；「关于」tab 已删除（版本号在侧栏底栏展示）。
 export type SettingsSectionId =
   | 'general'
   | 'privacy'
-  | 'advanced'
-  | 'about';
+  | 'advanced';
 
 interface SettingsModalProps {
   os: OS;
@@ -45,14 +44,12 @@ const TAB_ITEMS: ModalNavItem[] = [
   { id: 'general', icon: 'settings' },
   { id: 'privacy', icon: 'shield' },
   { id: 'advanced', icon: 'bolt' },
-  { id: 'about', icon: 'info' },
 ];
 const LINK_ITEMS: ModalNavItem[] = [];
 
 export function SettingsModal({ os: _os, onClose, initialSettingsSection }: SettingsModalProps) {
   const { t } = useTranslation();
   const narrow = useNarrowLayout();
-  const conservative = useConservativeLayout();
   const [section, setSection] = useState<SettingsSectionId>(initialSettingsSection ?? 'general');
   const savedToast = useSavedToastListener();
 
@@ -226,10 +223,7 @@ export function SettingsModal({ os: _os, onClose, initialSettingsSection }: Sett
           )}
 
           <div
-            className={[
-              'ol-thinscroll ol-scroll-fade',
-              conservative ? 'ol-conservative-scope' : undefined,
-            ].filter(Boolean).join(' ')}
+            className="ol-thinscroll ol-scroll-fade"
             style={{
               flex: 1,
               minHeight: 0,
@@ -243,7 +237,6 @@ export function SettingsModal({ os: _os, onClose, initialSettingsSection }: Sett
               {section === 'general' && <GeneralTab />}
               {section === 'privacy' && <PrivacyTab />}
               {section === 'advanced' && <AdvancedTab />}
-              {section === 'about' && <AboutTab />}
             </div>
 
           </div>

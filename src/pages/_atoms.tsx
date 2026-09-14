@@ -4,7 +4,7 @@
 
 import { useState, type CSSProperties, type ReactNode } from 'react';
 import { Icon } from '../components/Icon';
-import { useNarrowLayout, useReadableLayout, useConservativeLayout } from '../lib/useResponsiveLayout';
+import { useNarrowLayout } from '../lib/useResponsiveLayout';
 
 interface PageHeaderProps {
   kicker?: string;
@@ -16,10 +16,7 @@ interface PageHeaderProps {
 
 export function PageHeader({ kicker, title, desc, right, titleRight }: PageHeaderProps) {
   const narrow = useNarrowLayout();
-  const readable = useReadableLayout();
-  const conservative = useConservativeLayout();
-  const preferenceStack = readable || conservative;
-  const stackLayout = narrow || preferenceStack;
+  const stackLayout = narrow;
   return (
     <div style={{
       display: 'flex',
@@ -37,17 +34,9 @@ export function PageHeader({ kicker, title, desc, right, titleRight }: PageHeade
           <h1 style={{ margin: 0, fontSize: narrow ? 22 : 26, fontWeight: 600, letterSpacing: '-0.02em', color: 'var(--ol-ink)' }}>{title}</h1>
           {titleRight}
         </div>
-        {desc && <p style={{ margin: '8px 0 0', fontSize: 13, color: 'var(--ol-ink-3)', maxWidth: preferenceStack ? undefined : 640, lineHeight: 1.55 }}>{desc}</p>}
+        {desc && <p style={{ margin: '8px 0 0', fontSize: 13, color: 'var(--ol-ink-3)', maxWidth: 640, lineHeight: 1.55 }}>{desc}</p>}
       </div>
-      {right && (
-        preferenceStack ? (
-          <div className="ol-flex-row ol-flex-split" style={{ width: '100%' }}>
-            {right}
-          </div>
-        ) : (
-          right
-        )
-      )}
+      {right}
     </div>
   );
 }

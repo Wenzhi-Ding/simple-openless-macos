@@ -81,7 +81,6 @@ async fn forward_legacy_event(
             if let Some(coordinator) = app.try_state::<Arc<crate::coordinator::Coordinator>>() {
                 let message = match &result.inserted {
                     openless_core::DictationInsertStatus::Inserted => "已输入",
-                    openless_core::DictationInsertStatus::PasteSent => "已发送粘贴，请确认",
                     openless_core::DictationInsertStatus::CopiedFallback => "已复制，请手动粘贴",
                     openless_core::DictationInsertStatus::NotRequested => "处理完成",
                 };
@@ -168,7 +167,6 @@ async fn forward_legacy_event(
         // These domains either have no legacy push event or require a
         // window-specific payload that remains owned by the compatibility host.
         BackendEventKind::BackendStarted
-        | BackendEventKind::PolishDelta(_)
         | BackendEventKind::HistoryChanged(_)
         | BackendEventKind::PermissionChanged(_)
         | BackendEventKind::HotkeyStatusChanged(_) => {}

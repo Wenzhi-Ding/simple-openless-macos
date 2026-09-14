@@ -32,7 +32,6 @@ pub mod screen_ocr;
 pub mod settings;
 pub mod shared_types;
 pub mod silence_auto_stop;
-pub mod streaming_insert;
 #[cfg(test)]
 mod test_support;
 pub mod types;
@@ -110,7 +109,7 @@ pub use ports::{
     ActiveRecording, AudioConsumer, AudioRecorder, DictationEngine, DirectoryResourceResolver,
     EngineFailure, EngineFailureStage, EngineProgress, EngineProgressSink, EngineResult,
     EngineStage, HostAction, HostActions, HostContextAdapter, HostContextCapture, InsertOutcome,
-    InsertWriteResult, NoopHostActions, NoopHostContextAdapter, PolishAttempt, PolishOutput,
+    NoopHostActions, NoopHostContextAdapter, PolishAttempt, PolishOutput,
     RecordingArchive, RecordingControlSink, RecordingEvent, RecordingProgressSink,
     ResourceResolver, ScreenOcrNotStarted, ScreenOcrOutcome, ScreenOcrSlot, ScreenOcrStart,
     TextInserter, TextInsertionSession, TextPolisher, TextStreamChunk, TextStreamSink,
@@ -128,27 +127,22 @@ pub use screen_ocr::{
 };
 pub use settings::*;
 pub use shared_types::{
-    CapsulePayload, CapsuleState, CapsuleStyle, HotkeyAdapterKind, HotkeyMode, HotkeyStatus,
+    CapsulePayload, CapsuleState, CapsuleStyle, HotkeyAdapterKind, HotkeyStatus,
     HotkeyStatusState, PlatformCapabilities, UserPreferences,
 };
 pub use shortcut_types::{
     binding_from_legacy_trigger, binding_requires_side_aware_hook, bindings_overlap,
     is_side_specific_modifier_tag, legacy_modifier_trigger, normalize_side_modifier_tag,
-    reconcile_hotkey_collisions, reject_bare_shift_dictation_shortcut, reject_hotkey_collisions,
-    reject_modifier_only_action_shortcut, reject_non_dictation_side_specific_shortcuts,
-    reject_side_specific_non_dictation, sync_dictation_hotkey_legacy_fields,
-    validate_shortcut_binding, ShortcutBindingError, SIDE_SPECIFIC_NON_DICTATION_MSG,
+    reject_bare_shift_dictation_shortcut, reject_side_specific_non_dictation,
+    sync_dictation_hotkey_legacy_fields, validate_shortcut_binding, ShortcutBindingError,
+    SIDE_SPECIFIC_NON_DICTATION_MSG,
 };
 pub use silence_auto_stop::{SilenceAutoStop, SilenceDecision};
-pub use streaming_insert::{
-    append_typed_prefix, streaming_insert_eligible, StreamingInsertState,
-    STREAMING_FLUSH_INTERVAL_MS,
-};
 pub use types::InsertStatus as DictationInsertStatus;
 pub use types::{
     DictationPhase, DictationResult, DictationSession, DictationStateSnapshot, DictionaryEntry,
     HistoryChange, HistoryInsertStatus, HistorySource, InsertFallbackPayload, NotificationLevel,
-    NotificationPayload, PermissionSnapshot, PermissionState, PolishDelta, PreferencesChange,
+    NotificationPayload, PermissionSnapshot, PermissionState, PreferencesChange,
     SessionId, TranscriptAccumulator, TranscriptDelta, VocabularyChange,
 };
 pub use vocabulary::DictionaryStore;

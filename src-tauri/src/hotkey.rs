@@ -8,13 +8,12 @@
 //!
 //! 仅产出带代次和单调时间戳的原始边沿，业务语义由 openless-core 解释。
 //!
-//! Esc（取消）与组合键撤销（触发键按住期间叠加了普通键）**都不走** `HotkeyEvent`
+//! 组合键撤销（触发键按住期间叠加了普通键）**不走** `HotkeyEvent`
 //! 通道，而是独立的 `Sender<HotkeyCombinedEdge>`：Pressed/Released 的 bridge 线程为了修 #468/#475 的
 //! latch 竞态改成了串行 block_on，Pressed / Released 会在 bridge 线程上同步跑完
-//! `begin_session`（开麦 + ASR 握手）或整个转写 + 润色流程 —— 若取消 / 撤销与它们同
-//! 队列，事件只能排队等流程跑完，观感就是「晚几百毫秒才生效」。独立通道 + 专用消费
-//! 线程保证取消 / 撤销随到随处理（`cancel_session` / `handle_trigger_combined` 都是纯
-//! 同步快路径：置旗标 + 清资源，不 await）。
+//! `begin_session`（开麦 + ASR 握手）——若撤销与它同队列，事件只能排队等流程跑完，
+//! 观感就是「晚几百毫秒才生效」。独立通道 + 专用消费线程保证撤销随到随处理
+//! （`handle_trigger_combined` 是纯同步快路径：置旗标 + 清资源，不 await）。
 use crate::types::{HotkeyAdapterKind, HotkeyBinding, HotkeyCapability, HotkeyInstallError};
 use parking_lot::RwLock;
 use std::sync::atomic::{AtomicBool, AtomicU64};
@@ -68,7 +67,6 @@ mod tests {
         let shared = shared_with_held_latches();
         let next = HotkeyBinding {
             trigger: HotkeyTrigger::LeftControl,
-            mode: crate::types::HotkeyMode::Hold,
             keys: None,
         };
         update_shared_binding(&shared, next.clone());
@@ -110,19 +108,16 @@ impl HotkeyMonitor {
     /// the OS-level hook installed so the caller can surface an actual adapter
     /// status instead of silently dropping events.
     ///
-    /// `cancel_tx`：Esc 按下即发一个 `()`。独立于 `tx`，见模块注释——不能与
-    /// Pressed/Released 挤同一条串行 bridge，否则 Processing 期间取消排不上队。
     /// `combo_tx`：触发键按住期间叠加了普通键就发一个带时间戳的 press edge。独立于 `tx`，见模块
     /// 注释——不能与 Pressed/Released 挤同一条串行 bridge，否则撤销要等
     /// `begin_session` 开完麦才排得上队，胶囊晚几百毫秒才消失。
     pub fn start(
         binding: HotkeyBinding,
         tx: Sender<HotkeyEvent>,
-        cancel_tx: Sender<()>,
         combo_tx: Sender<HotkeyCombinedEdge>,
     ) -> Result<Self, HotkeyInstallError> {
         Ok(Self {
-            adapter: platform::start_adapter(binding, tx, cancel_tx, combo_tx)?,
+            adapter: platform::start_adapter(binding, tx, combo_tx)?,
         })
     }
     pub fn update_binding(&self, binding: HotkeyBinding) {
@@ -158,11 +153,6 @@ fn send_or_log(tx: &Sender<HotkeyEvent>, evt: HotkeyEvent) {
         log::warn!("[hotkey] 事件发送失败: {e}");
     }
 }
-fn send_cancel_or_log(tx: &Sender<()>) {
-    if let Err(e) = tx.send(()) {
-        log::warn!("[hotkey] 取消事件发送失败: {e}");
-    }
-}
 fn send_combo_abort_or_log(tx: &Sender<HotkeyCombinedEdge>, press_id: u64) {
     if let Err(e) = tx.send(HotkeyCombinedEdge {
         at: Instant::now(),
@@ -175,19 +165,6 @@ static NEXT_PRESS_ID: AtomicU64 = AtomicU64::new(1);
 pub(crate) fn next_press_id() -> u64 {
     NEXT_PRESS_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
 }
-/// 会话激活期间（胶囊显示录音/转写/润色中）Esc 由 OpenLess 独占：tap/hook 吞掉
-/// keydown 不透传宿主应用。否则一次 Esc 双重生效——既取消 OpenLess 会话，又触发
-/// 宿主应用自己的 Esc 语义（如取消 Claude 正在生成的回复）。对照输入法的行为：
-/// 组合窗激活时 Esc 只取消候选词、宿主应用收不到。keyup 不吞：宿主应用几乎都在
-/// keydown 上响应 Esc，孤儿 keyup 无害，且窗口期内会话结束时吞 up 不吞 down 反而
-/// 会造成不成对。由 coordinator 的 emit_capsule 在胶囊状态变化时更新。
-static ESC_EXCLUSIVE: AtomicBool = AtomicBool::new(false);
-pub fn set_esc_exclusive(active: bool) {
-    ESC_EXCLUSIVE.store(active, std::sync::atomic::Ordering::SeqCst);
-}
-fn esc_exclusive() -> bool {
-    ESC_EXCLUSIVE.load(std::sync::atomic::Ordering::SeqCst)
-}
 type StartupTx<T> = mpsc::Sender<Result<T, HotkeyInstallError>>;
 struct ListenerThread<T> {
     shared: Arc<Shared>,
@@ -196,7 +173,6 @@ struct ListenerThread<T> {
 fn start_listener_thread<T, F>(
     binding: HotkeyBinding,
     tx: Sender<HotkeyEvent>,
-    cancel_tx: Sender<()>,
     combo_tx: Sender<HotkeyCombinedEdge>,
     thread_name: &str,
     startup_timeout_message: &'static str,
@@ -207,7 +183,6 @@ where
     F: FnOnce(
             Arc<Shared>,
             Sender<HotkeyEvent>,
-            Sender<()>,
             Sender<HotkeyCombinedEdge>,
             StartupTx<T>,
         ) + Send
@@ -225,7 +200,7 @@ where
     let (status_tx, status_rx) = mpsc::channel::<Result<T, HotkeyInstallError>>();
     std::thread::Builder::new()
         .name(thread_name.into())
-        .spawn(move || run_listen_loop(thread_shared, tx, cancel_tx, combo_tx, status_tx))
+        .spawn(move || run_listen_loop(thread_shared, tx, combo_tx, status_tx))
         .map_err(|e| install_error("spawn_failed", format!("hotkey 线程启动失败: {e}")))?;
     match status_rx.recv_timeout(Duration::from_secs(3)) {
         Ok(Ok(startup)) => Ok(ListenerThread { shared, startup }),
@@ -265,9 +240,9 @@ fn reset_shared_held_state(shared: &Shared) {
 }
 mod platform {
     use super::{
-        esc_exclusive, install_error, reset_shared_held_state, send_cancel_or_log,
-        send_combo_abort_or_log, send_or_log, start_listener_thread, update_shared_binding,
-        HotkeyAdapter, HotkeyCombinedEdge, HotkeyEvent, Shared, StartupTx,
+        install_error, reset_shared_held_state, send_combo_abort_or_log, send_or_log,
+        start_listener_thread, update_shared_binding, HotkeyAdapter, HotkeyCombinedEdge,
+        HotkeyEvent, Shared, StartupTx,
     };
     use crate::types::{HotkeyAdapterKind, HotkeyBinding, HotkeyInstallError, HotkeyTrigger};
     use std::ffi::c_void;
@@ -277,13 +252,11 @@ mod platform {
     pub fn start_adapter(
         binding: HotkeyBinding,
         tx: Sender<HotkeyEvent>,
-        cancel_tx: Sender<()>,
         combo_tx: Sender<HotkeyCombinedEdge>,
     ) -> Result<Box<dyn HotkeyAdapter>, HotkeyInstallError> {
         let listener = start_listener_thread(
             binding,
             tx,
-            cancel_tx,
             combo_tx,
             "openless-hotkey-mac-event-tap",
             "hotkey hook 启动超时",
@@ -371,7 +344,6 @@ mod platform {
     const FLAG_MASK_ALTERNATE: CgEventFlags = 0x0008_0000;
     const FLAG_MASK_COMMAND: CgEventFlags = 0x0010_0000;
     const FLAG_MASK_SECONDARY_FN: CgEventFlags = 0x0080_0000;
-    const ESC_KEYCODE: i64 = 53;
     type CgEventTapCallBack = extern "C" fn(
         proxy: *mut c_void,
         event_type: CgEventType,
@@ -408,8 +380,6 @@ mod platform {
     struct CallbackContext {
         shared: Arc<Shared>,
         tx: Sender<HotkeyEvent>,
-        /// Esc 专用通道，见模块注释——不与 tx 挤同一条串行 bridge。
-        cancel_tx: Sender<()>,
         /// 组合键撤销专用通道，见模块注释——不与 tx 挤同一条串行 bridge。
         combo_tx: Sender<HotkeyCombinedEdge>,
         /// 与 MacHotkeyAdapter 共享的 (tap, runloop) refs。tap re-enable on
@@ -421,7 +391,6 @@ mod platform {
     fn run_listen_loop(
         shared: Arc<Shared>,
         tx: Sender<HotkeyEvent>,
-        cancel_tx: Sender<()>,
         combo_tx: Sender<HotkeyCombinedEdge>,
         status_tx: StartupTx<Arc<MacShutdownHandles>>,
     ) {
@@ -433,7 +402,6 @@ mod platform {
         let context = Box::into_raw(Box::new(CallbackContext {
             shared,
             tx,
-            cancel_tx,
             combo_tx,
             handles: Arc::clone(&handles),
         }));
@@ -488,12 +456,9 @@ mod platform {
             }
             FLAGS_CHANGED => handle_flags_changed(ctx, event),
             KEY_DOWN => {
-                handle_key_down(ctx, event);
+                note_companion_key_down(ctx);
                 let keycode = unsafe { CGEventGetIntegerValueField(event, KEYBOARD_EVENT_KEYCODE) };
                 crate::side_aware_combo::platform::dispatch_keycode(keycode, false, 0, true);
-                if keycode == ESC_KEYCODE && esc_exclusive() {
-                    return std::ptr::null_mut();
-                }
             }
             KEY_UP => {
                 let keycode = unsafe { CGEventGetIntegerValueField(event, KEYBOARD_EVENT_KEYCODE) };
@@ -555,15 +520,6 @@ mod platform {
                 },
             );
         }
-    }
-    fn handle_key_down(ctx: &CallbackContext, event: CgEventRef) {
-        let keycode = unsafe { CGEventGetIntegerValueField(event, KEYBOARD_EVENT_KEYCODE) };
-        if keycode == ESC_KEYCODE {
-            note_companion_key_down(ctx);
-            send_cancel_or_log(&ctx.cancel_tx);
-            return;
-        }
-        note_companion_key_down(ctx);
     }
     /// 触发键按住期间按下任意普通键 = 用户在打组合键（Option+任意字母/数字键、Option+Tab…），
     /// 不是想说话 —— 往组合键撤销通道发一次让上层撤销这次按下。
@@ -633,7 +589,6 @@ mod platform {
             Arc::new(Shared {
                 binding: RwLock::new(HotkeyBinding {
                     trigger,
-                    mode: crate::types::HotkeyMode::Toggle,
                     keys: None,
                 }),
                 trigger_held: AtomicBool::new(false),
@@ -651,13 +606,11 @@ mod platform {
             mpsc::Receiver<HotkeyCombinedEdge>,
         ) {
             let (tx, rx) = mpsc::channel();
-            let (cancel_tx, _cancel_rx) = mpsc::channel();
             let (combo_tx, combo_rx) = mpsc::channel();
             (
                 CallbackContext {
                     shared,
                     tx,
-                    cancel_tx,
                     combo_tx,
                     handles: Arc::new(MacShutdownHandles {
                         tap: std::sync::Mutex::new(None),

@@ -6,30 +6,24 @@ import { fileURLToPath } from 'node:url';
 const appRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const read = relativePath => readFileSync(join(appRoot, relativePath), 'utf8');
 
+// 布局偏好（易读布局 / 保守排版）已删除，换行只跟随窄窗口断点。本文件保留其中
+// 仍然有效的回归守卫：CSS 选择器约束、行组件的堆叠行为、历史页无风格系统。
 const css = read('src/styles/global.css');
-const stackedLayout = read('src/lib/stackedLayout.ts');
 const shared = read('src/pages/settings/shared.tsx');
 const pageAtoms = read('src/pages/_atoms.tsx');
 const row = read('src/components/ui/Row.tsx');
 const permissions = read('src/pages/settings/PermissionsSection.tsx');
-const about = read('src/pages/settings/AboutSection.tsx');
 const shell = read('src/components/FloatingShell.tsx');
 assert.doesNotMatch(shell, /id:\s*'style'/);
 
 assert.doesNotMatch(css, /\.ol-flex-row\s*>\s*\*/);
 assert.doesNotMatch(css, /\[class\*=["']ol-grid["']\]/);
-assert.match(css, /\.ol-flex-row\.ol-flex-split/);
-assert.match(css, /\.ol-conservative-stack/);
 
-assert.match(stackedLayout, /stackedRowLayout\?: boolean/);
-assert.doesNotMatch(stackedLayout, /narrow\s*\|\|/);
-assert.match(pageAtoms, /preferenceStack\s*\?/);
 assert.match(row, /stackLayout\s*\?\s*'minmax\(0, 1fr\)'/);
 
 assert.match(permissions, /permissionActionsStyle/);
 assert.match(permissions, /justifyContent:\s*stackLayout\s*\?\s*'flex-start'\s*:\s*'flex-end'/);
 
-assert.match(about, /ol-inline-composite/);
 const history = read('src/pages/History.tsx');
 const overview = read('src/pages/Overview.tsx');
 for (const source of [history, overview]) {

@@ -57,12 +57,6 @@ export const ja = {
         "docs": "ヘルプセンター ↗"
       }
     },
-    "hotkeyModePrompt": {
-      "title": "録音方式を確認",
-      "body": "デフォルトの方式はトグル式に変わりました。以前にトリガー方式を変更した場合は、録音設定で確認してください。",
-      "later": "後で通知する",
-      "openSettings": "録音設定を開く"
-    },
     "screenOcrBanner": {
       "title": "画面テキスト認識が許可されていないため、ページの背景を読み取れません",
       "action": "画面収録を許可",
@@ -309,17 +303,10 @@ export const ja = {
       "hotkeyLabel": "録音ショートカット",
       "hotkeyDescAcc": "押すと音声キャプチャを開始（グローバル）。アクセシビリティ権限が必要です。",
       "hotkeyDescNoAcc": "押すと音声キャプチャを開始（グローバル）。追加の権限は不要。",
-      "modeLabel": "録音方式",
-      "modeDesc": "トグル式 = 1 回押して開始、もう 1 回押して終了；押し続けて話す = 押している間だけ録音。",
-      "modeToggle": "トグル式",
-      "modeHold": "押し続けて話す",
-      "modeAuto": "自動",
       "silenceAutoStopLabel": "無音で自動停止",
-      "silenceAutoStopDesc": "トグルモードのみ有効。音声を検出した後、無音が選択した時間続いたら録音を自動停止して送信します。一度も話さない場合は10秒後にキャンセル。既定ではオフで、2回目のキー押下による停止と Esc によるキャンセルは引き続き有効です。",
+      "silenceAutoStopDesc": "音声を検出した後、無音が選択した時間続いたら録音を自動停止して送信します。一度も話さない場合は10秒後にキャンセル。既定ではオフです。",
       "silenceAutoStopSecondsLabel": "無音の長さ",
       "silenceAutoStopSecondsValue": "{{value}} 秒",
-      "migrationNoticeTitle": "デフォルトがトグル式に変更されました",
-      "migrationNoticeDesc": "以前にトリガー方式を変更していた場合は、ここで再度確認してください。今回のアップデートではショートカット方式のデフォルト値と読み込みロジックが変更されています。「押し続けて話す」が好みであれば再度切り替えてください。",
       "microphoneLabel": "優先マイク",
       "microphoneDesc": "優先して使用する入力デバイスを選択します。一時的に利用できない場合はシステムのデフォルトマイクを使い、再接続後に自動で優先デバイスへ戻します。",
       "microphoneDefault": "システムのデフォルトマイク",
@@ -340,7 +327,6 @@ export const ja = {
       "audioCueLabel": "録音開始音",
       "audioCueDesc": "ホットキーで録音を開始するとき、合成した短い通知音を再生します。カプセルが非表示でも鳴ります。",
       "audioCuePreview": "試聴",
-      "insertGroupTitle": "挿入とクリップボード",
       "comboRecordLabel": "ショートカットを記録",
       "comboRecordDesc": "クリック後、希望するキーの組み合わせ（例：⌘⇧D）を押してください。トグル / 押し続けの両方に対応。",
       "comboRecordBtn": "ショートカットを記録",
@@ -353,12 +339,6 @@ export const ja = {
       "comboClear": "クリア",
       "comboConflict": "このショートカットの組み合わせは使用できません",
       "allowNonTsfFallbackLabel": "非 TSF フォールバックを許可",
-      "macosNewlineModeLabel": "改行の送り方",
-      "macosNewlineModeDesc": "自動では既知のターミナルアプリに Line Feed（U+000A / Ctrl+J）、それ以外に Shift+Return を送ります。通常の Return は送信になります。",
-      "macosNewlineModeAuto": "自動（ターミナルでは Line Feed）",
-      "macosNewlineModeShiftReturn": "Shift+Return（チャットで改行）",
-      "macosNewlineModeLineFeed": "Line Feed（ターミナル CLI / Ctrl+J）",
-      "macosNewlineModeReturn": "Return（複数メッセージに分割）",
       "historyGroupTitle": "履歴とコンテキスト",
       "historyRetentionLabel": "履歴保持期間（日）",
       "historyRetentionDesc": "保持日数を超えた履歴は新規書き込み時に削除されます。0 = 時間で削除しない。",
@@ -380,11 +360,7 @@ export const ja = {
       "startupAtBootError": "自動起動の切り替えに失敗：{{message}}"
     },
     "shortcuts": {
-      "title": "ショートカット設定",
-      "startStop": "録音開始 / 停止",
-      "cancel": "本回の録音をキャンセル",
       "confirm": "カプセル入力を確定",
-      "openApp": "OpenLess を開く",
       "disable": "無効化"
     },
     "permissions": {
@@ -412,10 +388,6 @@ export const ja = {
       "hotkeyStarting": "インストール中…",
       "hotkeyFailed": "監視失敗",
     },
-    "advanced": {
-      "streamingInsertLabel": "ストリーミング入力",
-      "streamingInsertSaveClipboardLabel": "クリップボードに保存"
-    },
     "language": {
       "title": "表示言語",
       "label": "言語",
@@ -426,17 +398,10 @@ export const ja = {
       "ja": "日本語（ベータ）",
       "ko": "韓国語（ベータ）"
     },
-    "layout": {
-      "title": "レイアウト"
-    },
     "theme": {
       "title": "外観",
       "label": "テーマ",
       "activityHeatmapLabel": "概要ページに年間アクティビティを表示",
-      "stackedRowLayoutLabel": "読みやすいレイアウト（はみ出し防止）",
-      "stackedRowLayoutDesc": "小さい画面や大きな文字サイズでは、1行に収まらないボタンや設定が次の行に折り返され、横方向のはみ出しや文字の潰れを防ぎます。",
-      "conservativeLayoutLabel": "保守レイアウト",
-      "conservativeLayoutDesc": "ホーム、上部バー、下部バー以外の設定・機能ページを単列・全幅にし、横方向のはみ出しを最大限防ぎます。",
       "system": "システムに従う",
       "light": "ライト",
       "dark": "ダーク"
@@ -447,13 +412,9 @@ export const ja = {
       "general": "一般",
       "privacy": "プライバシーと権限",
       "advanced": "詳細設定",
-      "about": "このアプリについて"
     },
     "about": {
       "localFirst": "すべてローカルで処理",
-      "tagline": "自然に話し、きれいに書く",
-      "qq": "コミュニティ QQ グループ",
-      "copyQq": "グループ番号をコピー",
       "exportErrorLog": "エラーログをエクスポート",
       "exportErrorLogBtn": "エクスポート",
       "exporting": "エクスポート中…",
@@ -461,31 +422,5 @@ export const ja = {
       "exportFailed": "エクスポート失敗",
       "privacyDesc": "音声認識、整文、履歴を含むすべての処理はこの Mac 上だけで完結し、データはアップロードされません。"
     }
-  },
-  "hotkey": {
-    "triggers": {
-      "rightOption": "右 Option",
-      "leftOption": "左 Option",
-      "rightControl": "右 Control",
-      "leftControl": "左 Control",
-      "rightCommand": "右 Command",
-      "leftCommand": "左 Command",
-      "leftShift": "左 Shift",
-      "rightShift": "右 Shift",
-      "fn": "Fn",
-      "rightAlt": "右 Option",
-      "mediaPlayPause": "再生 / 一時停止キー",
-      "custom": "カスタム組み合わせ…"
-    },
-    "fallback": "グローバルショートカット",
-    "unset": "未設定",
-    "modeHoldSuffix": "（押し続けて話す）",
-    "modeToggleSuffix": "（開始 / 停止）",
-    "modeDoubleClickSuffix": "（ダブルクリック）",
-    "modeAutoSuffix": "（自動判別）",
-    "usageHold": "{{trigger}} を押し続けて話し、離して終了。",
-    "usageToggle": "{{trigger}} で録音開始、もう 1 回押して終了。",
-    "usageDoubleClick": "{{trigger}} をダブルクリックして録音を開始し、もう一度ダブルクリックして終了します。",
-    "usageAuto": "{{trigger}} を短く押すと開始 / 停止、押し続けると話し終えて離すと停止。"
   }
 } as const;

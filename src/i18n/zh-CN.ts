@@ -57,12 +57,6 @@ export const zhCN = {
         "docs": "帮助中心 ↗"
       }
     },
-    "hotkeyModePrompt": {
-      "title": "检查录音方式",
-      "body": "默认已改为切换式。如果之前改过触发方式，请到录音设置确认一次。",
-      "later": "稍后提醒",
-      "openSettings": "去录音设置"
-    },
     "screenOcrBanner": {
       "title": "屏幕文字识别尚未授权，当前无法读取页面背景",
       "action": "授权屏幕录制",
@@ -309,17 +303,10 @@ export const zhCN = {
       "hotkeyLabel": "录音快捷键",
       "hotkeyDescAcc": "按下开始捕获语音，全局生效（需辅助功能权限）。",
       "hotkeyDescNoAcc": "按下开始捕获语音，全局生效。",
-      "modeLabel": "录音方式",
-      "modeDesc": "切换式按一次开始、再按一次结束；按住说话按下保持、松开结束。",
-      "modeToggle": "切换式",
-      "modeHold": "按住说话",
-      "modeAuto": "自动",
       "silenceAutoStopLabel": "静音后自动停止",
-      "silenceAutoStopDesc": "仅切换模式生效。检测到语音后，连续静音达到所选时长即自动结束并提交；一直没说话则 10 秒后取消。默认关闭；第二次按键停止和 Esc 取消仍然有效。",
+      "silenceAutoStopDesc": "检测到语音后，连续静音达到所选时长即自动结束并提交；一直没说话则 10 秒后取消。默认关闭。",
       "silenceAutoStopSecondsLabel": "静音时长",
       "silenceAutoStopSecondsValue": "{{value}} 秒",
-      "migrationNoticeTitle": "默认已改为切换式说话",
-      "migrationNoticeDesc": "本次更新调整了默认值，如果习惯按住说话，请在此处切回。",
       "microphoneLabel": "首选麦克风",
       "microphoneDesc": "选择优先输入设备。设备断开时自动切到系统默认。",
       "microphoneDefault": "系统默认麦克风",
@@ -340,7 +327,6 @@ export const zhCN = {
       "audioCueLabel": "录音提示音",
       "audioCueDesc": "按下热键开始录音时播放一段合成提示音，提醒已开始录音。胶囊隐藏时也会响。",
       "audioCuePreview": "试听",
-      "insertGroupTitle": "插入与剪贴板",
       "comboRecordLabel": "录制快捷键",
       "comboRecordDesc": "点击后按下想要的快捷键组合（如 ⌘⇧D）。",
       "comboRecordBtn": "录制快捷键",
@@ -353,12 +339,6 @@ export const zhCN = {
       "comboClear": "清除",
       "comboConflict": "该快捷键组合不可用",
       "allowNonTsfFallbackLabel": "允许非 TSF 兜底",
-      "macosNewlineModeLabel": "换行怎么落",
-      "macosNewlineModeDesc": "自动会在已知终端应用中使用 Line Feed（U+000A / Ctrl+J），其他应用使用 Shift+Return；Return 会直接发送。",
-      "macosNewlineModeAuto": "自动（终端使用 Line Feed）",
-      "macosNewlineModeShiftReturn": "Shift+Return（聊天框换行）",
-      "macosNewlineModeLineFeed": "Line Feed（终端 CLI / Ctrl+J）",
-      "macosNewlineModeReturn": "Return（拆成多条消息）",
       "historyGroupTitle": "历史与上下文",
       "historyRetentionLabel": "历史保留天数",
       "historyRetentionDesc": "超过保留天数的历史在写入新条目时被清理；0 = 不按时间清理。",
@@ -380,11 +360,7 @@ export const zhCN = {
       "startupAtBootError": "开机自启切换失败：{{message}}"
     },
     "shortcuts": {
-      "title": "快捷键设置",
-      "startStop": "开始 / 停止录音",
-      "cancel": "取消本次录音",
       "confirm": "胶囊确认插入",
-      "openApp": "打开 OpenLess",
       "disable": "停用"
     },
     "permissions": {
@@ -412,10 +388,6 @@ export const zhCN = {
       "hotkeyStarting": "安装中…",
       "hotkeyFailed": "监听失败",
     },
-    "advanced": {
-      "streamingInsertLabel": "流式输入",
-      "streamingInsertSaveClipboardLabel": "同步到剪贴板"
-    },
     "language": {
       "title": "界面语言",
       "label": "语言",
@@ -426,17 +398,10 @@ export const zhCN = {
       "ja": "日本語 (Beta)",
       "ko": "한국어 (Beta)"
     },
-    "layout": {
-      "title": "布局"
-    },
     "theme": {
       "title": "外观",
       "label": "主题",
       "activityHeatmapLabel": "概览页显示年度活动热力图",
-      "stackedRowLayoutLabel": "易读布局（防溢出换行）",
-      "stackedRowLayoutDesc": "小屏或大字时，同一行放不下的按钮和选项会自动换到下一行，避免横向挤出屏幕或文字被压扁。",
-      "conservativeLayoutLabel": "保守排版",
-      "conservativeLayoutDesc": "除首页、顶栏与底栏外，设置与功能页改为单列满宽，最大程度避免横向溢出。",
       "system": "跟随系统",
       "light": "浅色",
       "dark": "深色"
@@ -447,13 +412,9 @@ export const zhCN = {
       "general": "通用",
       "privacy": "隐私与权限",
       "advanced": "高级",
-      "about": "关于"
     },
     "about": {
       "localFirst": "完全本地处理",
-      "tagline": "自然说话，完美书写",
-      "qq": "社区 QQ 群",
-      "copyQq": "复制群号",
       "exportErrorLog": "导出错误日志",
       "exportErrorLogBtn": "导出",
       "exporting": "导出中…",
@@ -461,31 +422,5 @@ export const zhCN = {
       "exportFailed": "导出失败",
       "privacyDesc": "识别、润色和历史记录均完全在此 Mac 本机处理，不会上传数据。",
     }
-  },
-  "hotkey": {
-    "triggers": {
-      "rightOption": "右 Option",
-      "leftOption": "左 Option",
-      "rightControl": "右 Control",
-      "leftControl": "左 Control",
-      "rightCommand": "右 Command",
-      "leftCommand": "左 Command",
-      "leftShift": "左 Shift",
-      "rightShift": "右 Shift",
-      "fn": "Fn",
-      "rightAlt": "右 Option",
-      "mediaPlayPause": "播放 / 暂停键",
-      "custom": "自定义组合键…"
-    },
-    "fallback": "全局快捷键",
-    "unset": "未设置",
-    "modeHoldSuffix": "（按住说话）",
-    "modeToggleSuffix": "（开始 / 停止）",
-    "modeDoubleClickSuffix": "（双击）",
-    "modeAutoSuffix": "（自动识别）",
-    "usageHold": "按住 {{trigger}} 说话，松开结束。",
-    "usageToggle": "按 {{trigger}} 开始录音，再按一次结束。",
-    "usageDoubleClick": "双击 {{trigger}} 开始录音，再双击一次结束。",
-    "usageAuto": "短按 {{trigger}} 切换开始 / 停止，按住则说完松开即停。"
   }
 } as const;

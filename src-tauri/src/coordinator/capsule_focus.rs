@@ -17,15 +17,6 @@ pub(crate) fn capture_frontmost_app() -> Option<String> {
         (None, None) => None,
     }
 }
-/// Esc 独占判定：胶囊显示「进行中」（录音/转写/润色）且确为 dictation 会话（phase 非
-/// Idle）时为 true——tap/hook 吞掉 Esc 不透传宿主应用。phase 条件专门排除 QA：QA 也走
-/// 胶囊，但它的 Esc 由聚焦浮窗处理（#161），全局吞键反而会把它挡掉。纯函数便于表格测试。
-fn esc_exclusive_for_capsule(state: CapsuleState, session_active: bool) -> bool {
-    matches!(
-        state,
-        CapsuleState::Recording | CapsuleState::Transcribing | CapsuleState::Polishing
-    ) && session_active
-}
 fn defer_capsule_payload_if_fallback_active(inner: &Arc<Inner>, payload: &CapsulePayload) -> bool {
     inner.host.defer_capsule_if_fallback_active(payload)
 }
@@ -97,10 +88,6 @@ fn emit_capsule_payload_locked(inner: &Arc<Inner>, payload: CapsulePayload) -> u
         .fetch_add(1, Ordering::SeqCst)
         .wrapping_add(1);
     let prev_state = inner.last_capsule_state.lock().replace(state);
-    let session_active =
-        inner.backend.snapshot().dictation.phase != openless_core::DictationPhase::Idle;
-    let esc_exclusive = esc_exclusive_for_capsule(state, session_active);
-    crate::hotkey::set_esc_exclusive(esc_exclusive);
     defer_capsule_payload_if_fallback_active(inner, &payload);
     let Some(capsule) = inner.host.capsule_window() else {
         return event_epoch;

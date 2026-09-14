@@ -1,7 +1,7 @@
 // Row — two-column row used in the Settings modal sub-sections.
 
 import type { ReactNode } from 'react';
-import { useLayoutStack, useConservativeLayout } from '../../lib/useResponsiveLayout';
+import { useNarrowLayout } from '../../lib/useResponsiveLayout';
 
 interface RowProps {
   label: string;
@@ -10,9 +10,7 @@ interface RowProps {
 }
 
 export function Row({ label, desc, children }: RowProps) {
-  const baseLayoutStack = useLayoutStack();
-  const conservative = useConservativeLayout();
-  const stackLayout = baseLayoutStack || conservative;
+  const stackLayout = useNarrowLayout();
   return (
     <div style={{
       display: 'grid',

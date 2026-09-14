@@ -20,8 +20,6 @@ import type {
     UserPreferences,
 } from "../lib/types"
 import { applyThemeFromPreference } from "../lib/themeMode"
-import { applyStackedLayoutFromPrefs } from "../lib/stackedLayout"
-import { applyConservativeLayout } from "../lib/conservativeLayout"
 import { emitSaved } from "../lib/savedEvent"
 
 interface HotkeySettingsContextValue {
@@ -66,8 +64,6 @@ export function HotkeySettingsProvider({ children }: { children: ReactNode }) {
                 persistedPrefsRef.current = prefsResult.value
                 setPrefs(prefsResult.value)
                 applyThemeFromPreference(prefsResult.value.themeMode ?? "system")
-                applyStackedLayoutFromPrefs(prefsResult.value.stackedRowLayout)
-                applyConservativeLayout(prefsResult.value.conservativeLayout === true)
             } else {
                 console.error(
                     "[hotkey-settings] failed to load preferences",
@@ -129,8 +125,6 @@ export function HotkeySettingsProvider({ children }: { children: ReactNode }) {
                         persistedPrefsRef.current = nextPrefs
                         setPrefs(nextPrefs)
                         applyThemeFromPreference(nextPrefs.themeMode ?? "system")
-                        applyStackedLayoutFromPrefs(nextPrefs.stackedRowLayout)
-                        applyConservativeLayout(nextPrefs.conservativeLayout === true)
                     },
                 )
                 if (cancelled) {
@@ -167,8 +161,6 @@ export function HotkeySettingsProvider({ children }: { children: ReactNode }) {
             if (resolved === current) return
             setPrefs(resolved)
             latestPrefsRef.current = resolved
-            applyStackedLayoutFromPrefs(resolved.stackedRowLayout)
-            applyConservativeLayout(resolved.conservativeLayout === true)
             try {
                 await queueSetSettings(resolved)
                 persistedPrefsRef.current = resolved

@@ -5,7 +5,7 @@ use crate::types::ShortcutBinding;
 use global_hotkey::hotkey::{Code, HotKey, Modifiers};
 pub use openless_core::{
     binding_requires_side_aware_hook, is_side_specific_modifier_tag, legacy_modifier_trigger,
-    normalize_side_modifier_tag, reject_side_specific_non_dictation, ShortcutBindingError,
+    normalize_side_modifier_tag, ShortcutBindingError,
 };
 #[cfg(test)]
 use openless_core::{bindings_overlap, SIDE_SPECIFIC_NON_DICTATION_MSG};
@@ -263,9 +263,9 @@ mod tests {
         let binding = combo("D", vec!["cmd-left"]);
         assert!(binding_requires_side_aware_hook(&binding));
         assert_eq!(
-            reject_side_specific_non_dictation(&binding).unwrap_err(),
+            openless_core::reject_side_specific_non_dictation(&binding).unwrap_err(),
             SIDE_SPECIFIC_NON_DICTATION_MSG,
         );
-        assert!(reject_side_specific_non_dictation(&combo("D", vec!["cmd"])).is_ok());
+        assert!(openless_core::reject_side_specific_non_dictation(&combo("D", vec!["cmd"])).is_ok());
     }
 }

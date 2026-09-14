@@ -8,7 +8,7 @@ const discovered = discoverTestFiles();
 for (const expected of [
   'scripts/check-hotkey-injection.mjs',
   'scripts/macos-capsule-spaces-contract.test.mjs',
-  'src/lib/windowHotkeyFallback.test.ts',
+  'src/lib/unicode.test.ts',
 ]) {
   assert(discovered.includes(expected), `aggregate discovery omitted ${expected}`);
 }

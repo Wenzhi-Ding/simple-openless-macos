@@ -1,6 +1,5 @@
 import { mockSettings, mockHotkeyCapability } from './mock-data';
 
-if (mockSettings.useSystemProxy !== false) throw new Error('mock settings must disable system proxy');
 if (mockSettings.autoUpdateCheck !== false) throw new Error('mock settings must disable update checks');
 if (!mockSettings.cursorContextEnabled || !mockSettings.screenOcrContextEnabled) throw new Error('mock settings must enable fixed macOS context features');
 if (mockHotkeyCapability.adapter !== 'macEventTap') throw new Error('mock hotkey must represent macOS');

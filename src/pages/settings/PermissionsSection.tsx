@@ -13,7 +13,7 @@ import {
   requestMicrophonePermission,
 } from '../../lib/ipc';
 import { getPlatformCapabilities } from '../../lib/platform';
-import { useLayoutStack, useConservativeLayout } from '../../lib/useResponsiveLayout';
+import { useNarrowLayout } from '../../lib/useResponsiveLayout';
 import type { HotkeyStatus, PlatformCapabilities } from '../../lib/types';
 import { useHotkeySettings } from '../../state/HotkeySettingsContext';
 import { Btn, Card, Pill } from '../_atoms';
@@ -34,15 +34,13 @@ export function PermissionsSection() {
   const [platformCaps, setPlatformCaps] = useState<PlatformCapabilities | null>(null);
   const isMac = platformCaps?.platform === 'macos';
   const { capability } = useHotkeySettings();
-  const baseLayoutStack = useLayoutStack();
-  const conservative = useConservativeLayout();
-  const stackLayout = baseLayoutStack || conservative;
+  const stackLayout = useNarrowLayout();
   const permissionActionsStyle: CSSProperties = {
     display: 'flex',
-    flexDirection: conservative ? 'column' : 'row',
-    alignItems: conservative ? 'flex-start' : 'center',
+    flexDirection: 'row',
+    alignItems: 'center',
     justifyContent: stackLayout ? 'flex-start' : 'flex-end',
-    width: '100%', flexWrap: conservative ? 'nowrap' : 'wrap', minWidth: 0, gap: 8,
+    width: '100%', flexWrap: 'wrap', minWidth: 0, gap: 8,
   };
 
 

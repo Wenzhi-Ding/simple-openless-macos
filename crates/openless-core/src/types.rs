@@ -170,7 +170,6 @@ pub struct DictationResult {
 #[serde(rename_all = "camelCase")]
 pub enum InsertStatus {
     Inserted,
-    PasteSent,
     CopiedFallback,
     NotRequested,
 }
@@ -211,14 +210,6 @@ impl TranscriptAccumulator {
         self.text = next;
         Ok(())
     }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PolishDelta {
-    pub text: String,
-    pub offset: u64,
-    pub is_final: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

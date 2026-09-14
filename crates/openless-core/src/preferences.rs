@@ -52,27 +52,6 @@ fn read_preferences(path: &Path) -> Result<UserPreferences, BackendError> {
         }
     };
 
-    let streaming_default_migrated = serde_json::from_slice::<serde_json::Value>(&bytes)
-        .ok()
-        .and_then(|value| {
-            value
-                .get("streamingInsertDefaultMigrated")
-                .and_then(|flag| flag.as_bool())
-        })
-        .unwrap_or(false);
-    if !streaming_default_migrated {
-        match serde_json::to_vec_pretty(&preferences)
-            .map_err(|_| persistence_error("encode migrated preferences"))
-            .and_then(|json| atomic_write(path, &json))
-        {
-            Ok(()) => log::info!("[prefs] migrated streamingInsert default marker"),
-            Err(error) => log::warn!(
-                "[prefs] failed to persist streamingInsert migration marker for {}: {error}",
-                path.display()
-            ),
-        }
-    }
-
     Ok(preferences)
 }
 
@@ -166,30 +145,6 @@ mod tests {
         (directory, path)
     }
 
-    #[test]
-    fn legacy_streaming_insert_false_is_migrated_and_marker_is_persisted() {
-        let (directory, path) = temporary_preferences_path();
-        fs::write(
-            &path,
-            r#"{
-                "streamingInsert": false,
-                "streamingInsertSaveClipboard": true
-            }"#,
-        )
-        .expect("write legacy preferences");
-
-        let preferences = read_preferences(&path).expect("read preferences");
-        assert!(preferences.streaming_insert);
-        assert!(preferences.streaming_insert_default_migrated);
-
-        let saved: serde_json::Value =
-            serde_json::from_slice(&fs::read(&path).expect("read saved preferences"))
-                .expect("decode saved preferences");
-        assert_eq!(saved["streamingInsert"], true);
-        assert_eq!(saved["streamingInsertDefaultMigrated"], true);
-
-        let _ = fs::remove_dir_all(directory);
-    }
 
     #[test]
     fn corrupt_preferences_are_backed_up_before_salvage() {

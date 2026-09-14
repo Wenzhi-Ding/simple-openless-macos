@@ -115,14 +115,7 @@ pub(crate) fn persist_settings(
             openless_core::SettingsUpdateOptions::SETTINGS_DOCUMENT,
             &TauriSettingsRuntime::new(coord),
         )
-        .map(|outcome| {
-            if outcome.reconciled_hotkey_count > 0 {
-                log::warn!(
-                    "[settings] 热键冲突已自动化解（调整 {} 项）后保存",
-                    outcome.reconciled_hotkey_count
-                );
-            }
-        })
+        .map(|_| ())
         .map_err(|error| error.to_string())
 }
 
