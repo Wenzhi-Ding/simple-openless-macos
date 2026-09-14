@@ -117,6 +117,71 @@ impl PcmNormalizer {
     }
 }
 
+/// 送识别前的语音门限(原始 RMS 刻度)。与 UI 电平、静音自动停止共用同一语义:
+/// `SPEECH_LEVEL_THRESHOLD` 定义在 UI 电平(RMS × LEVEL_RMS_GAIN)刻度上,
+/// 换算回原始 RMS 即本值,两处判定不会出现"UI 认为在说话、整流认为全静音"的裂缝。
+pub const SPEECH_RMS_LEVEL: f32 = crate::silence_auto_stop::SPEECH_LEVEL_THRESHOLD / LEVEL_RMS_GAIN;
+
+/// 语音判定窗口长度(30 ms @ 16 kHz)。按窗口而不是按单个样本判 RMS,
+/// 避免辅音里正常的低幅度样本把语音段切碎。
+const SPEECH_WINDOW_SAMPLES: usize = 480;
+/// 裁剪余量:语音前保留 200 ms、语音后保留 320 ms,避免削掉辅音起头和拖尾元音。
+const SPEECH_PAD_SAMPLES_BEFORE: usize = DICTATION_SAMPLE_RATE as usize * 200 / 1000;
+const SPEECH_PAD_SAMPLES_AFTER: usize = DICTATION_SAMPLE_RATE as usize * 320 / 1000;
+
+/// [`condition_dictation_pcm`] 的结果。`has_speech` 为 false 时 `pcm` 为空
+/// (调用方按"未检测到语音"处理,不再送识别,无需原始音频)。
+pub struct ConditionedPcm {
+    pub pcm: Vec<u8>,
+    pub has_speech: bool,
+}
+
+/// 裁掉录音首尾静音;整段都低于语音门限时判定为无语音。
+///
+/// 中间的停顿不动,只裁首尾;输入是规范的 16 kHz 单声道 s16le PCM,
+/// 奇数结尾字节按半样本丢弃。这是送识别前的确定性预处理,不改变语音内容。
+pub fn condition_dictation_pcm(pcm_i16_le: &[u8]) -> ConditionedPcm {
+    let samples: Vec<i16> = pcm_i16_le
+        .chunks_exact(2)
+        .map(|pair| i16::from_le_bytes([pair[0], pair[1]]))
+        .collect();
+    let mut first_speech: Option<usize> = None;
+    let mut last_speech_end: usize = 0;
+    for (index, window) in samples.chunks(SPEECH_WINDOW_SAMPLES).enumerate() {
+        let square_sum: f64 = window
+            .iter()
+            .map(|&sample| {
+                let normalized = f64::from(sample) / f64::from(i16::MAX);
+                normalized * normalized
+            })
+            .sum();
+        let rms = (square_sum / window.len() as f64).sqrt() as f32;
+        if rms >= SPEECH_RMS_LEVEL {
+            first_speech.get_or_insert(index * SPEECH_WINDOW_SAMPLES);
+            last_speech_end = (index + 1) * SPEECH_WINDOW_SAMPLES;
+        }
+    }
+    let Some(speech_start) = first_speech else {
+        // 无语音时不拷贝原始音频:唯一调用方只看 has_speech,整段拷贝纯浪费。
+        return ConditionedPcm {
+            pcm: Vec::new(),
+            has_speech: false,
+        };
+    };
+    let trimmed_start = speech_start.saturating_sub(SPEECH_PAD_SAMPLES_BEFORE);
+    let trimmed_end = samples
+        .len()
+        .min(last_speech_end + SPEECH_PAD_SAMPLES_AFTER);
+    let mut pcm = Vec::with_capacity((trimmed_end - trimmed_start) * 2);
+    for sample in &samples[trimmed_start..trimmed_end] {
+        pcm.extend_from_slice(&sample.to_le_bytes());
+    }
+    ConditionedPcm {
+        pcm,
+        has_speech: true,
+    }
+}
+
 fn downmix_to_mono(interleaved: &[f32], channels: usize) -> Vec<f32> {
     if channels == 1 {
         return interleaved.to_vec();
@@ -192,5 +257,56 @@ mod tests {
             encode_dictation_wav(&[1]).unwrap_err().code,
             crate::BackendErrorCode::InvalidArgument
         );
+    }
+
+    #[test]
+    fn speech_threshold_stays_consistent_with_ui_level_scale() {
+        assert_eq!(
+            SPEECH_RMS_LEVEL * LEVEL_RMS_GAIN,
+            crate::silence_auto_stop::SPEECH_LEVEL_THRESHOLD
+        );
+    }
+
+    #[test]
+    fn all_silent_pcm_reports_no_speech_without_copying_input() {
+        let pcm = vec![0u8; 32_000];
+        let conditioned = condition_dictation_pcm(&pcm);
+        assert!(!conditioned.has_speech);
+        assert!(conditioned.pcm.is_empty());
+    }
+
+    #[test]
+    fn conditioning_trims_leading_and_trailing_silence_only() {
+        let silence_1s = vec![0u8; 16_000 * 2];
+        let speech_500ms: Vec<u8> = vec![0x39, 0x19].repeat(8_000); // 恒定幅度约 0.2,窗口 RMS 远超门限
+        let mut pcm = silence_1s.clone();
+        pcm.extend_from_slice(&speech_500ms);
+        pcm.extend_from_slice(&silence_1s);
+
+        let conditioned = condition_dictation_pcm(&pcm);
+        assert!(conditioned.has_speech);
+        // 语音区间按窗口对齐,边界各可能多出不足一个窗口的余量。
+        let trimmed_samples = conditioned.pcm.len() / 2;
+        let speech_and_pads = SPEECH_PAD_SAMPLES_BEFORE + 8_000 + SPEECH_PAD_SAMPLES_AFTER;
+        assert!(trimmed_samples >= speech_and_pads);
+        assert!(trimmed_samples <= speech_and_pads + 2 * SPEECH_WINDOW_SAMPLES);
+    }
+
+    #[test]
+    fn speech_at_clip_edges_keeps_padding_within_bounds() {
+        let speech_300ms: Vec<u8> = vec![0x39, 0x19].repeat(4_800);
+        let conditioned = condition_dictation_pcm(&speech_300ms);
+        assert!(conditioned.has_speech);
+        assert_eq!(conditioned.pcm, speech_300ms);
+    }
+
+    #[test]
+    fn conditioning_ignores_odd_trailing_byte() {
+        let mut pcm = vec![0u8; 2_000];
+        pcm.extend_from_slice(&[0x39, 0x19]);
+        pcm.push(0x00);
+        let conditioned = condition_dictation_pcm(&pcm);
+        assert!(conditioned.has_speech);
+        assert_eq!(conditioned.pcm.len() % 2, 0);
     }
 }

@@ -673,11 +673,21 @@ impl Qwen3MlxAsr {
             });
         }
         let duration_ms = pcm_duration_ms(&pcm);
+        // 送识别前先整流:整段低于语音门限时直接按空转写返回,不拉起 worker
+        // (静音送进模型只会得到幻觉词或空串);有语音则裁掉首尾静音再转写。
+        let conditioned = openless_core::audio::condition_dictation_pcm(&pcm);
+        if !conditioned.has_speech {
+            self.buffer.lock().clear();
+            return Ok(RawTranscript {
+                text: String::new(),
+                duration_ms,
+            });
+        }
         let result = self
             .runtime
             .transcribe_pcm(
                 &self.model_dir,
-                &pcm,
+                &conditioned.pcm,
                 self.language_hint.as_deref(),
                 audio_timeout,
             )
@@ -798,6 +808,23 @@ mod tests {
         let result = provider.transcribe(Duration::from_secs(5)).await.unwrap();
         assert!(result.text.is_empty());
         assert_eq!(result.duration_ms, 0);
+    }
+
+    /// 全静音录音不拉起 worker,直接按空转写返回并清空缓冲;
+    /// 测试环境没有 worker,若误入转写路径必然失败。
+    #[tokio::test]
+    async fn all_silent_buffer_skips_worker_and_returns_empty_transcript() {
+        let provider = Qwen3MlxAsr::new(
+            Arc::new(Qwen3MlxRuntime::new()),
+            SUPPORTED_MODEL_ID.into(),
+            PathBuf::from("unused"),
+            None,
+        );
+        provider.consume_pcm_chunk(&vec![0u8; 32_000]);
+        let result = provider.transcribe(Duration::from_secs(5)).await.unwrap();
+        assert!(result.text.is_empty());
+        assert_eq!(result.duration_ms, 1000);
+        assert!(provider.buffer.lock().is_empty());
     }
 
     #[tokio::test]
