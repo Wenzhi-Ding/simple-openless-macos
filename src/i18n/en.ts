@@ -2,18 +2,12 @@ export const en = {
   "common": {
     "loading": "Loading…",
     "retry": "Retry",
-    "settingsLoadFailed": "Settings load failed",
     "refresh": "Refresh",
     "clear": "Clear",
     "copy": "Copy",
     "delete": "Delete",
-    "later": "Later",
     "cancel": "Cancel",
     "close": "Close",
-    "show": "Show",
-    "hide": "Hide",
-    "saved": "Saved",
-    "saving": "Saving…",
     "copied": "Copied",
     "operationFailed": "Operation failed",
     "add": "Add",
@@ -23,7 +17,6 @@ export const en = {
   },
   "capsule": {
     "thinking": "thinking",
-    "using": "using",
     "cancelled": "Cancelled",
     "error": "Something went wrong",
     "inserted": "Inserted {{count}}"
@@ -35,10 +28,7 @@ export const en = {
     "more": "More"
   },
   "shell": {
-    "shortcutLabel": "Recording shortcut",
-    "shortcutHint": "Start / Stop",
     "betaTag": "BETA",
-    "betaNote": "All data stays on this device.",
     "navHint": {
       "overview": "Status overview: usage stats, provider & permission health",
       "history": "Dictation history: search, replay and copy past transcripts",
@@ -46,22 +36,12 @@ export const en = {
       "settings": "Preferences: shortcuts, providers, privacy and updates"
     },
     "footer": {
-      "account": "Account",
-      "feedback": "Feedback",
       "settings": "Settings",
-      "help": "Help",
       "version": "Version {{version}}",
       "helpPopover": {
-        "tagline": "Local-first voice input layer",
-        "releaseNotes": "Release notes ↗",
-        "docs": "Help center ↗"
       }
     },
     "screenOcrBanner": {
-      "title": "Screen text recognition is not authorized; page background cannot be read",
-      "action": "Authorize Screen Recording",
-      "hint": "If the system asks to restart the app, follow its prompt.",
-      "checkFailed": "Failed to check screen recording permission"
     }
   },
   "onboarding": {
@@ -78,22 +58,9 @@ export const en = {
     "needsAttention": "Check or resolve: {{names}}. Already granted permissions do not need to be granted again."
   },
   "overview": {
-    "kicker": "DASHBOARD",
     "title": "Today's overview",
-    "desc": "Today's dictation stats and system status.",
-    "pressPrefix": "Press",
-    "pressSuffix": "to start",
     "asrKind": "ASR",
     "llmKind": "LLM",
-    "asrName": "Volcengine",
-    "asrSubname": "bigmodel",
-    "llmName": "OpenAI-compatible",
-    "llmConfigured": "Active LLM configured",
-    "llmNotConfigured": "Not configured",
-    "statusConfigured": "Configured",
-    "statusNotConfigured": "Not configured",
-    "statusUnknown": "Unavailable",
-    "credentialsLoadError": "Could not read credential status",
     "modelError": "Error",
     "modelState": {
       "notFound": "Not found",
@@ -143,12 +110,6 @@ export const en = {
       "Sat"
     ],
     "inAppDictation": {
-      "title": "In-app dictation",
-      "start": "Start recording",
-      "stop": "Stop recording",
-      "idle": "Tap to start recording",
-      "recording": "Recording…",
-      "processing": "Processing…"
     }
   },
   "history": {
@@ -156,7 +117,6 @@ export const en = {
     "kicker": "HISTORY",
     "title": "History",
     "desc": "Locally stored transcripts.",
-    "filterAll": "All",
     "summary": "{{total}} total · showing {{shown}}",
     "searchPlaceholder": "Search transcripts… ({{shortcut}})",
     "searchNoMatch": "No entries match “{{query}}”.",
@@ -262,9 +222,6 @@ export const en = {
     }
   },
   "vocabCard": {
-    "title": "Remember this word?",
-    "accept": "Remember",
-    "reject": "Skip"
   },
   "insertFallbackCard": {
     "copy": "Copy",
@@ -301,8 +258,6 @@ export const en = {
       "title": "Recording & input",
       "desc": "Global recording hotkey and trigger mode.",
       "hotkeyLabel": "Recording hotkey",
-      "hotkeyDescAcc": "Press to capture voice globally (requires Accessibility permission).",
-      "hotkeyDescNoAcc": "Press to capture voice globally.",
       "silenceAutoStopLabel": "Auto-stop after silence",
       "silenceAutoStopDesc": "After speech is detected, recording stops and submits automatically once silence lasts the chosen duration. Off by default.",
       "silenceAutoStopSecondsLabel": "Silence duration",
@@ -310,13 +265,7 @@ export const en = {
       "microphoneLabel": "Preferred microphone",
       "microphoneDesc": "Choose the preferred input device; falls back to system default when unavailable.",
       "microphoneDefault": "System default microphone",
-      "microphoneDefaultDesc": "Use the system default input device",
-      "microphoneSystemDefault": "system default",
-      "microphoneUnavailable": "unavailable",
       "microphoneLoadError": "Failed to load microphones: {{message}}",
-      "microphoneDialogTitle": "Microphone",
-      "microphoneDialogDesc": "Choose a microphone that can pick up your voice.",
-      "microphoneMonitorError": "Failed to monitor input level: {{message}}",
       "capsuleLabel": "Recording capsule",
       "capsuleDesc": "Show a translucent capsule at the bottom of the screen while recording.",
       "capsuleStyleLabel": "Capsule style",
@@ -327,36 +276,21 @@ export const en = {
       "audioCueLabel": "Recording start sound",
       "audioCueDesc": "Play a short synthesized chime when you press the hotkey to start recording. Plays even when the capsule is hidden.",
       "audioCuePreview": "Preview",
-      "comboRecordLabel": "Record shortcut",
-      "comboRecordDesc": "Click, then press your desired key combination (e.g. ⌘⇧D). Supports Toggle and Push-to-talk modes.",
       "comboRecordBtn": "Record shortcut",
       "comboResetBtn": "Reset",
       "comboMenuToggle": "More options",
       "comboDisableHint": "Core hotkey cannot be disabled — recording needs a hotkey",
       "comboRecordHint": "Press your shortcut combination…",
-      "comboNeedKey": "Use a key combo (e.g. ⌘⇧J); a lone modifier will not work",
-      "comboRecorded": "Recorded",
-      "comboClear": "Clear",
       "comboConflict": "This shortcut combination is not available",
-      "allowNonTsfFallbackLabel": "Allow non-TSF fallback",
-      "historyGroupTitle": "History & context",
       "historyRetentionLabel": "History retention (days)",
-      "historyRetentionDesc": "Entries older than this are pruned on new writes; 0 = no time-based pruning.",
       "historyMaxEntriesLabel": "Max history entries",
-      "historyMaxEntriesDesc": "Max sessions retained locally. Blank = 200. Range 5–200.",
       "polishContextWindowLabel": "Polish context window (minutes)",
-      "polishContextWindowDesc": "Use the last N minutes of polished transcripts as multi-turn context; 0 = disabled.",
       "recordAudioForDebugLabel": "Keep raw recording (debug)",
-      "recordAudioForDebugDesc": "Save raw microphone audio as wav for diagnosing recognition issues.",
       "audioRecordingMaxEntriesLabel": "Max raw recordings",
       "audioRecordingMaxEntriesDesc": "Max wav files retained locally. Blank = 200.",
       "startupGroupTitle": "Startup",
       "startMinimizedLabel": "Start minimized (no main window)",
-      "startMinimizedDesc": "No main window on any launch path — menu bar / tray only.",
-      "autoUpdateCheckLabel": "Auto-check for updates",
-      "autoUpdateCheckDesc": "Check for updates on launch and every 60 minutes.",
       "startupAtBoot": "Launch at login",
-      "startupAtBootDesc": "Start OpenLess automatically when you sign in.",
       "startupAtBootError": "Failed to toggle launch at login: {{message}}"
     },
     "shortcuts": {
@@ -365,15 +299,9 @@ export const en = {
     },
     "permissions": {
       "title": "Permissions",
-      "descAcc": "OpenLess needs the following system permissions to work. After granting, fully quit and relaunch the app for changes to take effect.",
-      "descNoAcc": "OpenLess needs microphone access and uses the global hotkey listener state to verify the native hook is running.",
       "micLabel": "Microphone",
-      "micDesc": "Used to capture your voice input.",
       "accLabel": "Accessibility",
-      "accDesc": "Used to listen to the global hotkey and write transcripts at the cursor.",
       "hotkeyLabel": "Global hotkey",
-      "hotkeyDescWithAdapter": "Active adapter: {{adapter}}. Used to confirm the hotkey listener is installed.",
-      "hotkeyDescPlain": "Used to confirm the hotkey listener is installed.",
       "checking": "Checking…",
       "checkFailed": "Unable to confirm right now. Please retry.",
       "granted": "Granted",
@@ -382,7 +310,6 @@ export const en = {
       "indeterminate": "Undetermined",
       "micNoDevice": "No microphone detected",
       "openSystem": "Open System Settings",
-      "restart": "Reset and Restart",
       "grant": "Grant",
       "hotkeyInstalled": "Installed",
       "hotkeyStarting": "Installing…",

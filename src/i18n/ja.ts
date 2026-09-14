@@ -2,18 +2,12 @@ export const ja = {
   "common": {
     "loading": "読み込み中…",
     "retry": "再試行",
-    "settingsLoadFailed": "設定の読み込みに失敗しました",
     "refresh": "更新",
     "clear": "クリア",
     "copy": "コピー",
     "delete": "削除",
-    "later": "後で",
     "cancel": "キャンセル",
     "close": "閉じる",
-    "show": "表示",
-    "hide": "非表示",
-    "saved": "保存しました",
-    "saving": "保存中",
     "copied": "コピーしました",
     "operationFailed": "操作に失敗しました",
     "add": "追加",
@@ -23,7 +17,6 @@ export const ja = {
   },
   "capsule": {
     "thinking": "処理中",
-    "using": "使用中",
     "cancelled": "キャンセルしました",
     "error": "エラーが発生しました",
     "inserted": "{{count}} 文字を入力しました"
@@ -35,10 +28,7 @@ export const ja = {
     "more": "その他"
   },
   "shell": {
-    "shortcutLabel": "録音ショートカット",
-    "shortcutHint": "開始 / 停止",
     "betaTag": "ベータ",
-    "betaNote": "すべてのデータはこのデバイス内に保存されます。",
     "navHint": {
       "overview": "ステータス概要：利用状況、プロバイダー、権限の状態",
       "history": "音声入力履歴：過去の文字起こしの検索、再生、コピー",
@@ -46,22 +36,12 @@ export const ja = {
       "settings": "環境設定：ショートカット、プロバイダー、プライバシー、アップデート"
     },
     "footer": {
-      "account": "アカウント",
-      "feedback": "フィードバック",
       "settings": "設定",
-      "help": "ヘルプ",
       "version": "バージョン {{version}}",
       "helpPopover": {
-        "tagline": "ローカル優先の音声入力レイヤー",
-        "releaseNotes": "リリースノート ↗",
-        "docs": "ヘルプセンター ↗"
       }
     },
     "screenOcrBanner": {
-      "title": "画面テキスト認識が許可されていないため、ページの背景を読み取れません",
-      "action": "画面収録を許可",
-      "hint": "システムからアプリの再起動を求められた場合は、案内に従ってください。",
-      "checkFailed": "画面収録の権限確認に失敗しました"
     }
   },
   "onboarding": {
@@ -78,22 +58,9 @@ export const ja = {
     "needsAttention": "確認または対応が必要：{{names}}。許可済みの項目を再度許可する必要はありません。"
   },
   "overview": {
-    "kicker": "ダッシュボード",
     "title": "今日の概要",
-    "desc": "今日の音声入力の統計とシステム状態。",
-    "pressPrefix": "押して",
-    "pressSuffix": "で開始",
     "asrKind": "ASR",
     "llmKind": "LLM",
-    "asrName": "Volcengine",
-    "asrSubname": "bigmodel",
-    "llmName": "OpenAI 互換",
-    "llmConfigured": "アクティブな LLM を設定済み",
-    "llmNotConfigured": "未設定",
-    "statusConfigured": "設定済み",
-    "statusNotConfigured": "未設定",
-    "statusUnknown": "利用不可",
-    "credentialsLoadError": "認証情報の状態を読み取れませんでした",
     "modelError": "エラー",
     "modelState": {
       "notFound": "見つかりません",
@@ -143,12 +110,6 @@ export const ja = {
       "土"
     ],
     "inAppDictation": {
-      "title": "アプリ内音声入力",
-      "start": "録音を開始",
-      "stop": "録音を停止",
-      "idle": "クリックして録音を開始",
-      "recording": "録音中…",
-      "processing": "処理中…"
     }
   },
   "history": {
@@ -156,7 +117,6 @@ export const ja = {
     "kicker": "履歴",
     "title": "履歴",
     "desc": "ローカルに保存された文字起こし。",
-    "filterAll": "すべて",
     "summary": "全 {{total}} 件中 {{shown}} 件を表示",
     "searchPlaceholder": "文字起こしを検索…（{{shortcut}}）",
     "searchNoMatch": "「{{query}}」に一致する項目はありません。",
@@ -262,9 +222,6 @@ export const ja = {
     }
   },
   "vocabCard": {
-    "title": "この単語を記憶しますか？",
-    "accept": "記憶する",
-    "reject": "スキップ"
   },
   "insertFallbackCard": {
     "copy": "コピー",
@@ -301,8 +258,6 @@ export const ja = {
       "title": "録音と入力",
       "desc": "グローバル録音のショートカットとトリガー方式を定義します。",
       "hotkeyLabel": "録音ショートカット",
-      "hotkeyDescAcc": "押すと音声キャプチャを開始（グローバル）。アクセシビリティ権限が必要です。",
-      "hotkeyDescNoAcc": "押すと音声キャプチャを開始（グローバル）。追加の権限は不要。",
       "silenceAutoStopLabel": "無音で自動停止",
       "silenceAutoStopDesc": "音声を検出した後、無音が選択した時間続いたら録音を自動停止して送信します。一度も話さない場合は10秒後にキャンセル。既定ではオフです。",
       "silenceAutoStopSecondsLabel": "無音の長さ",
@@ -310,13 +265,7 @@ export const ja = {
       "microphoneLabel": "優先マイク",
       "microphoneDesc": "優先して使用する入力デバイスを選択します。一時的に利用できない場合はシステムのデフォルトマイクを使い、再接続後に自動で優先デバイスへ戻します。",
       "microphoneDefault": "システムのデフォルトマイク",
-      "microphoneDefaultDesc": "システムのデフォルト入力デバイスを使用",
-      "microphoneSystemDefault": "システムデフォルト",
-      "microphoneUnavailable": "利用不可",
       "microphoneLoadError": "マイクの読み込みに失敗：{{message}}",
-      "microphoneDialogTitle": "マイク",
-      "microphoneDialogDesc": "声を拾えるマイクを選択してください。メーターが動かない場合は別のマイクを試してください。",
-      "microphoneMonitorError": "入力レベルの監視に失敗：{{message}}",
       "capsuleLabel": "録音カプセル",
       "capsuleDesc": "録音 / 転写中、画面下部に半透明のカプセルを表示。",
       "capsuleStyleLabel": "カプセルスタイル",
@@ -327,36 +276,21 @@ export const ja = {
       "audioCueLabel": "録音開始音",
       "audioCueDesc": "ホットキーで録音を開始するとき、合成した短い通知音を再生します。カプセルが非表示でも鳴ります。",
       "audioCuePreview": "試聴",
-      "comboRecordLabel": "ショートカットを記録",
-      "comboRecordDesc": "クリック後、希望するキーの組み合わせ（例：⌘⇧D）を押してください。トグル / 押し続けの両方に対応。",
       "comboRecordBtn": "ショートカットを記録",
       "comboResetBtn": "リセット",
       "comboMenuToggle": "その他の操作",
       "comboDisableHint": "コアショートカットは無効化できません（録音にはショートカットが必須です）",
       "comboRecordHint": "ショートカットの組み合わせを押してください…",
-      "comboNeedKey": "組み合わせキー（例: ⌘⇧J）を設定してください。修飾キー単体は使えません",
-      "comboRecorded": "記録済み",
-      "comboClear": "クリア",
       "comboConflict": "このショートカットの組み合わせは使用できません",
-      "allowNonTsfFallbackLabel": "非 TSF フォールバックを許可",
-      "historyGroupTitle": "履歴とコンテキスト",
       "historyRetentionLabel": "履歴保持期間（日）",
-      "historyRetentionDesc": "保持日数を超えた履歴は新規書き込み時に削除されます。0 = 時間で削除しない。",
       "historyMaxEntriesLabel": "履歴件数の上限",
-      "historyMaxEntriesDesc": "ローカル保持セッション上限。空欄 = 200。範囲 5–200。",
       "polishContextWindowLabel": "会話コンテキスト窓（分）",
-      "polishContextWindowDesc": "直近 N 分間の整文済み転写をマルチターン文脈として渡します。0 = 無効。",
       "recordAudioForDebugLabel": "元の録音を保持（デバッグ）",
-      "recordAudioForDebugDesc": "生のマイク音声を wav で保存し、認識問題の診断に利用。",
       "audioRecordingMaxEntriesLabel": "元音声の保持件数",
       "audioRecordingMaxEntriesDesc": "ローカル保持 wav ファイル上限。空欄 = 200。",
       "startupGroupTitle": "起動",
       "startMinimizedLabel": "起動時にメインウィンドウを表示しない",
-      "startMinimizedDesc": "どの起動経路でもメインウィンドウを開かず、メニューバー / トレイのみで動作。",
-      "autoUpdateCheckLabel": "アップデートを自動チェック",
-      "autoUpdateCheckDesc": "起動時および 60 分ごとに自動チェック。",
       "startupAtBoot": "起動時に自動起動",
-      "startupAtBootDesc": "ログイン時に OpenLess を自動起動。",
       "startupAtBootError": "自動起動の切り替えに失敗：{{message}}"
     },
     "shortcuts": {
@@ -365,15 +299,9 @@ export const ja = {
     },
     "permissions": {
       "title": "権限",
-      "descAcc": "OpenLess を正常に動作させるには、以下のシステム権限が必要です。許可後は通常、アプリを完全に終了してから再起動する必要があります。",
-      "descNoAcc": "OpenLess はマイクへのアクセスが必要です。グローバルショートカットの状態はネイティブフックが正常に動作しているかの確認に使用します。",
       "micLabel": "マイク",
-      "micDesc": "音声入力の取得に使用します。",
       "accLabel": "アクセシビリティ",
-      "accDesc": "グローバルショートカットの監視と認識結果のカーソル位置への入力に使用。",
       "hotkeyLabel": "グローバルショートカット",
-      "hotkeyDescWithAdapter": "現在のアダプター：{{adapter}}。ショートカット監視がインストールされているか確認します。",
-      "hotkeyDescPlain": "ショートカット監視がインストールされているか確認します。",
       "checking": "確認中…",
       "checkFailed": "現在確認できません。再試行してください。",
       "granted": "許可済み",
@@ -382,7 +310,6 @@ export const ja = {
       "indeterminate": "未確定",
       "micNoDevice": "マイクが検出されません",
       "openSystem": "システム設定を開く",
-      "restart": "リセットして再起動",
       "grant": "許可する",
       "hotkeyInstalled": "インストール済み",
       "hotkeyStarting": "インストール中…",

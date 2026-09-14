@@ -2,18 +2,12 @@ export const ko = {
   "common": {
     "loading": "로딩 중…",
     "retry": "다시 시도",
-    "settingsLoadFailed": "설정 로드 실패",
     "refresh": "새로고침",
     "clear": "지우기",
     "copy": "복사",
     "delete": "삭제",
-    "later": "나중에",
     "cancel": "취소",
     "close": "닫기",
-    "show": "표시",
-    "hide": "숨기기",
-    "saved": "저장됨",
-    "saving": "저장 중",
     "copied": "복사됨",
     "operationFailed": "작업 실패",
     "add": "추가",
@@ -23,7 +17,6 @@ export const ko = {
   },
   "capsule": {
     "thinking": "thinking",
-    "using": "using",
     "cancelled": "취소됨",
     "error": "오류 발생",
     "inserted": "{{count}}자 입력됨"
@@ -35,10 +28,7 @@ export const ko = {
     "more": "더보기"
   },
   "shell": {
-    "shortcutLabel": "녹음 단축키",
-    "shortcutHint": "시작 / 정지",
     "betaTag": "BETA",
-    "betaNote": "모든 데이터는 로컬에만 저장됩니다.",
     "navHint": {
       "overview": "상태 개요: 사용량 통계, 제공자 및 권한 상태",
       "history": "받아쓰기 기록: 과거 전사 검색·재생·복사",
@@ -46,22 +36,12 @@ export const ko = {
       "settings": "환경설정: 단축키, 제공자, 개인정보 및 업데이트"
     },
     "footer": {
-      "account": "계정",
-      "feedback": "피드백",
       "settings": "설정",
-      "help": "도움말",
       "version": "버전 {{version}}",
       "helpPopover": {
-        "tagline": "로컬 기반 음성 입력 레이어",
-        "releaseNotes": "릴리스 노트 보기 ↗",
-        "docs": "도움말 센터 ↗"
       }
     },
     "screenOcrBanner": {
-      "title": "화면 문자 인식이 허가되지 않아 페이지 배경을 읽을 수 없습니다",
-      "action": "화면 기록 허가",
-      "hint": "시스템이 앱 재시작을 요구하면 안내에 따라 주세요.",
-      "checkFailed": "화면 기록 권한 확인에 실패했습니다"
     }
   },
   "onboarding": {
@@ -78,19 +58,9 @@ export const ko = {
     "needsAttention": "확인 또는 처리가 필요합니다: {{names}}. 이미 허용된 항목은 다시 허용할 필요가 없습니다."
   },
   "overview": {
-    "kicker": "DASHBOARD",
     "title": "오늘 개요",
-    "desc": "오늘의 받아쓰기 통계와 시스템 상태.",
-    "pressPrefix": "누르기",
-    "pressSuffix": "녹음 시작",
     "asrKind": "ASR 음성",
     "llmKind": "LLM 모델",
-    "asrName": "Volcengine",
-    "asrSubname": "bigmodel",
-    "llmName": "OpenAI 호환",
-    "llmConfigured": "활성 LLM 구성됨",
-    "llmNotConfigured": "구성되지 않음",
-    "statusConfigured": "구성됨",
     "modelError": "오류",
     "modelState": {
       "notFound": "찾을 수 없음",
@@ -99,9 +69,6 @@ export const ko = {
       "loaded": "로드됨",
       "failed": "실패"
     },
-    "statusNotConfigured": "구성되지 않음",
-    "statusUnknown": "읽을 수 없음",
-    "credentialsLoadError": "자격 증명 상태를 읽을 수 없습니다",
     "metricChars": "오늘 글자 수",
     "metricSegments": "{{count}} 세그먼트",
     "metricDuration": "오늘 총 시간",
@@ -143,12 +110,6 @@ export const ko = {
       "토"
     ],
     "inAppDictation": {
-      "title": "앱 내 받아쓰기",
-      "start": "녹음 시작",
-      "stop": "녹음 중지",
-      "idle": "탭하여 녹음 시작",
-      "recording": "녹음 중…",
-      "processing": "처리 중…"
     }
   },
   "history": {
@@ -156,7 +117,6 @@ export const ko = {
     "kicker": "HISTORY",
     "title": "기록",
     "desc": "로컬에 저장된 인식 기록.",
-    "filterAll": "전체",
     "summary": "총 {{total}}건 · 표시 {{shown}}",
     "searchPlaceholder": "기록 검색…（{{shortcut}}）",
     "searchNoMatch": "“{{query}}”과(와) 일치하는 항목이 없습니다.",
@@ -262,9 +222,6 @@ export const ko = {
     }
   },
   "vocabCard": {
-    "title": "이 단어를 기억할까요?",
-    "accept": "기억하기",
-    "reject": "건너뛰기"
   },
   "insertFallbackCard": {
     "copy": "복사",
@@ -301,8 +258,6 @@ export const ko = {
       "title": "녹음 및 입력",
       "desc": "전역 녹음의 단축키와 트리거 방식을 정의합니다.",
       "hotkeyLabel": "녹음 단축키",
-      "hotkeyDescAcc": "누르면 음성 캡처 시작(전역). 접근성 권한이 필요합니다.",
-      "hotkeyDescNoAcc": "누르면 음성 캡처 시작(전역). 추가 권한 불필요.",
       "silenceAutoStopLabel": "침묵 시 자동 중지",
       "silenceAutoStopDesc": "음성이 감지된 후 선택한 시간 동안 침묵이 이어지면 녹음을 자동으로 종료하고 제출합니다. 말을 전혀 하지 않으면 10초 후 취소됩니다. 기본적으로 꺼져 있습니다.",
       "silenceAutoStopSecondsLabel": "침묵 시간",
@@ -310,13 +265,7 @@ export const ko = {
       "microphoneLabel": "기본 선택 마이크",
       "microphoneDesc": "우선 사용할 입력 장치를 선택합니다. 장치를 일시적으로 사용할 수 없으면 시스템 기본 마이크를 사용하고, 다시 연결되면 자동으로 우선 장치로 돌아갑니다.",
       "microphoneDefault": "시스템 기본 마이크",
-      "microphoneDefaultDesc": "시스템 기본 입력 장치 사용",
-      "microphoneSystemDefault": "시스템 기본값",
-      "microphoneUnavailable": "사용할 수 없음",
       "microphoneLoadError": "마이크 로드 실패: {{message}}",
-      "microphoneDialogTitle": "마이크",
-      "microphoneDialogDesc": "목소리를 받을 수 있는 마이크를 선택하세요. 미터가 움직이지 않으면 다른 마이크를 시도하세요.",
-      "microphoneMonitorError": "입력 레벨 모니터링 실패: {{message}}",
       "capsuleLabel": "녹음 캡슐",
       "capsuleDesc": "녹음 / 전사 중 화면 하단에 반투명 캡슐을 표시합니다.",
       "capsuleStyleLabel": "캡슐 스타일",
@@ -327,36 +276,21 @@ export const ko = {
       "audioCueLabel": "녹음 시작음",
       "audioCueDesc": "단축키로 녹음을 시작할 때 합성된 짧은 알림음을 재생합니다. 캡슐이 숨겨져 있어도 재생됩니다.",
       "audioCuePreview": "미리듣기",
-      "comboRecordLabel": "단축키 녹화",
-      "comboRecordDesc": "클릭 후 원하는 단축키 조합(예: ⌘⇧D)을 누르세요. 토글 및 누르기 모드 모두 지원합니다.",
       "comboRecordBtn": "단축키 녹화",
       "comboResetBtn": "초기화",
       "comboMenuToggle": "더보기",
       "comboDisableHint": "핵심 단축키는 비활성화할 수 없습니다 (녹음에는 단축키가 필수입니다)",
       "comboRecordHint": "단축키 조합을 눌러 주세요…",
-      "comboNeedKey": "조합 키(예: ⌘⇧J)를 설정하세요. 단일 보조 키는 사용할 수 없습니다",
-      "comboRecorded": "녹화됨",
-      "comboClear": "지우기",
       "comboConflict": "이 단축키 조합은 사용할 수 없습니다",
-      "allowNonTsfFallbackLabel": "비 TSF 폴백 허용",
-      "historyGroupTitle": "기록 및 컨텍스트",
       "historyRetentionLabel": "기록 보관 기간(일)",
-      "historyRetentionDesc": "보관 기간을 초과한 기록은 새 항목 작성 시 정리됩니다. 0 = 시간 기반 정리 비활성화.",
       "historyMaxEntriesLabel": "기록 개수 상한",
-      "historyMaxEntriesDesc": "로컬 보관 세션 상한. 빈칸 = 200. 범위 5–200.",
       "polishContextWindowLabel": "대화 컨텍스트 윈도(분)",
-      "polishContextWindowDesc": "최근 N 분간 정리된 전사를 멀티턴 컨텍스트로 전달합니다. 0 = 비활성화.",
       "recordAudioForDebugLabel": "원본 녹음 보관(디버그)",
-      "recordAudioForDebugDesc": "원시 마이크 오디오를 wav 로 저장하여 인식 문제 진단.",
       "audioRecordingMaxEntriesLabel": "원본 녹음 보관 개수",
       "audioRecordingMaxEntriesDesc": "로컬 보관 wav 파일 상한. 빈칸 = 200.",
       "startupGroupTitle": "시작",
       "startMinimizedLabel": "시작 시 메인 창 숨기기",
-      "startMinimizedDesc": "모든 시작 경로에서 메인 창을 열지 않고 메뉴 막대 / 트레이에서만 실행합니다.",
-      "autoUpdateCheckLabel": "자동 업데이트 확인",
-      "autoUpdateCheckDesc": "시작 시 및 60 분마다 자동 확인.",
       "startupAtBoot": "부팅 시 자동 시작",
-      "startupAtBootDesc": "로그인 시 OpenLess 자동 시작.",
       "startupAtBootError": "자동 시작 전환 실패: {{message}}"
     },
     "shortcuts": {
@@ -365,15 +299,9 @@ export const ko = {
     },
     "permissions": {
       "title": "권한",
-      "descAcc": "OpenLess 가 정상 작동하려면 다음 시스템 권한이 필요합니다. 허용 후에는 일반적으로 앱을 완전히 종료한 후 재시작해야 적용됩니다.",
-      "descNoAcc": "OpenLess 는 마이크 사용과 전역 단축키 감지 상태를 통해 네이티브 후크의 정상 동작을 판정해야 합니다.",
       "micLabel": "마이크",
-      "micDesc": "음성 입력을 캡처하기 위해 사용합니다.",
       "accLabel": "접근성",
-      "accDesc": "전역 단축키 감지와 인식 결과를 커서 위치에 입력하기 위해 사용합니다.",
       "hotkeyLabel": "전역 단축키",
-      "hotkeyDescWithAdapter": "현재 어댑터: {{adapter}}. 단축키 감지가 설치되었는지 판정하기 위해 사용.",
-      "hotkeyDescPlain": "단축키 감지가 설치되었는지 판정하기 위해 사용.",
       "checking": "확인 중…",
       "checkFailed": "현재 확인할 수 없습니다. 다시 시도하세요.",
       "granted": "허용됨",
@@ -382,7 +310,6 @@ export const ko = {
       "indeterminate": "미결정",
       "micNoDevice": "마이크가 감지되지 않음",
       "openSystem": "시스템 설정 열기",
-      "restart": "재설정 후 재시작",
       "grant": "허용",
       "hotkeyInstalled": "설치됨",
       "hotkeyStarting": "설치 중…",

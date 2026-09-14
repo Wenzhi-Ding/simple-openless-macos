@@ -2,18 +2,12 @@ export const zhTW = {
   "common": {
     "loading": "加載中…",
     "retry": "重試",
-    "settingsLoadFailed": "設置加載失敗",
     "refresh": "刷新",
     "clear": "清空",
     "copy": "複製",
     "delete": "刪除",
-    "later": "稍後",
     "cancel": "取消",
     "close": "關閉",
-    "show": "顯示",
-    "hide": "隱藏",
-    "saved": "已保存",
-    "saving": "保存中",
     "copied": "已複製",
     "operationFailed": "操作失敗",
     "add": "添加",
@@ -23,7 +17,6 @@ export const zhTW = {
   },
   "capsule": {
     "thinking": "thinking",
-    "using": "using",
     "cancelled": "已取消",
     "error": "出錯了",
     "inserted": "已插入 {{count}}"
@@ -35,10 +28,7 @@ export const zhTW = {
     "more": "更多"
   },
   "shell": {
-    "shortcutLabel": "錄音快捷鍵",
-    "shortcutHint": "開始 / 停止",
     "betaTag": "BETA",
-    "betaNote": "所有數據都只保存在本機。",
     "navHint": {
       "overview": "狀態總覽：用量統計、提供商與權限健康檢查",
       "history": "聽寫歷史：搜尋、回放與複製過往轉寫",
@@ -46,22 +36,12 @@ export const zhTW = {
       "settings": "偏好設定：快捷鍵、提供商、隱私與更新"
     },
     "footer": {
-      "account": "賬戶",
-      "feedback": "反饋",
       "settings": "設置",
-      "help": "幫助",
       "version": "版本 {{version}}",
       "helpPopover": {
-        "tagline": "本地驅動的語音輸入層",
-        "releaseNotes": "查看發佈日誌 ↗",
-        "docs": "幫助中心 ↗"
       }
     },
     "screenOcrBanner": {
-      "title": "螢幕文字識別尚未授權，目前無法讀取頁面背景",
-      "action": "授權螢幕錄製",
-      "hint": "如系統要求重新啟動應用程式，請依提示操作。",
-      "checkFailed": "螢幕錄製權限狀態檢查失敗"
     }
   },
   "onboarding": {
@@ -78,19 +58,9 @@ export const zhTW = {
     "needsAttention": "待檢查或處理：{{names}}；已授權項目無需重新授權。"
   },
   "overview": {
-    "kicker": "DASHBOARD",
     "title": "今日概覽",
-    "desc": "今日口述統計與系統狀態。",
-    "pressPrefix": "按",
-    "pressSuffix": "開始錄音",
     "asrKind": "ASR 語音",
     "llmKind": "LLM 模型",
-    "asrName": "火山引擎",
-    "asrSubname": "bigmodel",
-    "llmName": "OpenAI 兼容",
-    "llmConfigured": "已配置 active LLM",
-    "llmNotConfigured": "未配置",
-    "statusConfigured": "已配置",
     "modelError": "錯誤",
     "modelState": {
       "notFound": "未找到",
@@ -99,9 +69,6 @@ export const zhTW = {
       "loaded": "已載入",
       "failed": "失敗"
     },
-    "statusNotConfigured": "未配置",
-    "statusUnknown": "無法讀取",
-    "credentialsLoadError": "無法讀取憑據狀態",
     "metricChars": "今日字數",
     "metricSegments": "{{count}} 段",
     "metricDuration": "今日總時長",
@@ -143,12 +110,6 @@ export const zhTW = {
       "六"
     ],
     "inAppDictation": {
-      "title": "應用內錄音",
-      "start": "開始錄音",
-      "stop": "停止錄音",
-      "idle": "點擊開始錄音",
-      "recording": "錄音中…",
-      "processing": "處理中…"
     }
   },
   "history": {
@@ -156,7 +117,6 @@ export const zhTW = {
     "kicker": "HISTORY",
     "title": "歷史記錄",
     "desc": "本機保存的識別記錄。",
-    "filterAll": "全部",
     "summary": "共 {{total}} 條 · 顯示 {{shown}}",
     "searchPlaceholder": "搜尋轉寫內容…（{{shortcut}}）",
     "searchNoMatch": "沒有符合「{{query}}」的記錄。",
@@ -262,9 +222,6 @@ export const zhTW = {
     }
   },
   "vocabCard": {
-    "title": "要記住這個詞嗎？",
-    "accept": "記住",
-    "reject": "不用"
   },
   "insertFallbackCard": {
     "copy": "複製",
@@ -301,33 +258,20 @@ export const zhTW = {
       "title": "錄音與輸入",
       "desc": "定義全局錄音的快捷鍵與觸發方式。",
       "hotkeyLabel": "錄音快捷鍵",
-      "hotkeyDescAcc": "按下即開始捕獲語音，全局生效。需要授予輔助功能權限。",
-      "hotkeyDescNoAcc": "按下即開始捕獲語音，全局生效。無需額外輔助功能授權。",
       "silenceAutoStopLabel": "靜音後自動停止",
       "silenceAutoStopDesc": "偵測到語音後，連續靜音達到所選時長即自動結束並提交；一直沒說話則 10 秒後取消。預設關閉。",
       "silenceAutoStopSecondsLabel": "靜音時長",
       "silenceAutoStopSecondsValue": "{{value}} 秒",
-      "comboRecordLabel": "錄製快捷鍵",
-      "comboRecordDesc": "點擊後按下你想要的快捷鍵組合（如 ⌘⇧D），支援 Toggle 與 Hold 模式。",
       "comboRecordBtn": "錄製快捷鍵",
       "comboResetBtn": "重置",
       "comboMenuToggle": "更多操作",
       "comboDisableHint": "核心快捷鍵不可停用，錄音必須綁定一個快捷鍵",
       "comboRecordHint": "請按下快捷鍵組合…",
-      "comboNeedKey": "請設定組合鍵（如 ⌘⇧J），不支援單獨的修飾鍵",
-      "comboRecorded": "已錄製",
-      "comboClear": "清除",
       "comboConflict": "此快捷鍵組合不可用",
       "microphoneLabel": "首選麥克風",
       "microphoneDesc": "選擇優先使用的輸入設備。設備暫時不可用時會使用系統默認麥克風，重新連接後自動切回首選設備。",
       "microphoneDefault": "系統默認麥克風",
-      "microphoneDefaultDesc": "使用系統默認輸入設備",
-      "microphoneSystemDefault": "系統默認",
-      "microphoneUnavailable": "不可用",
       "microphoneLoadError": "麥克風列表讀取失敗：{{message}}",
-      "microphoneDialogTitle": "麥克風",
-      "microphoneDialogDesc": "選擇能捕捉到您聲音的麥克風。如果指示條沒有移動，請嘗試其他麥克風。",
-      "microphoneMonitorError": "輸入電平監聽失敗：{{message}}",
       "capsuleLabel": "錄音膠囊",
       "capsuleDesc": "錄音 / 轉寫時在屏幕底部顯示半透明膠囊。",
       "capsuleStyleLabel": "膠囊樣式",
@@ -338,25 +282,15 @@ export const zhTW = {
       "audioCueLabel": "錄音提示音",
       "audioCueDesc": "按下熱鍵開始錄音時播放一段合成提示音，提醒已開始錄音。膠囊隱藏時也會響。",
       "audioCuePreview": "試聽",
-      "allowNonTsfFallbackLabel": "允許非 TSF 兜底",
-      "historyGroupTitle": "歷史與上下文",
       "historyRetentionLabel": "歷史保留天數",
-      "historyRetentionDesc": "超過保留天數的歷史在寫入新條目時被清理；0 = 不按時間清理。",
       "historyMaxEntriesLabel": "歷史條數上限",
-      "historyMaxEntriesDesc": "本地保留會話上限，留空 = 200。範圍 5–200。",
       "polishContextWindowLabel": "對話上下文窗口（分鐘）",
-      "polishContextWindowDesc": "把最近 N 分鐘內已潤色的轉寫作為多輪上下文，0 = 關閉。",
       "recordAudioForDebugLabel": "保留原始錄音（除錯）",
-      "recordAudioForDebugDesc": "保存原始麥克風音訊為 wav，便於排查識別問題。",
       "audioRecordingMaxEntriesLabel": "原始錄音保留條數",
       "audioRecordingMaxEntriesDesc": "本地保留 wav 檔案數上限，留空 = 200。",
       "startupGroupTitle": "啟動",
       "startMinimizedLabel": "啓動時靜默運行",
-      "startMinimizedDesc": "所有啓動路徑都不彈主窗口，僅選單欄 / 托盤運行。",
-      "autoUpdateCheckLabel": "自動檢查更新",
-      "autoUpdateCheckDesc": "啟動時及每 60 分鐘自動檢查更新。",
       "startupAtBoot": "開機自啓",
-      "startupAtBootDesc": "登錄系統時自動啓動 OpenLess。",
       "startupAtBootError": "開機自啓切換失敗：{{message}}"
     },
     "shortcuts": {
@@ -365,15 +299,9 @@ export const zhTW = {
     },
     "permissions": {
       "title": "權限",
-      "descAcc": "OpenLess 需要以下系統權限才能正常工作。授權後通常需要完全退出 App 重啓一次才生效。",
-      "descNoAcc": "OpenLess 需要麥克風可用，並依賴全局快捷鍵監聽狀態判斷 native hook 是否正常工作。",
       "micLabel": "麥克風",
-      "micDesc": "用於捕獲你的語音輸入。",
       "accLabel": "輔助功能",
-      "accDesc": "用於監聽全局快捷鍵並將識別結果寫入光標位置。",
       "hotkeyLabel": "全局快捷鍵",
-      "hotkeyDescWithAdapter": "當前適配器：{{adapter}}。用於判斷快捷鍵監聽是否已經安裝。",
-      "hotkeyDescPlain": "用於判斷快捷鍵監聽是否已經安裝。",
       "checking": "檢查中…",
       "checkFailed": "暫時無法確認，請重試",
       "granted": "已授權",
@@ -382,7 +310,6 @@ export const zhTW = {
       "indeterminate": "未確定",
       "micNoDevice": "未偵測到麥克風",
       "openSystem": "打開系統設置",
-      "restart": "重置授權並重新啟動",
       "grant": "授權",
       "hotkeyInstalled": "已安裝",
       "hotkeyStarting": "安裝中…",

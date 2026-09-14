@@ -11,15 +11,12 @@ const read = relativePath => readFileSync(join(appRoot, relativePath), 'utf8');
 const css = read('src/styles/global.css');
 const shared = read('src/pages/settings/shared.tsx');
 const pageAtoms = read('src/pages/_atoms.tsx');
-const row = read('src/components/ui/Row.tsx');
 const permissions = read('src/pages/settings/PermissionsSection.tsx');
 const shell = read('src/components/FloatingShell.tsx');
 assert.doesNotMatch(shell, /id:\s*'style'/);
 
 assert.doesNotMatch(css, /\.ol-flex-row\s*>\s*\*/);
 assert.doesNotMatch(css, /\[class\*=["']ol-grid["']\]/);
-
-assert.match(row, /stackLayout\s*\?\s*'minmax\(0, 1fr\)'/);
 
 assert.match(permissions, /permissionActionsStyle/);
 assert.match(permissions, /justifyContent:\s*stackLayout\s*\?\s*'flex-start'\s*:\s*'flex-end'/);

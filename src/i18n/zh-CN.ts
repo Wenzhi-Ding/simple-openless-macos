@@ -2,18 +2,12 @@ export const zhCN = {
   "common": {
     "loading": "加载中…",
     "retry": "重试",
-    "settingsLoadFailed": "设置加载失败",
     "refresh": "刷新",
     "clear": "清空",
     "copy": "复制",
     "delete": "删除",
-    "later": "稍后",
     "cancel": "取消",
     "close": "关闭",
-    "show": "显示",
-    "hide": "隐藏",
-    "saved": "已保存",
-    "saving": "保存中",
     "copied": "已复制",
     "operationFailed": "操作失败",
     "add": "添加",
@@ -23,7 +17,6 @@ export const zhCN = {
   },
   "capsule": {
     "thinking": "thinking",
-    "using": "using",
     "cancelled": "已取消",
     "error": "出错了",
     "inserted": "已插入 {{count}}"
@@ -35,10 +28,7 @@ export const zhCN = {
     "more": "更多"
   },
   "shell": {
-    "shortcutLabel": "录音快捷键",
-    "shortcutHint": "开始 / 停止",
     "betaTag": "BETA",
-    "betaNote": "所有数据都只保存在本机。",
     "navHint": {
       "overview": "状态总览：用量统计、提供商与权限健康检查",
       "history": "听写历史：搜索、回放与复制过往转写",
@@ -46,22 +36,12 @@ export const zhCN = {
       "settings": "偏好设置：快捷键、提供商、隐私与更新"
     },
     "footer": {
-      "account": "账户",
-      "feedback": "反馈",
       "settings": "设置",
-      "help": "帮助",
       "version": "版本 {{version}}",
       "helpPopover": {
-        "tagline": "本地驱动的语音输入层",
-        "releaseNotes": "查看发布日志 ↗",
-        "docs": "帮助中心 ↗"
       }
     },
     "screenOcrBanner": {
-      "title": "屏幕文字识别尚未授权，当前无法读取页面背景",
-      "action": "授权屏幕录制",
-      "hint": "如系统要求重启应用，请按提示操作。",
-      "checkFailed": "屏幕录制权限状态检查失败"
     }
   },
   "onboarding": {
@@ -78,22 +58,9 @@ export const zhCN = {
     "needsAttention": "待检查或处理：{{names}}；已授权项目无需重新授权。"
   },
   "overview": {
-    "kicker": "DASHBOARD",
     "title": "今日概览",
-    "desc": "今日口述统计与系统状态。",
-    "pressPrefix": "按",
-    "pressSuffix": "开始录音",
     "asrKind": "ASR 语音",
     "llmKind": "LLM 模型",
-    "asrName": "火山引擎",
-    "asrSubname": "bigmodel",
-    "llmName": "OpenAI 兼容",
-    "llmConfigured": "已配置 active LLM",
-    "llmNotConfigured": "未配置",
-    "statusConfigured": "已配置",
-    "statusNotConfigured": "未配置",
-    "statusUnknown": "无法读取",
-    "credentialsLoadError": "无法读取凭据状态",
     "modelError": "错误",
     "modelState": {
       "notFound": "未找到",
@@ -143,12 +110,6 @@ export const zhCN = {
       "六"
     ],
     "inAppDictation": {
-      "title": "应用内录音",
-      "start": "开始录音",
-      "stop": "停止录音",
-      "idle": "点击开始录音",
-      "recording": "录音中…",
-      "processing": "处理中…"
     }
   },
   "history": {
@@ -156,7 +117,6 @@ export const zhCN = {
     "kicker": "HISTORY",
     "title": "历史记录",
     "desc": "本机保存的识别记录。",
-    "filterAll": "全部",
     "summary": "共 {{total}} 条 · 显示 {{shown}}",
     "searchPlaceholder": "搜索转写内容…（{{shortcut}}）",
     "searchNoMatch": "没有匹配「{{query}}」的记录。",
@@ -262,9 +222,6 @@ export const zhCN = {
     }
   },
   "vocabCard": {
-    "title": "要记住这个词吗？",
-    "accept": "记住",
-    "reject": "不用"
   },
   "insertFallbackCard": {
     "copy": "复制",
@@ -301,8 +258,6 @@ export const zhCN = {
       "title": "录音与输入",
       "desc": "全局录音的快捷键与触发方式。",
       "hotkeyLabel": "录音快捷键",
-      "hotkeyDescAcc": "按下开始捕获语音，全局生效（需辅助功能权限）。",
-      "hotkeyDescNoAcc": "按下开始捕获语音，全局生效。",
       "silenceAutoStopLabel": "静音后自动停止",
       "silenceAutoStopDesc": "检测到语音后，连续静音达到所选时长即自动结束并提交；一直没说话则 10 秒后取消。默认关闭。",
       "silenceAutoStopSecondsLabel": "静音时长",
@@ -310,13 +265,7 @@ export const zhCN = {
       "microphoneLabel": "首选麦克风",
       "microphoneDesc": "选择优先输入设备。设备断开时自动切到系统默认。",
       "microphoneDefault": "系统默认麦克风",
-      "microphoneDefaultDesc": "使用系统默认输入设备",
-      "microphoneSystemDefault": "系统默认",
-      "microphoneUnavailable": "不可用",
       "microphoneLoadError": "麦克风列表读取失败：{{message}}",
-      "microphoneDialogTitle": "麦克风",
-      "microphoneDialogDesc": "选择能捕捉到您声音的麦克风。",
-      "microphoneMonitorError": "输入电平监听失败：{{message}}",
       "capsuleLabel": "录音胶囊",
       "capsuleDesc": "录音 / 转写时显示屏幕底部胶囊。",
       "capsuleStyleLabel": "胶囊样式",
@@ -327,36 +276,21 @@ export const zhCN = {
       "audioCueLabel": "录音提示音",
       "audioCueDesc": "按下热键开始录音时播放一段合成提示音，提醒已开始录音。胶囊隐藏时也会响。",
       "audioCuePreview": "试听",
-      "comboRecordLabel": "录制快捷键",
-      "comboRecordDesc": "点击后按下想要的快捷键组合（如 ⌘⇧D）。",
       "comboRecordBtn": "录制快捷键",
       "comboResetBtn": "重置",
       "comboMenuToggle": "更多操作",
       "comboDisableHint": "核心快捷键不可停用，录音必须绑定一个热键",
       "comboRecordHint": "请按下快捷键组合…",
-      "comboNeedKey": "请配组合键（如 ⌘⇧J），不支持单独的修饰键",
-      "comboRecorded": "已录制",
-      "comboClear": "清除",
       "comboConflict": "该快捷键组合不可用",
-      "allowNonTsfFallbackLabel": "允许非 TSF 兜底",
-      "historyGroupTitle": "历史与上下文",
       "historyRetentionLabel": "历史保留天数",
-      "historyRetentionDesc": "超过保留天数的历史在写入新条目时被清理；0 = 不按时间清理。",
       "historyMaxEntriesLabel": "历史条数上限",
-      "historyMaxEntriesDesc": "本地保留会话上限，留空 = 200。范围 5–200。",
       "polishContextWindowLabel": "对话上下文窗口（分钟）",
-      "polishContextWindowDesc": "把最近 N 分钟内已润色的转写作为多轮上下文，0 = 关闭。",
       "recordAudioForDebugLabel": "保留原始录音（调试）",
-      "recordAudioForDebugDesc": "保存原始麦克风音频为 wav，便于排查识别问题。",
       "audioRecordingMaxEntriesLabel": "原始录音保留条数",
       "audioRecordingMaxEntriesDesc": "本地保留 wav 文件数上限，留空 = 200。",
       "startupGroupTitle": "启动",
       "startMinimizedLabel": "启动时静默运行",
-      "startMinimizedDesc": "所有启动路径都不弹主窗口，仅菜单栏 / 托盘运行。",
-      "autoUpdateCheckLabel": "自动检查更新",
-      "autoUpdateCheckDesc": "启动时及每 60 分钟自动检查更新。",
       "startupAtBoot": "开机自启",
-      "startupAtBootDesc": "登录系统时自动启动 OpenLess。",
       "startupAtBootError": "开机自启切换失败：{{message}}"
     },
     "shortcuts": {
@@ -365,15 +299,9 @@ export const zhCN = {
     },
     "permissions": {
       "title": "权限",
-      "descAcc": "OpenLess 需要以下系统权限。授权后通常要完全退出 App 重启一次才生效。",
-      "descNoAcc": "麦克风必需；全局快捷键状态用来检测 native hook 是否运行。",
       "micLabel": "麦克风",
-      "micDesc": "用于捕获你的语音输入。",
       "accLabel": "辅助功能",
-      "accDesc": "监听全局快捷键并把识别结果写入光标。",
       "hotkeyLabel": "全局快捷键",
-      "hotkeyDescWithAdapter": "适配器：{{adapter}}。",
-      "hotkeyDescPlain": "判断快捷键监听是否已安装。",
       "checking": "检查中…",
       "checkFailed": "暂时无法确认，请重试",
       "granted": "已授权",
@@ -382,7 +310,6 @@ export const zhCN = {
       "indeterminate": "未确定",
       "micNoDevice": "未检测到麦克风",
       "openSystem": "打开系统设置",
-      "restart": "重置授权并重启",
       "grant": "授权",
       "hotkeyInstalled": "已安装",
       "hotkeyStarting": "安装中…",

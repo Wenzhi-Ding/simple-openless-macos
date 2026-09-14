@@ -15,7 +15,6 @@ import {
     setSettings,
 } from "../lib/ipc"
 import type {
-    HotkeyBinding,
     HotkeyCapability,
     UserPreferences,
 } from "../lib/types"
@@ -24,7 +23,6 @@ import { emitSaved } from "../lib/savedEvent"
 
 interface HotkeySettingsContextValue {
     prefs: UserPreferences | null
-    hotkey: HotkeyBinding | null
     capability: HotkeyCapability | null
     loading: boolean
     error: string | null
@@ -181,7 +179,6 @@ export function HotkeySettingsProvider({ children }: { children: ReactNode }) {
     const value = useMemo<HotkeySettingsContextValue>(
         () => ({
             prefs,
-            hotkey: prefs?.hotkey ?? null,
             capability,
             loading,
             error,
