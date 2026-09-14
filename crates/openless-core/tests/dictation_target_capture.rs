@@ -2,6 +2,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use futures_util::future::BoxFuture;
+use openless_core::settings::{SettingsRuntime, SettingsUpdateOptions};
+use openless_core::shared_types::UserPreferences;
 use openless_core::{
     BackendConfig, BackendDependencies, BackendError, BackendErrorCode, CliDispatchOutcome,
     CliIntent, DictationContext, DictationHotkeyEdge, DictationInsertStatus, DictationStartOptions,
@@ -13,6 +15,23 @@ use openless_core::{
     PolishDelta, TranscriptDelta,
 };
 use tokio::sync::Notify;
+
+/// 产品里光标偏好由宿主 persistence 的 enforce 固定为开;核心测试内存默认是关,
+/// 需要 cursor_context 的用例先经 update_settings 打开。
+struct NoopSettingsRuntime;
+impl SettingsRuntime for NoopSettingsRuntime {}
+
+fn enable_cursor_context(backend: &OpenLessBackend) {
+    let mut preferences = UserPreferences::default();
+    preferences.cursor_context_enabled = true;
+    backend
+        .update_settings(
+            preferences,
+            SettingsUpdateOptions::STRICT,
+            &NoopSettingsRuntime,
+        )
+        .unwrap();
+}
 
 /// Verifies that insertion target capture precedes asynchronous context capture.
 #[derive(Default)]
@@ -45,6 +64,8 @@ struct Focus {
     captured: Vec<&'static str>,
     prepared: Vec<&'static str>,
     delivered: Vec<(&'static str, String)>,
+    written: Vec<(&'static str, String)>,
+    copied: Vec<(&'static str, String)>,
 }
 
 struct FocusInserter {
@@ -87,12 +108,22 @@ struct FocusSession {
 }
 
 impl TextInsertionSession for FocusSession {
-    fn write(&self, _text: String) -> BoxFuture<'static, Result<InsertWriteResult, BackendError>> {
-        panic!("fixture has no streaming deltas")
+    fn write(&self, text: String) -> BoxFuture<'static, Result<InsertWriteResult, BackendError>> {
+        self.focus
+            .lock()
+            .unwrap()
+            .written
+            .push((self.target, text.clone()));
+        Box::pin(async move {
+            Ok(InsertWriteResult {
+                written_chars: text.chars().count(),
+            })
+        })
     }
 
-    fn copy(&self, _text: String) -> BoxFuture<'static, Result<(), BackendError>> {
-        panic!("successful target restoration must not use clipboard fallback")
+    fn copy(&self, text: String) -> BoxFuture<'static, Result<(), BackendError>> {
+        self.focus.lock().unwrap().copied.push((self.target, text));
+        Box::pin(async { Ok(()) })
     }
 
     fn finish(&self, text: String) -> BoxFuture<'static, Result<InsertOutcome, BackendError>> {
@@ -112,6 +143,8 @@ impl TextInsertionSession for FocusSession {
 #[derive(Clone)]
 struct FixtureDictationEngine {
     result: Result<EngineResult, EngineFailure>,
+    /// 非空的流式润色前缀(必须是 polished_text 的前缀),在最终增量之前发出。
+    streaming_polish_prefix: Option<String>,
 }
 
 impl FixtureDictationEngine {
@@ -131,7 +164,18 @@ impl FixtureDictationEngine {
                 llm_call_label: None,
                 polish_diagnostics: None,
             }),
+            streaming_polish_prefix: None,
         }
+    }
+
+    fn successful_with_streaming_prefix(
+        prefix: impl Into<String>,
+        raw_text: impl Into<String>,
+        polished_text: impl Into<String>,
+    ) -> Self {
+        let mut engine = Self::successful(raw_text, polished_text);
+        engine.streaming_polish_prefix = Some(prefix.into());
+        engine
     }
 }
 
@@ -150,6 +194,7 @@ impl DictationEngine for FixtureDictationEngine {
         progress: Arc<dyn EngineProgressSink>,
     ) -> BoxFuture<'static, Result<EngineResult, EngineFailure>> {
         let result = self.result.clone();
+        let streaming_prefix = self.streaming_polish_prefix.clone();
         Box::pin(async move {
             progress.publish(session_id, EngineProgress::Stage(EngineStage::Transcribing))?;
             let result = result?;
@@ -162,6 +207,16 @@ impl DictationEngine for FixtureDictationEngine {
                 }),
             )?;
             progress.publish(session_id, EngineProgress::Stage(EngineStage::Polishing))?;
+            if let Some(prefix) = streaming_prefix {
+                progress.publish(
+                    session_id,
+                    EngineProgress::PolishDelta(PolishDelta {
+                        text: prefix,
+                        offset: 0,
+                        is_final: false,
+                    }),
+                )?;
+            }
             progress.publish(
                 session_id,
                 EngineProgress::PolishDelta(PolishDelta {
@@ -197,6 +252,13 @@ struct Fixture {
 
 impl Fixture {
     async fn new() -> Self {
+        Self::with_engine(Arc::new(FixtureDictationEngine::successful(
+            "spoken", "spoken",
+        )))
+        .await
+    }
+
+    async fn with_engine(engine: Arc<dyn DictationEngine>) -> Self {
         let directory = std::env::temp_dir().join(format!("openless-target-{}", SessionId::new()));
         let credentials = Arc::new(DelayedHostContext::default());
         let focus = Arc::new(Mutex::new(Focus {
@@ -204,12 +266,13 @@ impl Fixture {
             captured: Vec::new(),
             prepared: Vec::new(),
             delivered: Vec::new(),
+            written: Vec::new(),
+            copied: Vec::new(),
         }));
         let mut dependencies = BackendDependencies::unsupported();
         dependencies.services.host_context = credentials.clone();
         dependencies.host_actions = Arc::new(openless_core::NoopHostActions);
-        dependencies.dictation_engine =
-            Arc::new(FixtureDictationEngine::successful("spoken", "spoken"));
+        dependencies.dictation_engine = engine;
         dependencies.text_inserter = Arc::new(FocusInserter {
             focus: focus.clone(),
             target: None,
@@ -322,4 +385,62 @@ async fn no_insertion_skips_target_capture_and_native_preparation() {
     assert!(focus.captured.is_empty());
     assert!(focus.prepared.is_empty());
     assert!(focus.delivered.is_empty());
+}
+
+#[tokio::test]
+async fn final_insertion_gets_boundary_adjustment_from_frozen_cursor_context() {
+    let fixture = Fixture::new().await;
+    enable_cursor_context(&fixture.backend);
+    fixture.credentials.release.notify_one();
+    fixture
+        .backend
+        .start_dictation_with_options(DictationStartOptions {
+            cursor_context: Some(openless_core::prompts::cursor_context_input(
+                "I finished the report.",
+                "",
+            )),
+            ..DictationStartOptions::default()
+        })
+        .await
+        .unwrap();
+    let result = fixture.backend.stop_dictation().await.unwrap();
+    assert_eq!(result.inserted, DictationInsertStatus::Inserted);
+    let focus = fixture.focus.lock().unwrap();
+    // 润色输出 "spoken" 插进句号之后:补空格并转大写开头。
+    assert_eq!(focus.delivered, vec![("A", " Spoken".to_string())]);
+    assert!(focus.written.is_empty(), "无流式增量时不得走平台逐段写入");
+}
+
+#[tokio::test]
+async fn streaming_insert_applies_boundary_adjustment_to_first_flush_and_final() {
+    let fixture = Fixture::with_engine(Arc::new(
+        FixtureDictationEngine::successful_with_streaming_prefix("spo", "spoken", "spoken"),
+    ))
+    .await;
+    enable_cursor_context(&fixture.backend);
+    fixture.credentials.release.notify_one();
+    fixture
+        .backend
+        .start_dictation_with_options(DictationStartOptions {
+            cursor_context: Some(openless_core::prompts::cursor_context_input(
+                "I finished the report.",
+                "",
+            )),
+            ..DictationStartOptions::default()
+        })
+        .await
+        .unwrap();
+    fixture.backend.stop_dictation().await.unwrap();
+    let focus = fixture.focus.lock().unwrap();
+    // 首段流式写入与最终文本做同一份衔接调整,补写尾巴才能与已写入前缀逐字符对齐;
+    // 保留到剪贴板的也必须是调整后的最终文本。
+    assert_eq!(
+        focus.written,
+        vec![("A", " Spo".to_string()), ("A", "ken".to_string())]
+    );
+    assert!(
+        focus.copied.iter().any(|(_, text)| text == " Spoken"),
+        "clipboard should keep the adjusted final text, got {:?}",
+        focus.copied
+    );
 }

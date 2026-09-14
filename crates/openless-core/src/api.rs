@@ -172,6 +172,9 @@ struct ActiveTextInsertion {
     task_spawner: Arc<dyn TaskSpawner>,
     _resources: Arc<crate::voice_session::VoiceResourceHold>,
     cancel_result: std::sync::OnceLock<Result<(), BackendError>>,
+    /// 听写触发时冻结的光标前文本尾部。有值时对上屏文本做衔接调整
+    /// (补空格/首字母大小写);只作用于插入层,历史与诊断保持润色原始输出。
+    boundary_tail: Option<String>,
     // 0: open, 1: native finalization in flight, 2: cancellation owns cleanup,
     // 3: native finalization settled, 4: cancellation cleanup settled.
     // Cancellation must join state 1 or 2 rather
@@ -204,6 +207,9 @@ impl ActiveTextInsertion {
             task_spawner,
             _resources: resources,
             cancel_result: std::sync::OnceLock::new(),
+            boundary_tail: crate::insertion_boundary::document_tail_before_cursor(
+                context.polish.cursor_context.as_deref(),
+            ),
             terminal: AtomicU8::new(0),
         })
     }
@@ -242,7 +248,16 @@ impl ActiveTextInsertion {
                     self.drained.notify_waiters();
                     return;
                 }
-                std::mem::take(&mut state.stream.pending)
+                let mut delta = std::mem::take(&mut state.stream.pending);
+                // 衔接调整只作用于第一段真正写入的文本。此时流式增量的 offset
+                // 记账已经完成,在写入平台前变换不会打乱后续增量的对账;先改这里,
+                // finish 里的最终文本做同一份变换,前缀才能逐字符对齐。
+                if !delta.is_empty() && state.stream.typed_text.is_empty() {
+                    if let Some(tail) = &self.boundary_tail {
+                        delta = crate::insertion_boundary::adjust_for_boundary(&delta, Some(tail));
+                    }
+                }
+                delta
             };
             let expected = delta.chars().count();
             let result = if delta.is_empty() {
@@ -291,6 +306,13 @@ impl ActiveTextInsertion {
     }
 
     async fn finish(self: &Arc<Self>, final_text: String) -> Result<InsertOutcome, BackendError> {
+        // 最终文本做与流式首段同一份衔接调整,已写入前缀才能与最终文本逐字符
+        // 对齐(reconcile 靠 strip_prefix 决定补写还是回退);非流式路径在此
+        // 统一获得调整。历史与诊断保存的是调整前的润色原始输出。
+        let final_text = match &self.boundary_tail {
+            Some(tail) => crate::insertion_boundary::adjust_for_boundary(&final_text, Some(tail)),
+            None => final_text,
+        };
         self.wait_for_stream_drain().await;
         self.terminal
             .compare_exchange(0, 1, Ordering::AcqRel, Ordering::Acquire)

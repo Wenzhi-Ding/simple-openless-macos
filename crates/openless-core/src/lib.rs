@@ -18,6 +18,7 @@ pub mod errors;
 pub mod events;
 pub mod history;
 mod hotkey_interpreter;
+pub mod insertion_boundary;
 pub mod output_cleaning;
 mod persistence;
 pub mod polish;
