@@ -12,6 +12,7 @@ fn legacy_style_inputs_produce_one_fixed_contract() {
     );
     assert!(pair.0.contains("英文不翻译"));
     assert!(pair.0.contains("阿拉伯数字不改成汉字"));
+    assert!(pair.0.contains("只保留最后一种说法"));
     assert!(!pair.0.contains("{{"));
     assert!(!pair.0.contains("旧风格"));
     assert!(!pair.0.contains("翻译成中文"));
