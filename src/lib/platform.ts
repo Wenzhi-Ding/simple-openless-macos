@@ -1,7 +1,6 @@
 import type { PlatformCapabilities, PlatformKind } from './types';
 export type { PlatformCapabilities, PlatformKind };
 let cachedCapabilities: PlatformCapabilities | null = null;
-export function isDesktop(): boolean { return true; }
 
 /** Screen recording is a macOS-only permission in the current product. */
 export function requiresScreenCapturePermission(capabilities: PlatformCapabilities): boolean {

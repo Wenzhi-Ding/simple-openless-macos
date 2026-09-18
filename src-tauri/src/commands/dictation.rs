@@ -15,15 +15,6 @@ async fn ensure_core_started(core: &openless_core::OpenLessBackend) -> Result<()
 }
 
 #[tauri::command]
-pub async fn start_dictation(core: CoreState<'_>) -> Result<(), String> {
-    ensure_core_started(&core).await?;
-    core.start_dictation()
-        .await
-        .map(|_| ())
-        .map_err(|error| error.to_string())
-}
-
-#[tauri::command]
 pub async fn stop_dictation(
     core: CoreState<'_>,
     _coord: CoordinatorState<'_>,
@@ -43,13 +34,6 @@ pub async fn cancel_dictation(
     ensure_core_started(&core).await?;
     coord.cancel_active_voice().await;
     Ok(())
-}
-
-
-#[cfg(debug_assertions)]
-#[tauri::command]
-pub async fn inject_hotkey_click_for_dev(coord: CoordinatorState<'_>) -> Result<(), String> {
-    coord.inject_hotkey_click_for_dev().await
 }
 
 /// 历史页「重新润色」：固定管线重跑一次润色，不写回历史记录。

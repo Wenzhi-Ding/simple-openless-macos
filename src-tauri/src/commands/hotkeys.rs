@@ -20,32 +20,6 @@ pub fn set_dictation_hotkey(
     super::settings::persist_strict_settings(&coord, prefs)
 }
 
-#[tauri::command]
-pub fn validate_combo_hotkey(binding: ComboBinding) -> Result<(), String> {
-    let shortcut = ShortcutBinding {
-        primary: binding.primary,
-        modifiers: binding.modifiers,
-    };
-    reject_bare_shift_dictation_shortcut(&shortcut)?;
-    crate::combo_hotkey::validate_binding(&shortcut).map_err(|e| e.to_string())
-}
-
-/// 设置自定义录音组合键并热更新 monitor。
-#[tauri::command]
-pub fn set_combo_hotkey(coord: CoordinatorState<'_>, binding: ComboBinding) -> Result<(), String> {
-    let mut prefs = coord.backend().get_preferences();
-    let shortcut = ShortcutBinding {
-        primary: binding.primary.clone(),
-        modifiers: binding.modifiers.clone(),
-    };
-    reject_bare_shift_dictation_shortcut(&shortcut)?;
-    crate::combo_hotkey::validate_binding(&shortcut).map_err(|e| e.to_string())?;
-    prefs.custom_combo_hotkey = Some(binding);
-    prefs.dictation_hotkey = shortcut;
-    sync_dictation_hotkey_legacy_fields(&mut prefs);
-    super::settings::persist_strict_settings(&coord, prefs)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -24,8 +24,7 @@ export const en = {
   "nav": {
     "overview": "Overview",
     "history": "History",
-    "vocab": "Vocabulary",
-    "more": "More"
+    "vocab": "Vocabulary"
   },
   "shell": {
     "betaTag": "BETA",
@@ -37,11 +36,7 @@ export const en = {
     },
     "footer": {
       "settings": "Settings",
-      "version": "Version {{version}}",
-      "helpPopover": {
-      }
-    },
-    "screenOcrBanner": {
+      "version": "Version {{version}}"
     }
   },
   "onboarding": {
@@ -108,9 +103,7 @@ export const en = {
       "Thu",
       "Fri",
       "Sat"
-    ],
-    "inAppDictation": {
-    }
+    ]
   },
   "history": {
     "exportError": "Failed to export the recording. Please try again.",
@@ -220,8 +213,6 @@ export const en = {
       "empty": "(the model returned an empty result)",
       "clear": "Clear results"
     }
-  },
-  "vocabCard": {
   },
   "insertFallbackCard": {
     "copy": "Copy",

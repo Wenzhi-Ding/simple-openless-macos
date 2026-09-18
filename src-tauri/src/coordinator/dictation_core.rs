@@ -58,22 +58,6 @@ pub(super) fn handle_trigger_combined(inner: &Arc<Inner>, edge: crate::hotkey::H
         Err(error) => log::warn!("[coord] core dictation combo cancel failed: {error}"),
     }
 }
-#[cfg(any(debug_assertions, test))]
-pub(super) async fn handle_pressed(
-    inner: &Arc<Inner>,
-    pressed_at: std::time::Instant,
-    press_id: u64,
-) {
-    handle_pressed_edge(inner, pressed_at, press_id).await;
-}
-#[cfg(any(debug_assertions, test))]
-pub(super) async fn handle_released(
-    inner: &Arc<Inner>,
-    released_at: std::time::Instant,
-    press_id: u64,
-) {
-    handle_released_edge(inner, released_at, press_id).await;
-}
 pub(super) async fn cancel_active_session(inner: &Arc<Inner>) -> bool {
     let session_id = inner.backend.snapshot().dictation.session_id;
     match inner.backend.cancel_dictation(session_id).await {

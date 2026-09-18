@@ -123,11 +123,6 @@ fn forward_loop(hotkey_id: u32, rx: Receiver<GlobalHotKeyEvent>, tx: Sender<Comb
     }
     log::info!("[combo-hotkey] 转发线程退出");
 }
-/// 测试一个组合键是否可以注册（不实际注册，仅验证格式）。
-pub fn validate_binding(binding: &ShortcutBinding) -> Result<(), ComboHotkeyError> {
-    parse_binding(binding)?;
-    Ok(())
-}
 fn parse_binding(
     binding: &ShortcutBinding,
 ) -> Result<global_hotkey::hotkey::HotKey, ComboHotkeyError> {
@@ -191,7 +186,7 @@ mod tests {
             modifiers: vec![],
         };
         assert!(matches!(
-            validate_binding(&binding),
+            parse_binding(&binding),
             Err(ComboHotkeyError::UnsupportedKey(_))
         ));
     }
@@ -202,7 +197,7 @@ mod tests {
             modifiers: vec![],
         };
         assert!(matches!(
-            validate_binding(&binding),
+            parse_binding(&binding),
             Err(ComboHotkeyError::UnsupportedKey(_))
         ));
     }

@@ -39,10 +39,6 @@ export function openSystemSettings(
     return invokeOrMock("open_system_settings", { pane }, () => undefined)
 }
 
-export function triggerMicrophonePrompt(): Promise<void> {
-    return invokeOrMock("trigger_microphone_prompt", undefined, () => undefined)
-}
-
 export function checkScreenCapturePermission(): Promise<PermissionStatus> {
     return invokeOrMock(
         "check_screen_capture_permission",

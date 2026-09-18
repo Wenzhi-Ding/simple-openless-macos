@@ -70,9 +70,7 @@ pub use auxiliary::{
     AsrCallLabel, AuxiliaryApi, RepolishRequest, RetranscriptionFailure, RetranscriptionResult,
 };
 pub use cancellation::CancellationToken;
-pub use cli::{
-    decode_launch_intent, encode_launch_intent, parse_cli_intent, CliIntent, LaunchIntent,
-};
+pub use cli::{parse_cli_intent, CliIntent};
 
 pub use config::{
     BackendConfig, BackendDependencies, Clock, SystemClock, TaskSpawner, TokioTaskSpawner,

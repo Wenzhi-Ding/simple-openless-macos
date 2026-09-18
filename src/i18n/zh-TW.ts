@@ -24,8 +24,7 @@ export const zhTW = {
   "nav": {
     "overview": "概覽",
     "history": "歷史",
-    "vocab": "詞彙表",
-    "more": "更多"
+    "vocab": "詞彙表"
   },
   "shell": {
     "betaTag": "BETA",
@@ -37,11 +36,7 @@ export const zhTW = {
     },
     "footer": {
       "settings": "設置",
-      "version": "版本 {{version}}",
-      "helpPopover": {
-      }
-    },
-    "screenOcrBanner": {
+      "version": "版本 {{version}}"
     }
   },
   "onboarding": {
@@ -108,9 +103,7 @@ export const zhTW = {
       "四",
       "五",
       "六"
-    ],
-    "inAppDictation": {
-    }
+    ]
   },
   "history": {
     "exportError": "匯出錄音失敗，請重試。",
@@ -220,8 +213,6 @@ export const zhTW = {
       "empty": "（模型返回了空結果）",
       "clear": "清除結果"
     }
-  },
-  "vocabCard": {
   },
   "insertFallbackCard": {
     "copy": "複製",

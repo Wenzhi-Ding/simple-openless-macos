@@ -24,8 +24,7 @@ export const ko = {
   "nav": {
     "overview": "개요",
     "history": "기록",
-    "vocab": "어휘",
-    "more": "더보기"
+    "vocab": "어휘"
   },
   "shell": {
     "betaTag": "BETA",
@@ -37,11 +36,7 @@ export const ko = {
     },
     "footer": {
       "settings": "설정",
-      "version": "버전 {{version}}",
-      "helpPopover": {
-      }
-    },
-    "screenOcrBanner": {
+      "version": "버전 {{version}}"
     }
   },
   "onboarding": {
@@ -108,9 +103,7 @@ export const ko = {
       "목",
       "금",
       "토"
-    ],
-    "inAppDictation": {
-    }
+    ]
   },
   "history": {
     "exportError": "녹음을 내보내지 못했습니다. 다시 시도해 주세요.",
@@ -220,8 +213,6 @@ export const ko = {
       "empty": "(모델이 빈 결과를 반환했습니다)",
       "clear": "결과 지우기"
     }
-  },
-  "vocabCard": {
   },
   "insertFallbackCard": {
     "copy": "복사",

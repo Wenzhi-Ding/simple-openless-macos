@@ -745,7 +745,7 @@ impl CoreTextInserter for TauriTextInserter {
     fn begin(
         &self,
         _session_id: SessionId,
-        context: Arc<DictationContext>,
+        _context: Arc<DictationContext>,
     ) -> BoxFuture<'static, Result<Arc<dyn TextInsertionSession>, BackendError>> {
         let app = Arc::clone(&self.app);
         let insertion_target = self.insertion_target.clone();
@@ -759,7 +759,6 @@ impl CoreTextInserter for TauriTextInserter {
                 )
             })?;
             Ok(Arc::new(TauriTextInsertionSession {
-                context,
                 insertion_target,
                 finished: Arc::new(AtomicBool::new(false)),
             }) as Arc<dyn TextInsertionSession>)
@@ -768,7 +767,6 @@ impl CoreTextInserter for TauriTextInserter {
 }
 #[derive(Clone)]
 struct TauriTextInsertionSession {
-    context: Arc<DictationContext>,
     insertion_target: Option<crate::focus_target::InsertionTarget>,
     finished: Arc<AtomicBool>,
 }

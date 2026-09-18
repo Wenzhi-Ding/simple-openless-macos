@@ -1,1 +1,0 @@
-export { isDesktop } from "../platform"

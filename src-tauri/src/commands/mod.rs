@@ -10,7 +10,7 @@ pub(crate) use crate::coordinator::Coordinator;
 pub(crate) use crate::permissions::PermissionStatus;
 pub(crate) use crate::recorder::{AudioConsumer, Recorder};
 pub(crate) use crate::types::{
-    ActivityDay, ComboBinding, DictationSession, HotkeyCapability, HotkeyStatus, ShortcutBinding,
+    ActivityDay, DictationSession, HotkeyCapability, HotkeyStatus, ShortcutBinding,
     UserPreferences,
 };
 use parking_lot::Mutex;
@@ -142,14 +142,6 @@ mod tests {
         super::sync_dictation_hotkey_legacy_fields(&mut prefs);
         assert_eq!(prefs.hotkey.trigger, HotkeyTrigger::Custom);
         assert!(prefs.custom_combo_hotkey.is_none());
-    }
-    #[test]
-    fn validate_combo_hotkey_rejects_bare_shift() {
-        let result = super::validate_combo_hotkey(ComboBinding {
-            primary: "Shift".into(),
-            modifiers: vec![],
-        });
-        assert!(result.is_err());
     }
     #[test]
     fn combo_hotkey_bare_shift_rejection_matches_dictation_setter() {

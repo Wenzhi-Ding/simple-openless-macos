@@ -101,21 +101,6 @@ pub fn open_system_settings(pane: String) -> Result<(), String> {
             .map_err(|e| e.to_string())
     }
 }
-/// 触发 macOS 系统弹"是否允许 OpenLess 访问麦克风"对话框。
-/// 与 Swift `MicrophonePermission.request()` 同语义：只信系统权限回调，
-/// 不用 cpal stream 成功与否伪造授权状态。
-#[tauri::command]
-pub async fn trigger_microphone_prompt(core: CoreState<'_>) -> Result<(), String> {
-    let status = request_microphone_permission(core).await?;
-    if matches!(
-        status,
-        PermissionStatus::Granted | PermissionStatus::NotApplicable
-    ) {
-        Ok(())
-    } else {
-        Err(format!("microphone permission is {status:?}"))
-    }
-}
 #[cfg(test)]
 mod tests {
     use super::*;

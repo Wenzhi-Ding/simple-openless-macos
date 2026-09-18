@@ -1,9 +1,5 @@
 import { invokeOrMock } from "./shared"
 
-export function startDictation(): Promise<void> {
-    return invokeOrMock("start_dictation", undefined, () => undefined)
-}
-
 export function stopDictation(): Promise<void> {
     return invokeOrMock("stop_dictation", undefined, () => undefined)
 }

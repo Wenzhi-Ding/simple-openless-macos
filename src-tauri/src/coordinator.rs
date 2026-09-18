@@ -26,8 +26,6 @@ pub(crate) use capsule_focus::capture_frontmost_app;
 use capsule_focus::*;
 use hotkey_loops::*;
 
-#[cfg(any(debug_assertions, test))]
-use dictation::{handle_pressed, handle_released};
 use dictation::{handle_pressed_edge, handle_released_edge, handle_trigger_combined};
 
 /// 兜底卡片的窗口宽度（逻辑点）。比词条卡片宽一点 —— 这张要放一整段话。
@@ -693,17 +691,6 @@ impl Coordinator {
             "[coord] shortcut recording active={active} (synced_to_hotkey={})",
             sync_ok.unwrap_or(false)
         );
-    }
-
-
-    #[cfg(any(debug_assertions, test))]
-    pub async fn inject_hotkey_click_for_dev(&self) -> Result<(), String> {
-        log::info!("[coord] dev hotkey injection started");
-        let press_id = crate::hotkey::next_press_id();
-        handle_pressed(&self.inner, std::time::Instant::now(), press_id).await;
-        handle_released(&self.inner, std::time::Instant::now(), press_id).await;
-        let _ = self.inner.backend.cancel_dictation(None).await;
-        Ok(())
     }
 }
 

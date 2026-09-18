@@ -24,8 +24,7 @@ export const ja = {
   "nav": {
     "overview": "概要",
     "history": "履歴",
-    "vocab": "用語集",
-    "more": "その他"
+    "vocab": "用語集"
   },
   "shell": {
     "betaTag": "ベータ",
@@ -37,11 +36,7 @@ export const ja = {
     },
     "footer": {
       "settings": "設定",
-      "version": "バージョン {{version}}",
-      "helpPopover": {
-      }
-    },
-    "screenOcrBanner": {
+      "version": "バージョン {{version}}"
     }
   },
   "onboarding": {
@@ -108,9 +103,7 @@ export const ja = {
       "木",
       "金",
       "土"
-    ],
-    "inAppDictation": {
-    }
+    ]
   },
   "history": {
     "exportError": "録音のエクスポートに失敗しました。もう一度お試しください。",
@@ -220,8 +213,6 @@ export const ja = {
       "empty": "（モデルから空の結果が返されました）",
       "clear": "結果を消去"
     }
-  },
-  "vocabCard": {
   },
   "insertFallbackCard": {
     "copy": "コピー",

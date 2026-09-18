@@ -2,16 +2,12 @@
 
 export type { PlatformCapabilities } from "../types"
 
-// platform
-export { isDesktop } from "./platform-exports"
-
 // shared
 export { isTauri, invokeOrMock, getPlatformCapabilities } from "./shared"
 
 // settings
 export type { StartupSnapshot } from "./settings"
 export {
-    BACKEND_CONTRACT_VERSION,
     getStartupSnapshot,
     getSettings,
     setSettings,
@@ -41,7 +37,6 @@ export {
 
 // dictation
 export {
-    startDictation,
     stopDictation,
     cancelDictation,
 } from "./dictation"
@@ -53,15 +48,12 @@ export {
     checkMicrophonePermission,
     requestMicrophonePermission,
     openSystemSettings,
-    triggerMicrophonePrompt,
 } from "./permissions"
 
 // hotkeys
 export {
     getHotkeyStatus,
     getHotkeyCapability,
-    validateComboHotkey,
-    setComboHotkey,
     validateShortcutBinding,
     setDictationHotkey,
     setShortcutRecordingActive,

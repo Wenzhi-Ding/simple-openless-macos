@@ -17,8 +17,8 @@ tauri-build = { version = "2", features = [] }
 cc = "1.1"
 
 [dependencies]
-# Framework-independent business core.  Tauri remains an adapter and owns the
-# window/plugin/IPC concerns; Linux must depend on the same crate directly.
+# Framework-independent business core. Tauri remains an adapter and owns the
+# window/plugin/IPC concerns.
 openless-core = { path = "../crates/openless-core" }
 llama-cpp-2 = { version = "0.1.156", default-features = false, features = ["metal"] }
 encoding_rs = "0.8"
@@ -59,8 +59,8 @@ core-graphics = "0.24"
 # 直接依赖零额外编译成本。
 coreaudio-sys = "0.2"
 objc2 = { version = "0.5", features = ["exception"] }
-# 屏幕 OCR（听写触发的本地 Vision 识别）： objc2 只用 msg_send/class 手写桥接
-# （与 selection.rs 同模式），数组/字符串经 core-foundation toll-free bridging；
+# 屏幕 OCR（听写触发截图，交给常驻 RapidOCR worker 识别）：截图到 PNG 的编码
+# 经 ImageIO C API 手写桥接，数组/字符串走 core-foundation toll-free bridging；
 # foreign-types 提供 CGImage::as_ptr。
 foreign-types = "0.5"
 
@@ -72,11 +72,9 @@ default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]
 
 [profile.release]
-# 之前没有 [profile.release] —— 发布版走 Cargo 默认（无 LTO、不 strip、
-# codegen-units=16）。这个体量的 Tauri 应用（tokio-full / reqwest / axum /
-# sherpa-onnx / windows crate 全家桶）开 LTO + codegen-units=1 + strip 能
-# 明显减小二进制体积并提升运行速度。保留默认 panic="unwind"：后台线程 panic
-# 时只杀该线程、不 abort 掉常驻进程，稳健性与改动前一致。
+# 发布版不走 Cargo 默认（无 LTO、不 strip、codegen-units=16）：LTO +
+# codegen-units=1 + strip 能明显减小二进制体积并提升运行速度。保留默认
+# panic="unwind"：后台线程 panic 时只杀该线程、不 abort 掉常驻进程。
 opt-level = 3
 lto = "thin"
 codegen-units = 1

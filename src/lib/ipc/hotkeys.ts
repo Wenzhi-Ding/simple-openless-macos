@@ -1,4 +1,4 @@
-import type { ComboBinding, HotkeyCapability, HotkeyStatus, ShortcutBinding } from "../types"
+import type { HotkeyCapability, HotkeyStatus, ShortcutBinding } from "../types"
 import { invokeOrMock } from "./shared"
 import {
     mockHotkeyStatus,
@@ -11,14 +11,6 @@ export function getHotkeyStatus(): Promise<HotkeyStatus> {
 
 export function getHotkeyCapability(): Promise<HotkeyCapability> {
     return invokeOrMock("get_hotkey_capability", undefined, () => mockHotkeyCapability)
-}
-
-export function validateComboHotkey(binding: ComboBinding): Promise<void> {
-    return invokeOrMock("validate_combo_hotkey", { binding }, () => undefined)
-}
-
-export function setComboHotkey(binding: ComboBinding): Promise<void> {
-    return invokeOrMock("set_combo_hotkey", { binding }, () => undefined)
 }
 
 export function validateShortcutBinding(

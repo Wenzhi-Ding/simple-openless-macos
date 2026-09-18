@@ -24,8 +24,7 @@ export const zhCN = {
   "nav": {
     "overview": "概览",
     "history": "历史",
-    "vocab": "词汇表",
-    "more": "更多"
+    "vocab": "词汇表"
   },
   "shell": {
     "betaTag": "BETA",
@@ -37,11 +36,7 @@ export const zhCN = {
     },
     "footer": {
       "settings": "设置",
-      "version": "版本 {{version}}",
-      "helpPopover": {
-      }
-    },
-    "screenOcrBanner": {
+      "version": "版本 {{version}}"
     }
   },
   "onboarding": {
@@ -108,9 +103,7 @@ export const zhCN = {
       "四",
       "五",
       "六"
-    ],
-    "inAppDictation": {
-    }
+    ]
   },
   "history": {
     "exportError": "导出录音失败，请重试。",
@@ -220,8 +213,6 @@ export const zhCN = {
       "empty": "（模型返回了空结果）",
       "clear": "清除结果"
     }
-  },
-  "vocabCard": {
   },
   "insertFallbackCard": {
     "copy": "复制",
