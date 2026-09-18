@@ -1,7 +1,4 @@
 // Barrel — re-exports every public symbol from the domain modules.
-// 减法改造(纯本地):云端凭据/渠道、QA、Less Computer、Selection Voice、
-// Coding Agent、Marketplace、GitHub OAuth、updater、remote-server、
-// check_network 的导出已随对应后端命令移除。
 
 export type { PlatformCapabilities } from "../types"
 

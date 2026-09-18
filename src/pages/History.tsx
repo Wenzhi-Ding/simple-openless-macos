@@ -88,7 +88,7 @@ export function History() {
   const searchShortcut = os === 'mac' ? '⌘K' : 'Ctrl+K';
 
   // 搜索词防抖：随输入实时更新 query，300ms 后落到 debouncedQuery 再过滤，
-  // 避免每个按键都重算整张列表（与 Marketplace 同模式）。
+  // 避免每个按键都重算整张列表。
   useEffect(() => {
     const id = window.setTimeout(() => setDebouncedQuery(query), 300);
     return () => window.clearTimeout(id);
