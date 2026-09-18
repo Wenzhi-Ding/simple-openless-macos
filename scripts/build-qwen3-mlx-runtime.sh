@@ -43,8 +43,13 @@ echo "=== prune (headers/tests/idle + hub/httpx 网络栈整体移除) ==="
 # 注意:certifi/idna 必须保留——rapidocr 经 download_file.py 硬性 import
 # requests,而 requests 启动时就要 import 这两个包。requests 本体留在运行时
 # 里无害:真正的离线边界是 worker 的 socket 拒绝守卫(netcheck 自检)。
+# PyYAML 的 C 加速扩展(_yaml)是 wheel 自带的 ad-hoc 签名二进制,macOS 按未
+# 公证代码拦截它(首次加载弹"Apple 无法验证"对话框;2026-09-18 实测于非
+# /Applications 路径)。OCR 配置解析量极小,PyYAML 自动回退纯 Python,剔除。
 LIB="$RUNTIME_DIR/lib/python3.12"
 SP="$LIB/site-packages"
+rm -f "$SP/yaml/"_yaml*.so
+rm -rf "$SP/_yaml"
 rm -rf "$LIB/test" "$LIB/idlelib" "$LIB/lib2to3" "$LIB/tkinter" "$LIB/turtledemo" \
        "$RUNTIME_DIR/bin/pip3" "$RUNTIME_DIR/bin/pip3.12" \
        "$SP/setuptools" "$SP/wheel" 2>/dev/null || true
