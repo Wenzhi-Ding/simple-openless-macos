@@ -124,3 +124,6 @@ CapsWriter
 /.codex
 
 /.zcode/
+
+# 任务中间产物快照（不提交）
+/.temp/
