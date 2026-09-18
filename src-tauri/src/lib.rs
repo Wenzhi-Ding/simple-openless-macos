@@ -697,7 +697,12 @@ fn dispatch_cli_intent<R: Runtime>(app: &AppHandle<R>, intent: cli::CliIntent) {
                     }
                 }
                 if let Err(error) = backend.dispatch_cli_intent(intent).await {
-                    log::warn!("[cli] core intent failed: {error}");
+                    // Cancelled 是空录音的静默结束，不是派发失败。
+                    if error.code == openless_core::BackendErrorCode::Cancelled {
+                        log::info!("[cli] core intent ended without output: {error}");
+                    } else {
+                        log::warn!("[cli] core intent failed: {error}");
+                    }
                 }
             });
         }

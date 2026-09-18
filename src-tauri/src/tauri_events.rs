@@ -115,7 +115,13 @@ async fn forward_legacy_event(
                     }
                 };
                 if let Err(error) = result {
-                    if error.code != openless_core::BackendErrorCode::InvalidState {
+                    // InvalidState：会话已被别的路径收尾；Cancelled：空录音静默
+                    // 结束。两者都是预期结果，不是自动收尾失败。
+                    if !matches!(
+                        error.code,
+                        openless_core::BackendErrorCode::InvalidState
+                            | openless_core::BackendErrorCode::Cancelled
+                    ) {
                         log::warn!("[recording] automatic terminal action failed: {error}");
                     }
                 }

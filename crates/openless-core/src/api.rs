@@ -1599,11 +1599,9 @@ impl OpenLessBackend {
         };
 
         if engine_result.raw_text.trim().is_empty() {
-            let error = BackendError::new(
-                BackendErrorCode::Provider,
-                "transcription provider returned an empty transcript",
-            );
-            self.mark_dictation_failed(session_id, &error);
+            // 空录音（没说话或全程静音）不是故障：胶囊按取消态静默淡出，
+            // 不弹红色错误。历史仍留 emptyTranscript 条目——空录音的归档
+            // 音频靠该条目在历史页提供「重新转写」入口，删掉会孤立音频文件。
             self.persist_failed_dictation(
                 &context,
                 session_id,
@@ -1625,10 +1623,24 @@ impl OpenLessBackend {
                     ),
                 ),
             );
+            {
+                let mut state = self.state.write().expect("backend state lock poisoned");
+                if state.dictation.session_id == Some(session_id) {
+                    state.dictation.phase = DictationPhase::Cancelled;
+                    self.events.publish(
+                        Some(session_id),
+                        BackendEventKind::DictationStateChanged(state.dictation.clone()),
+                    );
+                    self.phase_changed.notify_waiters();
+                }
+            }
             let _ = self.cancel_text_insertion(session_id).await;
             let _ = self.hide_dictation_feedback(session_id);
             self.reset_dictation_session(session_id);
-            return Err(error);
+            return Err(BackendError::new(
+                BackendErrorCode::Cancelled,
+                "transcription returned an empty transcript",
+            ));
         }
 
         // Cancellation may happen while ASR/LLM work is in flight. Never
