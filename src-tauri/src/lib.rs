@@ -26,6 +26,7 @@ mod hotkey;
 mod hotwords;
 mod insertion;
 mod local_llm;
+mod ocr_engine;
 mod permissions;
 mod persistence;
 mod recorder;

@@ -374,12 +374,35 @@ pub(crate) fn screen_ocr_focused_window_identity() -> Option<(i32, u32)> {
     macos::focused_identity_for_tests()
 }
 
+/// 屏幕 OCR 焦点闸门的拒绝类别。调用方据此决定硬拒绝还是降级放行：
+/// 敏感状态与冻结目标漂移仍然硬拒绝；只有「目标 app 汇报不了焦点元素」
+/// 允许调用方按授权降级（2026-09-18，见 screen_ocr.rs observe）。
+#[cfg(target_os = "macos")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum OcrGateRejection {
+    /// Secure Input / 密码框 / 黑名单应用。
+    Sensitive(&'static str),
+    /// 焦点归属或焦点所在窗口与冻结目标不一致。
+    Mismatch(&'static str),
+    /// 读不到焦点元素（无焦点 / AX 不可达 / 归属无法确认）。
+    Unavailable(&'static str),
+}
+
 #[cfg(target_os = "macos")]
 pub(crate) fn screen_ocr_focus_gate(
     expected_pid: i32,
     expected_window_id: u32,
-) -> Result<(), &'static str> {
+) -> Result<(), OcrGateRejection> {
     macos::ocr_focus_gate(expected_pid, expected_window_id)
+}
+
+/// 冻结目标用（macOS）：焦点元素可读、归属 `expected_pid` 且能取到所在窗口时，
+/// 返回该窗口的 CGWindowID；其余情况 None（调用方退回按窗口前后顺序选择）。
+/// 不做黑名单/密码判定——那些由 freeze_target 在调用前完成；这里只回答
+/// 「用户此刻在哪个窗口里打字」。
+#[cfg(target_os = "macos")]
+pub(crate) fn focused_window_id_for_pid(expected_pid: i32) -> Option<u32> {
+    macos::focused_window_id_for_pid(expected_pid)
 }
 
 #[cfg(test)]

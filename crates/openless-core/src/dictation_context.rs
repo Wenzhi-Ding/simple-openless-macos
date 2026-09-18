@@ -239,7 +239,19 @@ impl DictationContext {
         let trace = match self.screen_ocr_pending.take() {
             crate::screen_ocr::ScreenOcrTake::Ready(text) => {
                 updated.polish.screen_ocr = Some(text);
-                PolishContextTrace::included()
+                // 焦点降级放行（2026-09-18 用户授权）：正文照常用，但诊断必须
+                // 如实标注「焦点校验未执行」，不能伪装成完整校验过的结果。
+                if self.screen_ocr_pending.focus_gate_relaxed() {
+                    PolishContextTrace::new(
+                        PolishContextStatus::Included,
+                        Some(
+                            "focus check skipped: target app reported no focused element"
+                                .to_string(),
+                        ),
+                    )
+                } else {
+                    PolishContextTrace::included()
+                }
             }
             crate::screen_ocr::ScreenOcrTake::EmptyNormalized => PolishContextTrace::new(
                 PolishContextStatus::Empty,
@@ -425,5 +437,71 @@ mod tests {
         let prompt = build_asr_prompt(&[over_budget, "OpenLess".to_string()]).unwrap();
         assert_eq!(prompt, "OpenLess.");
         assert!(prompt.chars().count() <= ASR_PROMPT_CHAR_BUDGET);
+    }
+
+    /// 最小槽位桩：正文就绪，降级标记可变。
+    struct ReadySlot {
+        relaxed: bool,
+    }
+
+    impl crate::ports::ScreenOcrSlot for ReadySlot {
+        fn try_take(&self) -> Option<String> {
+            Some("OCR 正文".to_string())
+        }
+
+        fn discard(&self) {}
+
+        fn focus_gate_relaxed(&self) -> bool {
+            self.relaxed
+        }
+    }
+
+    fn context_with_ocr_slot(
+        slot: std::sync::Arc<dyn crate::ports::ScreenOcrSlot>,
+    ) -> DictationContext {
+        let preferences = UserPreferences::default();
+        let mut context = DictationContext::capture(
+            &preferences,
+            DictationProviderInvocations::new(
+                ProviderInvocation::for_provider(preferences.active_asr_provider.clone()),
+                ProviderInvocation::for_provider(preferences.active_llm_provider.clone()),
+            ),
+            Vec::new(),
+            Vec::new(),
+            &DictationStartOptions::default(),
+        );
+        context.screen_ocr_pending = crate::screen_ocr::ScreenOcrPending::new(slot);
+        context
+    }
+
+    #[test]
+    fn relaxed_screen_ocr_is_adopted_but_honestly_marked() {
+        let context = context_with_ocr_slot(std::sync::Arc::new(ReadySlot { relaxed: true }));
+        let frozen = context.with_screen_ocr_frozen();
+        assert_eq!(frozen.polish.screen_ocr.as_deref(), Some("OCR 正文"));
+        assert_eq!(
+            frozen.polish.screen_ocr_trace.status,
+            PolishContextStatus::Included
+        );
+        let reason = frozen.polish.screen_ocr_trace.reason.as_deref().unwrap_or("");
+        assert!(
+            reason.contains("focus check skipped"),
+            "降级放行必须在诊断轨迹里如实标注，实际 reason: {reason}"
+        );
+    }
+
+    #[test]
+    fn fully_gated_screen_ocr_trace_carries_no_reason() {
+        let context = context_with_ocr_slot(std::sync::Arc::new(ReadySlot { relaxed: false }));
+        let frozen = context.with_screen_ocr_frozen();
+        assert_eq!(frozen.polish.screen_ocr.as_deref(), Some("OCR 正文"));
+        assert_eq!(
+            frozen.polish.screen_ocr_trace.status,
+            PolishContextStatus::Included
+        );
+        assert_eq!(
+            frozen.polish.screen_ocr_trace.reason, None,
+            "完整校验通过的轨迹不得附加降级标注"
+        );
     }
 }

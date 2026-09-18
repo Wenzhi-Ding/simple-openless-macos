@@ -146,6 +146,14 @@ pub trait ScreenOcrSlot: Send + Sync {
     fn outcome(&self) -> Option<ScreenOcrOutcome> {
         None
     }
+
+    /// 本次观测是否在焦点不可达时走了降级放行（2026-09-18 用户授权）：目标
+    /// app 不汇报焦点元素时，仅凭非焦点校验（前台 pid 未变、冻结窗口仍在屏、
+    /// bundle 黑名单、Secure Input）截图。core 用它给诊断如实标注「焦点校验
+    /// 未执行」；默认 false。实现方不得经此方法暴露正文。
+    fn focus_gate_relaxed(&self) -> bool {
+        false
+    }
 }
 
 /// Content-free terminal outcomes of one screen-OCR observation. Mapped by

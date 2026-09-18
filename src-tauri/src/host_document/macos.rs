@@ -197,17 +197,20 @@ unsafe fn focused_element_passing_the_gate(mut gate: GateInputs) -> GatedElement
 }
 
 /// 屏幕 OCR 复用的焦点安全闸门：与光标上下文同一条判定路径
-/// （focused_element_passing_the_gate），但按 OCR 的合同收紧三点：
+/// （focused_element_passing_the_gate），但按 OCR 的合同收紧两点：
 /// 1. 焦点元素的归属 pid 必须等于 expected_pid（触发那一刻冻结的前台 pid）；
 /// 2. 焦点元素所在窗口的 CGWindowID（_AXUIElementGetWindow SPI）必须等于
 ///    expected_window_id——同 app 切到另一个窗口（例如弹出的密码面板）同样
-///    拒绝，绝不用焦点闸门替别的窗口背书；
-/// 3. 任何 Unavailable（读不到焦点/窗口/窗口 id）一律拒绝（fail closed）。
-/// 只在专用 OCR 线程上调用（同步 AX，超时见 AX_MESSAGING_TIMEOUT_SECS）。
+///    拒绝，绝不用焦点闸门替别的窗口背书。
+/// 拒绝按 [`super::OcrGateRejection`] 分类上抛：敏感状态与目标漂移由调用方
+/// 硬拒绝；读不到焦点元素（Unavailable）是否降级放行由调用方按授权决定
+/// （本函数自身不做这个决定）。只在专用 OCR 线程上调用（同步 AX，超时见
+/// AX_MESSAGING_TIMEOUT_SECS）。
 pub(super) fn ocr_focus_gate(
     expected_pid: i32,
     expected_window_id: u32,
-) -> Result<(), &'static str> {
+) -> Result<(), super::OcrGateRejection> {
+    use super::OcrGateRejection as Rejection;
     let (_, bundle_id) = crate::focus_target::current_front_app_parts();
     let gate = GateInputs {
         secure_input: crate::unicode_keystroke::is_secure_input_enabled(),
@@ -223,16 +226,50 @@ pub(super) fn ocr_focus_gate(
                 let window_matches = focused_window_matches(element, expected_window_id);
                 CFRelease(element as CFTypeRef);
                 if !pid_ok || pid != expected_pid {
-                    Err("focused element no longer belongs to the frozen app")
+                    Err(Rejection::Mismatch(
+                        "focused element no longer belongs to the frozen app",
+                    ))
                 } else if !window_matches {
-                    Err("focused window is not the frozen window")
+                    Err(Rejection::Mismatch(
+                        "focused window is not the frozen window",
+                    ))
                 } else {
                     Ok(())
                 }
             }
-            GatedElement::Blocked(reason) => Err(reason.as_str()),
-            GatedElement::Unavailable(why) => Err(why),
+            GatedElement::Blocked(reason) => Err(Rejection::Sensitive(reason.as_str())),
+            GatedElement::Unavailable(why) => Err(Rejection::Unavailable(why)),
         }
+    }
+}
+
+/// 冻结目标用：焦点元素可读、归属 `expected_pid` 且能取到所在窗口时，返回该
+/// 窗口的 CGWindowID；其余情况一律 None（调用方退回按窗口前后顺序选择）。
+///
+/// 与 [`ocr_focus_gate`] 刻意分开：这里不做黑名单/密码判定（freeze_target 在
+/// 调用前已查过前台 bundle 与 Secure Input），只回答「用户此刻在哪个窗口里
+/// 打字」，用来把冻结目标从「层序最前窗口」修正为「焦点所在窗口」——浏览器
+/// 地址栏联想下拉这类弹窗会压在主窗口上面，纯按前后顺序会冻错对象。
+/// 同步 AX（超时见 AX_MESSAGING_TIMEOUT_SECS），只在听写触发路径上调用一次。
+pub(super) fn focused_window_id_for_pid(expected_pid: i32) -> Option<u32> {
+    unsafe {
+        let system = AXUIElementCreateSystemWide();
+        if system.is_null() {
+            return None;
+        }
+        AXUIElementSetMessagingTimeout(system, AX_MESSAGING_TIMEOUT_SECS);
+        let focused = copy_element_attr(system, b"AXFocusedUIElement\0");
+        CFRelease(system as CFTypeRef);
+        let focused = focused?;
+        AXUIElementSetMessagingTimeout(focused, AX_MESSAGING_TIMEOUT_SECS);
+        let mut pid: i32 = 0;
+        let mut window_id: u32 = 0;
+        let ok = AXUIElementGetPid(focused, &mut pid) == AX_ERROR_SUCCESS
+            && pid == expected_pid
+            && _AXUIElementGetWindow(focused, &mut window_id) == AX_ERROR_SUCCESS
+            && window_id != 0;
+        CFRelease(focused as CFTypeRef);
+        ok.then_some(window_id)
     }
 }
 

@@ -453,22 +453,31 @@ impl Qwen3MlxRuntime {
 /// 顺序:环境变量覆盖(开发)→ exe 祖先目录中的 `resources/qwen3-mlx`
 /// (打包后为 Contents/Resources;qwen3-mlx 由 tauri resources 映射进去)。
 pub fn resolve_worker_locations() -> Result<(PathBuf, PathBuf)> {
+    resolve_runtime_worker("OPENLESS_QWEN3_MLX_WORKER", "qwen3_worker.py")
+}
+
+/// 同一个打包运行时里的 OCR worker(ocr_worker.py)解析入口。
+pub fn resolve_ocr_worker_locations() -> Result<(PathBuf, PathBuf)> {
+    resolve_runtime_worker("OPENLESS_OCR_WORKER", "ocr_worker.py")
+}
+
+fn resolve_runtime_worker(worker_env: &str, worker_name: &str) -> Result<(PathBuf, PathBuf)> {
     if let Ok(runtime_dir) = std::env::var("OPENLESS_QWEN3_MLX_RUNTIME") {
         let runtime_dir = PathBuf::from(runtime_dir.trim());
         let python = runtime_dir.join("bin").join("python3");
         if python.is_file() {
-            let worker = std::env::var("OPENLESS_QWEN3_MLX_WORKER")
+            let worker = std::env::var(worker_env)
                 .ok()
                 .map(|value| PathBuf::from(value.trim()))
                 .filter(|path| path.is_file())
-                .unwrap_or_else(|| default_worker_script_path(&runtime_dir));
+                .unwrap_or_else(|| default_worker_script_path(&runtime_dir, worker_name));
             if worker.is_file() {
                 return Ok((python, worker));
             }
         }
     }
     let exe =
-        std::env::current_exe().context("cannot locate current executable for Qwen3-ASR worker")?;
+        std::env::current_exe().context("cannot locate current executable for the bundled runtime")?;
     for ancestor in exe.ancestors().skip(1) {
         // 打包后:Resources/resources/qwen3-mlx(数组形式 resources 保留相对路径);
         // 开发:src-tauri/resources/qwen3-mlx(exe 在 target/{debug,release} 下)。
@@ -481,24 +490,24 @@ pub fn resolve_worker_locations() -> Result<(PathBuf, PathBuf)> {
                 .join("qwen3-mlx"),
         ] {
             let python = candidate.join("runtime").join("bin").join("python3");
-            let worker = candidate.join("worker").join("qwen3_worker.py");
+            let worker = candidate.join("worker").join(worker_name);
             if python.is_file() && worker.is_file() {
                 return Ok((python, worker));
             }
         }
     }
     bail!(
-        "Qwen3-ASR Python runtime not found next to {} (expected resources/qwen3-mlx/runtime)",
+        "bundled Python runtime not found next to {} (expected resources/qwen3-mlx/runtime)",
         exe.display()
     )
 }
 
-fn default_worker_script_path(runtime_dir: &Path) -> PathBuf {
+fn default_worker_script_path(runtime_dir: &Path, worker_name: &str) -> PathBuf {
     runtime_dir
         .parent()
         .unwrap_or(runtime_dir)
         .join("worker")
-        .join("qwen3_worker.py")
+        .join(worker_name)
 }
 
 fn spawn_worker(

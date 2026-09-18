@@ -127,6 +127,14 @@ impl ScreenOcrPending {
         self.0.as_ref().and_then(|slot| slot.outcome())
     }
 
+    /// 本次观测是否走了焦点降级放行路径（2026-09-18 用户授权；诊断如实
+    /// 标注用，正文路径不受影响）。
+    pub fn focus_gate_relaxed(&self) -> bool {
+        self.0
+            .as_ref()
+            .is_some_and(|slot| slot.focus_gate_relaxed())
+    }
+
     /// 作废槽位：cancel / 新会话 / 会话失败时调用。幂等。
     pub fn discard(&self) {
         if let Some(slot) = &self.0 {
@@ -175,24 +183,29 @@ mod tests {
         ready: Mutex<Option<String>>,
         // Discarded 是终态：之后任何"识别完成"都交不出结果（对齐真实现的槽位语义）。
         discarded: std::sync::atomic::AtomicBool,
+        relaxed: std::sync::atomic::AtomicBool,
         takes: AtomicUsize,
         discards: AtomicUsize,
     }
 
     impl FakeSlot {
         fn ready(text: &str) -> Arc<Self> {
-            Arc::new(Self {
-                ready: Mutex::new(Some(text.to_string())),
-                discarded: std::sync::atomic::AtomicBool::new(false),
-                takes: AtomicUsize::new(0),
-                discards: AtomicUsize::new(0),
-            })
+            Self::new(Some(text.to_string()), false)
+        }
+
+        fn ready_relaxed(text: &str) -> Arc<Self> {
+            Self::new(Some(text.to_string()), true)
         }
 
         fn pending() -> Arc<Self> {
+            Self::new(None, false)
+        }
+
+        fn new(ready: Option<String>, relaxed: bool) -> Arc<Self> {
             Arc::new(Self {
-                ready: Mutex::new(None),
+                ready: Mutex::new(ready),
                 discarded: std::sync::atomic::AtomicBool::new(false),
+                relaxed: std::sync::atomic::AtomicBool::new(relaxed),
                 takes: AtomicUsize::new(0),
                 discards: AtomicUsize::new(0),
             })
@@ -212,6 +225,10 @@ mod tests {
             self.discards.fetch_add(1, Ordering::SeqCst);
             self.discarded.store(true, Ordering::SeqCst);
             *self.ready.lock().unwrap() = None;
+        }
+
+        fn focus_gate_relaxed(&self) -> bool {
+            self.relaxed.load(Ordering::SeqCst)
         }
     }
 
@@ -306,5 +323,20 @@ mod tests {
         assert_ne!(a, b, "内容相同的两个槽位不是同一个观测");
         assert_eq!(a, a.clone());
         assert_eq!(ScreenOcrPending::default(), ScreenOcrPending::default());
+    }
+
+    #[test]
+    fn relaxed_flag_comes_from_the_slot_and_defaults_off() {
+        let plain = ScreenOcrPending::new(FakeSlot::ready("正文") as Arc<dyn ScreenOcrSlot>);
+        assert!(!plain.focus_gate_relaxed(), "默认不得标记降级");
+
+        let relaxed =
+            ScreenOcrPending::new(FakeSlot::ready_relaxed("正文") as Arc<dyn ScreenOcrSlot>);
+        assert!(relaxed.focus_gate_relaxed());
+
+        assert!(
+            !ScreenOcrPending::default().focus_gate_relaxed(),
+            "没有槽位（未启动观测）不得标记降级"
+        );
     }
 }

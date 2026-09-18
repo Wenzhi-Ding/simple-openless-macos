@@ -1,23 +1,30 @@
-//! macOS 屏幕 OCR 后台观测（本地 Vision，纯内存）。
+//! macOS 屏幕 OCR 后台观测（RapidOCR worker，纯内存）。
 //!
 //! 听写触发那一刻 `start` 在调用线程上冻结前台目标（pid + window id），随后把
-//! 截图与 OCR 全部搬到本模块自己的线程；录音 start 绝不为 OCR 等待。结果经
+//! 截图搬到本模块自己的线程；识别交给常驻的 `ocr_engine`（RapidOCR Python
+//! worker，离线自防护见 ocr_worker.py），录音 start 绝不为 OCR 等待。结果经
 //! `openless_core::ports::ScreenOcrSlot` 在润色输入冻结点被非阻塞收取。
 //!
 //! ## 安全模型（全部绑定「冻结那一刻」的目标，后台只做复核、不做替换）
 //!
 //! 冻结时：前台 pid/bundle + Secure Input + bundle 黑名单（复用
-//! `crate::host_document` 的闸门常量）+ 该 pid 最前面的普通层窗口 id；
-//! 我们自己的 pid（胶囊/弹出层）永不截取。
+//! `crate::host_document` 的闸门常量）；冻结窗口优先取焦点所在窗口（焦点
+//! 可读时——浏览器联想下拉这类弹窗会压在主窗口上面，纯按前后顺序会冻错
+//! 对象），焦点不可读退回该 pid 最前面的普通层窗口。我们自己的 pid
+//! （胶囊/弹出层）永不截取。
 //!
-//! 后台复核（任一不符即拒绝截图，绝不退整屏）：
-//! 1. 该 pid 的**最前**普通层窗口仍恰好是冻结的 window id——同 app 切到别的
-//!    窗口同样拒绝（AX 密码闸门只认焦点，不能替另一个窗口背书）；
+//! 后台复核（截图只截冻结窗口，绝不退整屏）：
+//! 1. 冻结窗口仍有效：焦点冻结模式要求它仍在屏且仍属冻结 pid（弹窗可能
+//!    压在它上面，层序最前不等于它）；层序冻结模式要求它仍是该 pid 的
+//!    **最前**普通层窗口——同 app 切到别的窗口即拒绝；
 //! 2. 当前前台 pid 仍是冻结 pid（用户切走 app = 放弃本次观测）；
-//! 3. `crate::host_document::screen_ocr_focus_gate`：焦点元素通过 Secure Input /
-//!    敏感应用 / 密码框闸门，元素归属 pid == 冻结 pid，**且焦点所在 AX 窗口的
-//!    _AXWindowID == 冻结 window id**；读不到焦点/窗口 id（fail closed）同样
-//!    拒绝——所以本功能实际同时需要「屏幕录制」与「辅助功能」权限；
+//! 3. `crate::host_document::screen_ocr_focus_gate`：敏感状态（Secure
+//!    Input / 敏感应用 / 密码框）与焦点漂移（归属 pid 或所在窗口与冻结
+//!    目标不符）一律硬拒绝；**焦点不可读（目标 app 不汇报焦点元素）时按
+//!    2026-09-18 用户授权降级放行**——此时黑名单与 Secure Input 已在闸门
+//!    第一阶段查过，叠加第 1、2 两条复核后截图，诊断如实标注焦点校验未
+//!    执行。降级路径丢掉的保护只有一项：网页密码框的 AX 角色检查（原生
+//!    密码框仍由 Secure Input 系统级拦截）；
 //! 4. CGPreflightScreenCaptureAccess 仅为预检、**从不弹窗**（授权只能由用户在
 //!    设置页主动触发，见 permissions 命令层）。
 //!
@@ -38,7 +45,7 @@
 //! history.json（2026-09-08 用户明确授权，仅本机、不上传、不进日志）；截图与
 //! 偏好仍然不存任何内容。
 
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
 
@@ -98,12 +105,16 @@ enum SlotState {
 /// --(discard)--> Discarded。终态后晚到的识别结果直接丢弃。
 pub(crate) struct ScreenOcrSlotImpl {
     state: Mutex<SlotState>,
+    /// 本次观测是否在焦点不可达时走了降级放行路径（2026-09-18 用户授权）。
+    /// 只供诊断如实标注，与正文路径无关。
+    focus_gate_relaxed: AtomicBool,
 }
 
 impl Default for ScreenOcrSlotImpl {
     fn default() -> Self {
         Self {
             state: Mutex::new(SlotState::Pending),
+            focus_gate_relaxed: AtomicBool::new(false),
         }
     }
 }
@@ -132,6 +143,12 @@ impl ScreenOcrSlotImpl {
             *self.state.lock().expect("screen-ocr slot lock poisoned"),
             SlotState::Pending | SlotState::Ready(_)
         )
+    }
+
+    /// 观测线程在降级放行时调用；必须先于 `complete`（先立标记再交正文，
+    /// core 在冻结点收正文时读到的标记才属于这次观测）。
+    fn mark_focus_gate_relaxed(&self) {
+        self.focus_gate_relaxed.store(true, Ordering::SeqCst);
     }
 }
 
@@ -168,6 +185,10 @@ impl ScreenOcrSlot for ScreenOcrSlotImpl {
             // 已经由 try_take 表达，core 不需要 outcome。
             _ => None,
         }
+    }
+
+    fn focus_gate_relaxed(&self) -> bool {
+        self.focus_gate_relaxed.load(Ordering::SeqCst)
     }
 }
 
@@ -217,6 +238,47 @@ pub(crate) fn choose_frontmost_window(windows: &[WindowInfo], front_pid: i32) ->
         .map(|window| window.id)
 }
 
+/// 冻结选窗（2026-09-18 授权修正）：焦点所在窗口（AX 读出、且确实在窗口
+/// 列表里、确实属该 pid）优先——浏览器联想下拉这类弹窗会压在主窗口上面，
+/// 纯按前后顺序会把弹窗冻成目标，复核时焦点窗口对不上只能整次作废；
+/// 读不到焦点或焦点窗口对不上列表时退回前后顺序选择。返回 (window_id,
+/// 是否按焦点冻结)，复核逻辑按这个标记区分口径。
+pub(crate) fn pick_frozen_window(
+    windows: &[WindowInfo],
+    front_pid: i32,
+    focused_window_id: Option<u32>,
+) -> Option<(u32, bool)> {
+    let top = choose_frontmost_window(windows, front_pid)?;
+    match focused_window_id {
+        Some(id)
+            if windows
+                .iter()
+                .any(|window| window.id == id && window.owner_pid == front_pid) =>
+        {
+            Some((id, true))
+        }
+        _ => Some((top, false)),
+    }
+}
+
+/// 复核冻结窗口是否仍有效。焦点冻结模式：弹窗可能仍压在它上面，层序最前
+/// 不等于它，只要求窗口仍在屏且仍属冻结 pid（截图按窗口号只截它自己）；
+/// 层序冻结模式：它必须仍是该 pid 最前的普通层窗口，同 app 切窗口即失效。
+pub(crate) fn frozen_window_still_valid(
+    windows: &[WindowInfo],
+    frozen_pid: i32,
+    window_id: u32,
+    frozen_via_focus: bool,
+) -> bool {
+    if frozen_via_focus {
+        windows
+            .iter()
+            .any(|window| window.id == window_id && window.owner_pid == frozen_pid)
+    } else {
+        choose_frontmost_window(windows, frozen_pid) == Some(window_id)
+    }
+}
+
 // ──────────────────── 屏幕录制权限（预检，不弹窗） ────────────────────
 
 #[cfg(target_os = "macos")]
@@ -245,8 +307,8 @@ pub fn request_screen_capture_permission() -> bool {
 #[cfg(target_os = "macos")]
 mod imp {
     use super::{
-        choose_frontmost_window, run_with_deadline, InflightGuard, ScreenOcrSlotImpl, WindowInfo,
-        SCREEN_OCR_DEADLINE,
+        frozen_window_still_valid, pick_frozen_window, run_with_deadline, InflightGuard,
+        ScreenOcrSlotImpl, WindowInfo, SCREEN_OCR_DEADLINE,
     };
     use core_foundation::base::{CFType, TCFType};
     use core_foundation::dictionary::CFDictionary;
@@ -267,19 +329,81 @@ mod imp {
     use std::time::Instant;
 
     /// CGWindowListCreateImage 拒绝截取的超大窗口（像素数）。正常窗口远低于此；
-    /// 超大 = 目标状态异常，宁可跳过也别让 Vision 吃满 5 秒预算。
+    /// 超大 = 目标状态异常，宁可跳过也别让 OCR 吃满 5 秒预算。
     const MAX_WINDOW_PIXELS: usize = 40_000_000;
 
-    // initWithCGImage:options: 的 CGImageRef 参数编码是 ^{CGImage}，objc2 的
-    // msg_send! 校验表达不了；这一条调用走固定签名的 objc_msgSend FFI。
-    #[link(name = "objc", kind = "dylib")]
+    // CGImage → PNG（仅内存）。ImageIO 的 C API：type identifier 用 UTType
+    // 旧式字符串 "public.png"；CFMutableData 起手 0 容量自动增长。
+    #[link(name = "CoreFoundation", kind = "framework")]
     extern "C" {
-        fn objc_msgSend(
-            receiver: *mut AnyObject,
-            sel: objc2::runtime::Sel,
-            image: *mut c_void,
-            options: *mut AnyObject,
-        ) -> *mut AnyObject;
+        fn CFDataCreateMutable(allocator: *const c_void, capacity: isize) -> *mut c_void;
+        fn CFDataGetLength(data: *const c_void) -> isize;
+        fn CFDataGetBytePtr(data: *const c_void) -> *const u8;
+        fn CFStringCreateWithCString(
+            allocator: *const c_void,
+            cstr: *const std::ffi::c_char,
+            encoding: u32,
+        ) -> *const c_void;
+    }
+    #[link(name = "ImageIO", kind = "framework")]
+    extern "C" {
+        fn CGImageDestinationCreateWithData(
+            data: *const c_void,
+            type_identifier: *const c_void,
+            count: usize,
+            options: *const c_void,
+        ) -> *mut c_void;
+        fn CGImageDestinationAddImage(
+            dest: *const c_void,
+            image: *const c_void,
+            properties: *const c_void,
+        );
+        fn CGImageDestinationFinalize(dest: *const c_void) -> bool;
+    }
+
+    /// 编码 CGImage 为 PNG 字节（纯内存；失败返回 None，绝不落盘）。
+    fn encode_png(image: &CGImage) -> Option<Vec<u8>> {
+        const K_CF_STRING_ENCODING_UTF8: u32 = 0x0800_0100;
+        unsafe {
+            let data = CFDataCreateMutable(std::ptr::null(), 0);
+            if data.is_null() {
+                return None;
+            }
+            let result = (|| {
+                let type_id = CFStringCreateWithCString(
+                    std::ptr::null(),
+                    b"public.png\0".as_ptr() as *const std::ffi::c_char,
+                    K_CF_STRING_ENCODING_UTF8,
+                );
+                if type_id.is_null() {
+                    return None;
+                }
+                let dest = CGImageDestinationCreateWithData(
+                    data,
+                    type_id,
+                    1,
+                    std::ptr::null(),
+                );
+                core_foundation::base::CFRelease(type_id);
+                if dest.is_null() {
+                    return None;
+                }
+                CGImageDestinationAddImage(dest, image.as_ptr() as *const c_void, std::ptr::null());
+                let ok = CGImageDestinationFinalize(dest);
+                core_foundation::base::CFRelease(dest as *const c_void);
+                if !ok {
+                    return None;
+                }
+                let length = CFDataGetLength(data);
+                let pointer = CFDataGetBytePtr(data);
+                if length <= 0 || pointer.is_null() {
+                    return None;
+                }
+                Some(std::slice::from_raw_parts(pointer, length as usize).to_vec())
+            })();
+            core_foundation::base::CFRelease(data as *const c_void);
+            result
+        }
     }
 
     /// NSWorkspace frontmostApplication 的 (pid, bundle id)。与 focus_target.rs 同一
@@ -371,92 +495,13 @@ mod imp {
         Some(image)
     }
 
-    /// 本地 Vision OCR（zh-Hans + en-US，accurate，语言纠正）。objc2 只用
-    /// msg_send/class（与 focus_target.rs 同模式）；NSArray/NSString 经 core-foundation
-    /// 的 toll-free bridging 构造与读取。**引用计数约定**：request/handler 出自
-    /// alloc/init（+1，手动 release 配对）；languages/empty_options/results 由 RAII
-    /// wrapper（Drop = CFRelease）持有，不做手动 release；NSError 出参按约定是
-    /// autoreleased，**绝不 release**。只在 OCR 工作线程（autoreleasepool 内）调用。
-    unsafe fn recognize_text(image: &CGImage) -> Option<String> {
-        use core_foundation::array::CFArray;
-
-        let zh = CFString::new("zh-Hans");
-        let en = CFString::new("en-US");
-        let languages = CFArray::from_CFTypes(&[zh, en]);
-
-        let request: *mut AnyObject = msg_send![class!(VNRecognizeTextRequest), alloc];
-        let request: *mut AnyObject = msg_send![request, init];
-        if request.is_null() {
-            return None;
-        }
-        let _: () = msg_send![
-            request,
-            setRecognitionLanguages: languages.as_concrete_TypeRef() as *mut AnyObject
-        ];
-        // VNRequestTextRecognitionLevelAccurate == 0
-        let _: () = msg_send![request, setRecognitionLevel: 0isize];
-        let _: () = msg_send![request, setUsesLanguageCorrection: true];
-
-        let empty_options = CFDictionary::<CFString, CFType>::from_CFType_pairs(&[]);
-        let handler: *mut AnyObject = msg_send![class!(VNImageRequestHandler), alloc];
-        let handler: *mut AnyObject = objc_msgSend(
-            handler,
-            objc2::sel!(initWithCGImage:options:),
-            image.as_ptr() as *mut c_void,
-            empty_options.as_concrete_TypeRef() as *mut AnyObject,
-        );
-        if handler.is_null() {
-            let _: () = msg_send![request, release];
-            return None;
-        }
-
-        let request_cf = CFType::wrap_under_get_rule(request as *const c_void);
-        let requests = CFArray::from_CFTypes(&[request_cf]);
-        let mut error: *mut AnyObject = std::ptr::null_mut();
-        let ok: bool = msg_send![
-            handler,
-            performRequests: requests.as_concrete_TypeRef() as *mut AnyObject,
-            error: &mut error as *mut *mut AnyObject
-        ];
-        let _: () = msg_send![handler, release];
-        if !ok || !error.is_null() {
-            // NSError 出参是 autoreleased（pool 会在收尾时回收），这里绝不能 release。
-            log::info!("[screen-ocr] vision performRequests failed");
-            let _: () = msg_send![request, release];
-            return None;
-        }
-
-        // results getter 返回非持有引用（autoreleased/内部集合），wrap_under_get_rule
-        // 取得自己的 +1，Drop 时配对释放——不手动 release。
-        let results: *mut AnyObject = msg_send![request, results];
-        if results.is_null() {
-            let _: () = msg_send![request, release];
-            return None;
-        }
-        let results_array = CFArray::<CFType>::wrap_under_get_rule(results as *const _);
-        let mut lines = Vec::with_capacity(results_array.len() as usize);
-        for index in 0..results_array.len() {
-            let observation: *mut AnyObject = msg_send![results, objectAtIndex: index as usize];
-            if observation.is_null() {
-                continue;
-            }
-            let candidates: *mut AnyObject = msg_send![observation, topCandidates: 1usize];
-            if candidates.is_null() {
-                continue;
-            }
-            let top: *mut AnyObject = msg_send![candidates, firstObject];
-            if top.is_null() {
-                continue;
-            }
-            let string: *mut AnyObject = msg_send![top, string];
-            if string.is_null() {
-                continue;
-            }
-            lines.push(CFString::wrap_under_get_rule(string as *const _).to_string());
-        }
-        let _: () = msg_send![request, release];
-        let text = lines.join("\n");
-        (!text.trim().is_empty()).then_some(text)
+    /// 截图 → RapidOCR worker（2026-09-18 由 Apple Vision 切换；对比实验见
+    /// .temp/ocr-bench-2026-09-18/）。PNG 只在内存中经 base64 过管道，不落盘；
+    /// worker 侧离线自防护见 ocr_worker.py。deadline 用尽或 worker 故障即 None
+    /// （调用方映射为 Failed，绝不让一次观测拖住录音）。
+    fn recognize_text(image: &CGImage, deadline: Instant) -> Option<String> {
+        let png = encode_png(image)?;
+        crate::ocr_engine::ocr_png(&png, deadline)
     }
 
     /// 后台复核 + 截图 + OCR。复核全部绑定冻结的目标，并在**截图前与 OCR 前**
@@ -466,6 +511,7 @@ mod imp {
     fn observe(
         window_id: u32,
         frozen_pid: i32,
+        frozen_via_focus: bool,
         deadline: Instant,
         slot: &ScreenOcrSlotImpl,
     ) -> Result<String, ScreenOcrOutcome> {
@@ -487,8 +533,8 @@ mod imp {
         }
 
         let windows = list_onscreen_windows().ok_or(ScreenOcrOutcome::Failed)?;
-        // 同 app 切换窗口也拒绝：该 app 的最前普通层窗口必须仍是冻结的那一个。
-        if choose_frontmost_window(&windows, frozen_pid) != Some(window_id) {
+        // 同 app 切换窗口也拒绝：复核口径随冻结方式（焦点/层序）分派。
+        if !frozen_window_still_valid(&windows, frozen_pid, window_id, frozen_via_focus) {
             return bail(
                 "frontmost window of the frozen app changed",
                 ScreenOcrOutcome::TargetChanged,
@@ -501,8 +547,25 @@ mod imp {
                 ScreenOcrOutcome::TargetChanged,
             );
         }
-        if let Err(reason) = crate::host_document::screen_ocr_focus_gate(frozen_pid, window_id) {
-            return bail(reason, focus_gate_outcome(reason));
+        let mut focus_gate_relaxed = false;
+        match crate::host_document::screen_ocr_focus_gate(frozen_pid, window_id) {
+            Ok(()) => {}
+            Err(crate::host_document::OcrGateRejection::Sensitive(reason)) => {
+                return bail(reason, ScreenOcrOutcome::SensitiveBlocked);
+            }
+            Err(crate::host_document::OcrGateRejection::Mismatch(reason)) => {
+                return bail(reason, ScreenOcrOutcome::TargetChanged);
+            }
+            // 目标 app 汇报不了焦点元素（网页套壳 / Electron 等）：按
+            // 2026-09-18 用户授权降级放行。此时黑名单与 Secure Input 已在闸门
+            // 第一阶段查过，前台 pid 与冻结窗口有效性也已复核；截图按窗口号
+            // 只截冻结窗口本身。标记进槽位，诊断里如实展示。
+            Err(crate::host_document::OcrGateRejection::Unavailable(reason)) => {
+                log::info!(
+                    "[screen-ocr] focus gate unavailable ({reason}); capturing with non-focus checks"
+                );
+                focus_gate_relaxed = true;
+            }
         }
         if !super::screen_capture_allowed() {
             return bail(
@@ -534,21 +597,11 @@ mod imp {
                 ScreenOcrOutcome::Timeout,
             );
         }
-        unsafe { recognize_text(&image) }.ok_or(ScreenOcrOutcome::Failed)
-    }
-
-    /// 焦点闸门拒绝原因 → 轻量结局。闸门 reason 是 &'static str（见
-    /// host_document::macos::ocr_focus_gate）：归属/窗口漂移算 TargetChanged，
-    /// Secure Input/密码框/黑名单应用算 SensitiveBlocked，AX 不可达（fail
-    /// closed，含辅助功能权限缺失）算 Failed。
-    fn focus_gate_outcome(reason: &str) -> ScreenOcrOutcome {
-        if reason.contains("belongs to the frozen app") || reason.contains("frozen window") {
-            ScreenOcrOutcome::TargetChanged
-        } else if matches!(reason, "secure_input" | "secure_text_field" | "blocked_app") {
-            ScreenOcrOutcome::SensitiveBlocked
-        } else {
-            ScreenOcrOutcome::Failed
+        let text = recognize_text(&image, deadline).ok_or(ScreenOcrOutcome::Failed)?;
+        if focus_gate_relaxed {
+            slot.mark_focus_gate_relaxed();
         }
+        Ok(text)
     }
 
     pub(super) fn start_macos() -> ScreenOcrStart {
@@ -561,7 +614,7 @@ mod imp {
 
         // 冻结与后台全程各包一层 autoreleasepool：ObjC 自动释放对象随池回收。
         let frozen = autoreleasepool(|_| freeze_target());
-        let (pid, window_id) = match frozen {
+        let (pid, window_id, via_focus) = match frozen {
             Ok(frozen) => frozen,
             Err(reason) => return ScreenOcrStart::not_started(reason),
         };
@@ -576,7 +629,7 @@ mod imp {
                 let work_slot = Arc::clone(&worker_slot);
                 let outcome = autoreleasepool(|_| {
                     run_with_deadline(SCREEN_OCR_DEADLINE, move || {
-                        observe(window_id, pid, deadline, &work_slot)
+                        observe(window_id, pid, via_focus, deadline, &work_slot)
                     })
                 });
                 // elapsed 在工作完成后才计量（此前版本在工作前取值，时长是假的）。
@@ -614,13 +667,16 @@ mod imp {
     }
 
     #[cfg(test)]
-    pub(super) unsafe fn recognize_text_for_tests(image: &CGImage) -> Option<String> {
-        recognize_text(image)
+    pub(super) fn encode_png_for_tests(image: &CGImage) -> Option<Vec<u8>> {
+        encode_png(image)
     }
 
-    /// 调用线程上的目标冻结（毫秒级，无 AX 调用）。返回 (pid, window_id)；
+    /// 调用线程上的目标冻结。返回 (pid, window_id, 是否按焦点冻结)；
     /// 拒绝原因以轻量枚举上抛（诊断要能说清「为什么没有这段上下文」）。
-    fn freeze_target() -> Result<(i32, u32), ScreenOcrNotStarted> {
+    /// 为把冻结目标从「层序最前窗口」修正为「焦点所在窗口」，这里做了一次
+    /// 同步 AX 读（超时见 AX_MESSAGING_TIMEOUT_SECS，读不到立即退回层序
+    /// 选择，不影响其余冻结检查）。
+    fn freeze_target() -> Result<(i32, u32, bool), ScreenOcrNotStarted> {
         let Some((pid, bundle)) = frontmost_pid_and_bundle() else {
             log::info!("[screen-ocr] skip: no frontmost application");
             return Err(ScreenOcrNotStarted::NoFrontmostApp);
@@ -648,11 +704,14 @@ mod imp {
             log::info!("[screen-ocr] skip: window list unavailable at trigger");
             return Err(ScreenOcrNotStarted::WindowUnavailable);
         };
-        let Some(window_id) = choose_frontmost_window(&windows, pid) else {
+        let focused_window_id = crate::host_document::focused_window_id_for_pid(pid);
+        let Some((window_id, via_focus)) =
+            pick_frozen_window(&windows, pid, focused_window_id)
+        else {
             log::info!("[screen-ocr] skip: no normal-layer window for the frozen app");
             return Err(ScreenOcrNotStarted::WindowUnavailable);
         };
-        Ok((pid, window_id))
+        Ok((pid, window_id, via_focus))
     }
 }
 
@@ -761,6 +820,79 @@ mod tests {
             None,
             "别家 app 的窗口不选"
         );
+    }
+
+    #[test]
+    fn pick_frozen_window_prefers_the_focused_window_over_a_popup_on_top() {
+        // 浏览器地址栏联想下拉压在主窗口上面：层序最前是弹窗（101），焦点在
+        // 主窗口（102）——必须冻结主窗口，并标记为焦点冻结。
+        let windows = [
+            WindowInfo {
+                id: 101,
+                owner_pid: 42,
+                layer: 0,
+            },
+            WindowInfo {
+                id: 102,
+                owner_pid: 42,
+                layer: 0,
+            },
+            WindowInfo {
+                id: 201,
+                owner_pid: 7,
+                layer: 0,
+            },
+        ];
+        assert_eq!(pick_frozen_window(&windows, 42, Some(102)), Some((102, true)));
+        // 焦点窗口不在列表里（AX 与 CG 列表对不上）→ 退回层序最前。
+        assert_eq!(pick_frozen_window(&windows, 42, Some(999)), Some((101, false)));
+        // 焦点窗口属于别的 pid → 不得接受，退回层序最前。
+        assert_eq!(pick_frozen_window(&windows, 42, Some(201)), Some((101, false)));
+        // 读不到焦点 → 退回层序最前。
+        assert_eq!(pick_frozen_window(&windows, 42, None), Some((101, false)));
+        // 该 app 只有浮层窗口 → 焦点窗口再像样也不选，fail closed。
+        let floating_only = [WindowInfo {
+            id: 900,
+            owner_pid: 42,
+            layer: 3,
+        }];
+        assert_eq!(pick_frozen_window(&floating_only, 42, Some(900)), None);
+    }
+
+    #[test]
+    fn frozen_window_recheck_matches_the_freeze_mode() {
+        // 弹窗（101）仍压在冻结的焦点窗口（102）上面。
+        let windows = [
+            WindowInfo {
+                id: 101,
+                owner_pid: 42,
+                layer: 0,
+            },
+            WindowInfo {
+                id: 102,
+                owner_pid: 42,
+                layer: 0,
+            },
+        ];
+        // 焦点冻结：窗口仍在屏且属该 app 即有效（层序最前是弹窗无妨）。
+        assert!(frozen_window_still_valid(&windows, 42, 102, true));
+        // 层序冻结：最前普通层窗口换了即失效。
+        assert!(!frozen_window_still_valid(&windows, 42, 102, false));
+        assert!(frozen_window_still_valid(&windows, 42, 101, false));
+        // 两种模式下：窗口消失或易主都失效。
+        assert!(!frozen_window_still_valid(&windows, 42, 999, true));
+        assert!(!frozen_window_still_valid(&windows, 7, 102, true));
+    }
+
+    #[test]
+    fn relaxed_flag_is_set_before_the_result_and_readable_afterwards() {
+        let slot = ScreenOcrSlotImpl::default();
+        assert!(!ScreenOcrSlot::focus_gate_relaxed(&slot), "默认不得标记降级");
+        // 观测线程的顺序约定：先立标记再交正文，core 收正文时读到的才是本次的。
+        slot.mark_focus_gate_relaxed();
+        slot.complete("正文".to_string());
+        assert!(ScreenOcrSlot::focus_gate_relaxed(&slot));
+        assert_eq!(ScreenOcrSlot::try_take(&slot).as_deref(), Some("正文"));
     }
 
     #[test]
@@ -960,53 +1092,38 @@ mod tests {
 
     #[test]
     #[cfg(target_os = "macos")]
-    fn real_vision_ocr_recognizes_a_synthetic_bilingual_image() {
-        // 在真实 autoreleasepool 中反复执行完整识别：任何多释放/漏池的引用错误
-        // 都会在多轮迭代里以崩溃或僵尸对象形式暴露。
-        for round in 0..8 {
-            let recognized = objc2::rc::autoreleasepool(|_| {
-                let image = text_drawing::render_text_image(&[
-                    "OpenLess Local OCR 12345",
-                    "屏幕识别测试专用行",
-                ])
-                .expect("synthetic bitmap should render");
-                unsafe { imp::recognize_text_for_tests(&image) }
-            });
-            let text = recognized.expect("vision should return text");
-            let lowered = text.to_lowercase();
-            assert!(lowered.contains("12345"), "round {round}; got: {text:?}");
-            assert!(lowered.contains("openless"), "round {round}; got: {text:?}");
-            assert!(
-                ["屏", "识", "测"].iter().any(|c| text.contains(*c)),
-                "round {round}; got: {text:?}"
-            );
-        }
+    fn encode_png_round_trips_to_a_decodable_png() {
+        let image = text_drawing::render_text_image(&["OpenLess PNG 编码测试"])
+            .expect("synthetic bitmap should render");
+        let png = imp::encode_png_for_tests(&image).expect("png encode should succeed");
+        assert_eq!(&png[..8], b"\x89PNG\r\n\x1a\n", "PNG magic bytes");
+        assert!(png.len() > 500, "png too small: {}", png.len());
     }
 
     #[test]
     #[cfg(target_os = "macos")]
-    fn real_vision_ocr_returns_none_for_a_blank_image() {
-        for _ in 0..4 {
-            let recognized = objc2::rc::autoreleasepool(|_| {
-                let space = core_graphics::color_space::CGColorSpace::create_device_rgb();
-                let context = core_graphics::context::CGContext::create_bitmap_context(
-                    None,
-                    200,
-                    100,
-                    8,
-                    0,
-                    &space,
-                    core_graphics::base::kCGImageAlphaPremultipliedLast,
-                );
-                context.set_rgb_fill_color(1.0, 1.0, 1.0, 1.0);
-                context.fill_rect(core_graphics::geometry::CGRect::new(
-                    &core_graphics::geometry::CGPoint::new(0.0, 0.0),
-                    &core_graphics::geometry::CGSize::new(200.0, 100.0),
-                ));
-                let image = context.create_image().expect("blank bitmap");
-                unsafe { imp::recognize_text_for_tests(&image) }
-            });
-            assert_eq!(recognized, None);
+    fn real_rapidocr_worker_recognizes_a_synthetic_bilingual_image() {
+        // 真实拉起打包运行时里的 ocr_worker.py（隔离模式 + socket 拒绝守卫），
+        // 识别合成图。runtime 是正常构建输入（AGENTS.md），不存在时显式留痕跳过。
+        if crate::asr::local::qwen3_mlx::resolve_ocr_worker_locations().is_err() {
+            eprintln!("[screen-ocr-test] SKIP: bundled OCR runtime not found");
+            return;
         }
+        let image = text_drawing::render_text_image(&[
+            "OpenLess Local OCR 12345",
+            "屏幕识别测试专用行",
+        ])
+        .expect("synthetic bitmap should render");
+        let png = imp::encode_png_for_tests(&image).expect("png encode should succeed");
+        let deadline = std::time::Instant::now() + Duration::from_secs(30);
+        let text =
+            crate::ocr_engine::ocr_png(&png, deadline).expect("worker should return text");
+        let lowered = text.to_lowercase();
+        assert!(lowered.contains("12345"), "got: {text:?}");
+        assert!(lowered.contains("openless"), "got: {text:?}");
+        assert!(
+            ["屏", "识", "测"].iter().any(|c| text.contains(*c)),
+            "got: {text:?}"
+        );
     }
 }
