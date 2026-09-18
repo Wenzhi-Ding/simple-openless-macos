@@ -71,12 +71,18 @@ const K_CF_NUMBER_CF_INDEX_TYPE: i32 = 14;
 #[link(name = "ApplicationServices", kind = "framework")]
 extern "C" {
     fn AXUIElementCreateSystemWide() -> AxUiElementRef;
+    fn AXUIElementCreateApplication(pid: i32) -> AxUiElementRef;
     fn AXUIElementGetPid(element: AxUiElementRef, pid: *mut i32) -> AxError;
     fn AXUIElementSetMessagingTimeout(element: AxUiElementRef, timeout: f32) -> AxError;
     fn AXUIElementCopyAttributeValue(
         element: AxUiElementRef,
         attribute: CFStringRef,
         value: *mut CFTypeRef,
+    ) -> AxError;
+    fn AXUIElementSetAttributeValue(
+        element: AxUiElementRef,
+        attribute: CFStringRef,
+        value: CFTypeRef,
     ) -> AxError;
     fn AXUIElementCopyParameterizedAttributeValue(
         element: AxUiElementRef,
@@ -115,6 +121,9 @@ extern "C" {
     fn CFStringGetLength(s: CFStringRef) -> isize;
     fn CFStringGetMaximumSizeForEncoding(length: isize, encoding: u32) -> isize;
     fn CFNumberGetValue(number: CFTypeRef, number_type: i32, value_ptr: *mut c_void) -> u8;
+    fn CFBooleanGetTypeID() -> CFTypeId;
+    fn CFBooleanGetValue(cf: CFTypeRef) -> u8;
+    static kCFBooleanTrue: CFTypeRef;
 }
 
 /// 拿到焦点元素的结果。`Ready` 里的 ref **调用方负责 `CFRelease`**。
@@ -157,10 +166,27 @@ unsafe fn focused_element_passing_the_gate(mut gate: GateInputs) -> GatedElement
     // 系统级 element 上的设置会成为本进程的默认值。
     AXUIElementSetMessagingTimeout(system, AX_MESSAGING_TIMEOUT_SECS);
 
-    let focused = copy_element_attr(system, b"AXFocusedUIElement\0");
+    let mut focused = copy_element_attr(system, b"AXFocusedUIElement\0");
     CFRelease(system as CFTypeRef);
 
+    // 系统级查询对 Chromium/Electron 类 app 稳定返回 kAXErrorCannotComplete ——
+    // 实测 ZCode（Electron 41）：同一时刻向它自己的 app AX 元素查询就能拿到焦点
+    // 元素（AXTextArea）。所以失败时退回按前台 pid 直查。拿到元素后照旧用元素
+    // 自己的 pid 换 bundle、连同 role/subrole 过第二道闸门，安全判定不变。
+    if focused.is_none() {
+        if let Some(pid) = crate::focus_target::current_front_app_pid() {
+            focused = copy_focused_element_from_app(pid);
+        }
+    }
+
     let Some(focused) = focused else {
+        // 两条路都拿不到焦点元素：对 Chromium/Electron 来说多半是渲染进程的
+        // AX 树没开。发一次激活握手（Electron 端有 2 秒防抖，对本次读取无效），
+        // 之后的读取受益。第一道闸门已通过（bundle 非黑名单、无 Secure Input），
+        // 握手目标和刚才的粗判对象是同一个前台 app。
+        if let Some(pid) = crate::focus_target::current_front_app_pid() {
+            maybe_activate_accessibility(pid);
+        }
         return GatedElement::Unavailable("no focused UI element (AX permission or no focus)");
     };
     // 显式再设一次：进程默认值只对「之后创建」的 ref 生效，对已有 ref 补一刀更稳。
@@ -194,6 +220,100 @@ unsafe fn focused_element_passing_the_gate(mut gate: GateInputs) -> GatedElement
     }
 
     GatedElement::Ready(focused)
+}
+
+/// 向指定 app 自己的 AX 元素要焦点元素（系统级查询失败时的退路）。
+/// 返回的 ref **调用方负责 `CFRelease`**。
+unsafe fn copy_focused_element_from_app(pid: i32) -> Option<AxUiElementRef> {
+    let app = AXUIElementCreateApplication(pid);
+    if app.is_null() {
+        return None;
+    }
+    AXUIElementSetMessagingTimeout(app, AX_MESSAGING_TIMEOUT_SECS);
+    let focused = copy_element_attr(app, b"AXFocusedUIElement\0");
+    CFRelease(app as CFTypeRef);
+    focused
+}
+
+/// 同一 pid 两次 AX 激活握手之间的最小间隔。
+///
+/// 必须明显大于 Electron 端的 2 秒防抖：每次 set 都会取消并重新排期那次延迟
+/// 启用（`enableScreenReaderCompleteModeAfterDelay`），冷却太短会让连续听写把
+/// 激活永远推到 2 秒之后。同时也兜住「目标 app 永远不开 AX」时的 AX 消息量。
+const AX_ACTIVATION_COOLDOWN: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// 冷却判定（抽成纯函数方便单测）：到点就把这次尝试记进 map 并放行。
+fn activation_attempt_due(
+    attempts: &mut std::collections::HashMap<i32, std::time::Instant>,
+    pid: i32,
+    now: std::time::Instant,
+) -> bool {
+    if attempts
+        .get(&pid)
+        .is_some_and(|last| now.duration_since(*last) < AX_ACTIVATION_COOLDOWN)
+    {
+        return false;
+    }
+    attempts.insert(pid, now);
+    // 防长跑无限增长：只留还在冷却期内的条目。
+    if attempts.len() > 64 {
+        attempts.retain(|_, last| now.duration_since(*last) < AX_ACTIVATION_COOLDOWN);
+    }
+    true
+}
+
+/// Chromium/Electron 的渲染进程 AX 树默认关闭，需要外部客户端按文档化握手唤醒
+/// 一次（唤醒后对该 app 本次运行一直有效）：
+///
+/// - **Electron**（electron_application.mm）：`AXManualAccessibility` 是可读写
+///   属性，set true 触发 2 秒防抖后的 `enableScreenReaderCompleteMode`。
+///   属性本身可读这件事就顺带完成了 Electron 识别；读回 true 说明已开，不动。
+/// - **Chromium 浏览器**（Chrome/Edge）没有该属性：退而 set
+///   `AXEnhancedUserInterface`。Chromium 把它当只读上报、但会响应 set 动作本身，
+///   返回错误码属预期，忽略。
+///
+/// 原生 app 两个属性都不支持，两次 set 都是无害空操作。调用时机被限制在
+/// 「焦点读取失败」之后，不会对正常 app 产生多余 AX 流量。
+fn maybe_activate_accessibility(pid: i32) {
+    use std::collections::HashMap;
+    use std::time::Instant;
+    static ATTEMPTS: std::sync::Mutex<Option<HashMap<i32, Instant>>> =
+        std::sync::Mutex::new(None);
+    {
+        let mut guard = ATTEMPTS.lock().unwrap_or_else(|e| e.into_inner());
+        let map = guard.get_or_insert_with(HashMap::new);
+        if !activation_attempt_due(map, pid, Instant::now()) {
+            return;
+        }
+    }
+    unsafe {
+        let app = AXUIElementCreateApplication(pid);
+        if app.is_null() {
+            return;
+        }
+        AXUIElementSetMessagingTimeout(app, AX_MESSAGING_TIMEOUT_SECS);
+        match copy_attr(app, b"AXManualAccessibility\0") {
+            Some(value) => {
+                let already_on = CFGetTypeID(value) == CFBooleanGetTypeID()
+                    && CFBooleanGetValue(value) != 0;
+                CFRelease(value);
+                if !already_on {
+                    set_bool_attr(app, b"AXManualAccessibility\0");
+                }
+            }
+            None => set_bool_attr(app, b"AXEnhancedUserInterface\0"),
+        }
+        CFRelease(app as CFTypeRef);
+    }
+}
+
+/// set 一个布尔 AX 属性为 true，**故意忽略返回码**（见 maybe_activate_accessibility）。
+unsafe fn set_bool_attr(element: AxUiElementRef, attribute: &[u8]) {
+    let Some(attr) = cfstring_from_static(attribute) else {
+        return;
+    };
+    AXUIElementSetAttributeValue(element, attr, kCFBooleanTrue);
+    CFRelease(attr);
 }
 
 /// 屏幕 OCR 复用的焦点安全闸门：与光标上下文同一条判定路径
@@ -258,8 +378,14 @@ pub(super) fn focused_window_id_for_pid(expected_pid: i32) -> Option<u32> {
             return None;
         }
         AXUIElementSetMessagingTimeout(system, AX_MESSAGING_TIMEOUT_SECS);
-        let focused = copy_element_attr(system, b"AXFocusedUIElement\0");
+        let mut focused = copy_element_attr(system, b"AXFocusedUIElement\0");
         CFRelease(system as CFTypeRef);
+        // 与 focused_element_passing_the_gate 同因退路：系统级查询对
+        // Chromium/Electron 类 app 稳定失败，直查目标 app 自己的 AX 元素。
+        // 归属校验（pid == expected_pid）照旧在下方进行。
+        if focused.is_none() {
+            focused = copy_focused_element_from_app(expected_pid);
+        }
         let focused = focused?;
         AXUIElementSetMessagingTimeout(focused, AX_MESSAGING_TIMEOUT_SECS);
         let mut pid: i32 = 0;
@@ -339,6 +465,14 @@ pub(super) fn read_around_cursor_blocking(budget_chars: usize, gate: GateInputs)
 
 unsafe fn read_document(focused: AxUiElementRef, budget_chars: usize) -> ReadOutcome {
     let Some(cursor_utf16) = copy_caret_offset(focused) else {
+        // 焦点元素不支持文本属性有两种可能：它就是非文本控件（按钮等，正常），
+        // 或者它是 Chromium/Electron AX 树未开时的骨架占位元素。后者值得发一次
+        // 激活握手；前者经 maybe_activate_accessibility 内部的属性探测（两个
+        // 属性都不支持）和冷却自然变成无害空操作。
+        let mut pid: i32 = 0;
+        if AXUIElementGetPid(focused, &mut pid) == AX_ERROR_SUCCESS && pid > 0 {
+            maybe_activate_accessibility(pid);
+        }
         return ReadOutcome::Unavailable("AXSelectedTextRange unavailable (not a text element?)");
     };
     let total_utf16 = match classify_document_length(
@@ -535,4 +669,55 @@ unsafe fn cfstring_to_rust(s: CFStringRef) -> Option<String> {
         .to_str()
         .ok()
         .map(str::to_string)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn activation_cooldown_blocks_rapid_retries() {
+        let mut map = HashMap::new();
+        let t0 = Instant::now();
+        assert!(activation_attempt_due(&mut map, 42, t0));
+        // 冷却期内重试被拒 —— 这正是防止反复重置 Electron 2 秒防抖的关键。
+        assert!(!activation_attempt_due(
+            &mut map,
+            42,
+            t0 + Duration::from_secs(2)
+        ));
+        // 冷却过后放行。
+        assert!(activation_attempt_due(
+            &mut map,
+            42,
+            t0 + AX_ACTIVATION_COOLDOWN + Duration::from_secs(1)
+        ));
+    }
+
+    #[test]
+    fn activation_cooldown_is_per_pid() {
+        let mut map = HashMap::new();
+        let t0 = Instant::now();
+        assert!(activation_attempt_due(&mut map, 1, t0));
+        // 另一个 app 不受第一个的冷却影响。
+        assert!(activation_attempt_due(&mut map, 2, t0));
+        assert!(!activation_attempt_due(&mut map, 1, t0 + Duration::from_secs(1)));
+    }
+
+    #[test]
+    fn activation_map_evicts_expired_entries_when_full() {
+        let mut map = HashMap::new();
+        let t0 = Instant::now();
+        // 65 个全是过期条目的 pid：触发清理后 map 里只留最新这个。
+        for pid in 0..64 {
+            map.insert(
+                pid,
+                t0 - AX_ACTIVATION_COOLDOWN - Duration::from_secs(60),
+            );
+        }
+        assert!(activation_attempt_due(&mut map, 100, t0));
+        assert_eq!(map.len(), 1);
+    }
 }
