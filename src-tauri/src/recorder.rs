@@ -167,6 +167,120 @@ impl Recorder {
     }
 }
 
+/// 预置录音（pre-arm）的 PCM 缓冲与转发开关。
+///
+/// 热键按下的瞬间宿主就把 cpal 流拉起来，不等 core 的会话链（修饰键宽限、
+/// 上下文捕获、ASR 会话创建）走完。这期间 PCM 攒在内存 chunk 队列里；正式会话
+/// 走到 recorder.start 时调用 [`PrearmTap::attach`] 接管：先把缓冲按原顺序回放
+/// 给真正的 consumer（和归档器），之后的实时帧直接直通。回放和直通都在同一把
+/// 锁里完成，音频帧不乱序、不丢失。
+///
+/// 预置流若未被接管（组合键、启动失败、TTL 过期），缓冲随实例丢弃——不喂 ASR、
+/// 不落盘（归档器要到 attach 才创建），隐私边界与改造前一致。
+pub(crate) struct PrearmTap {
+    state: Mutex<PrearmTapState>,
+}
+
+struct PrearmTapState {
+    /// 按回调顺序攒下的 PCM chunk（16 kHz/Mono/Int16-LE）。
+    buffer: std::collections::VecDeque<Vec<u8>>,
+    buffered_bytes: usize,
+    downstream: Option<PrearmDownstream>,
+}
+
+pub(crate) struct PrearmDownstream {
+    consumer: Arc<dyn AudioConsumer>,
+    archiver: Option<Arc<Mutex<WavArchiver>>>,
+    level_handler: Arc<dyn Fn(f32) + Send + Sync>,
+}
+
+/// 缓冲上限：32 KB/s（16 kHz × Int16）× 8 s ≈ 256 KB。预置 TTL 远小于 8 秒，
+/// 正常永远触不到；触到时丢最旧的整块，保住最近的语音。
+const PREARM_BUFFER_CAP_BYTES: usize = 256 * 1024;
+
+impl PrearmTap {
+    pub(crate) fn new() -> Arc<Self> {
+        Arc::new(Self {
+            state: Mutex::new(PrearmTapState {
+                buffer: std::collections::VecDeque::new(),
+                buffered_bytes: 0,
+                downstream: None,
+            }),
+        })
+    }
+
+    /// 接管：回放缓冲后切换为直通。返回回放给下游的字节数（诊断日志用）。
+    /// 只能调用一次；重复调用只回放第一次的缓冲，之后直通已被第一次的安装接管。
+    pub(crate) fn attach(
+        &self,
+        consumer: Arc<dyn AudioConsumer>,
+        archiver: Option<Arc<Mutex<WavArchiver>>>,
+        level_handler: Arc<dyn Fn(f32) + Send + Sync>,
+    ) -> usize {
+        let mut state = self.state.lock();
+        let mut replayed = 0usize;
+        while let Some(chunk) = state.buffer.pop_front() {
+            consumer.consume_pcm_chunk(&chunk);
+            if let Some(archiver) = &archiver {
+                archiver.lock().append(&chunk);
+            }
+            replayed += chunk.len();
+        }
+        state.buffered_bytes = 0;
+        state.downstream = Some(PrearmDownstream {
+            consumer,
+            archiver,
+            level_handler,
+        });
+        replayed
+    }
+
+    /// 预置期间攒下的字节数（接管前诊断用）。
+    #[cfg(test)]
+    pub(crate) fn buffered_bytes(&self) -> usize {
+        self.state.lock().buffered_bytes
+    }
+
+    /// 清空缓冲。预置流被新一次按键复用时调用：旧按键窗口里攒的音频不属于
+    /// 新会话，必须丢弃，从本次按键重新累积。
+    pub(crate) fn clear(&self) {
+        let mut state = self.state.lock();
+        state.buffer.clear();
+        state.buffered_bytes = 0;
+    }
+}
+
+impl AudioConsumer for PrearmTap {
+    fn consume_pcm_chunk(&self, pcm: &[u8]) {
+        let mut state = self.state.lock();
+        if let Some(downstream) = &state.downstream {
+            downstream.consumer.consume_pcm_chunk(pcm);
+            if let Some(archiver) = &downstream.archiver {
+                archiver.lock().append(pcm);
+            }
+            return;
+        }
+        while state.buffered_bytes + pcm.len() > PREARM_BUFFER_CAP_BYTES {
+            match state.buffer.pop_front() {
+                Some(oldest) => state.buffered_bytes -= oldest.len(),
+                None => break,
+            }
+        }
+        state.buffered_bytes += pcm.len();
+        state.buffer.push_back(pcm.to_vec());
+    }
+}
+
+impl PrearmTap {
+    /// 电平转发：预置期间胶囊还没出现，电平直接丢弃；attach 后实时转发。
+    pub(crate) fn forward_level(&self, level: f32) {
+        let state = self.state.lock();
+        if let Some(downstream) = &state.downstream {
+            (downstream.level_handler)(level);
+        }
+    }
+}
+
 pub fn list_input_devices() -> Result<Vec<MicrophoneDevice>, RecorderError> {
     let host = cpal::default_host();
     let default_name = host
@@ -738,13 +852,13 @@ fn update_peak(slot: &AtomicUsize, current: f32) {
 /// 16 kHz / mono / 16-bit PCM WAV 的简易追加写入器。
 /// 构造时写一个 data_size=0 的 header 占位，每次 append 把 i16 PCM bytes 追加到文件，
 /// Drop 时 seek 回 0 把 RIFF / data 长度字段回填——避免依赖外部 finalize 调用点。
-struct WavArchiver {
+pub(crate) struct WavArchiver {
     file: std::fs::File,
     bytes_written: u32,
 }
 
 impl WavArchiver {
-    fn create(path: &Path) -> std::io::Result<Self> {
+    pub(crate) fn create(path: &Path) -> std::io::Result<Self> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
@@ -757,7 +871,7 @@ impl WavArchiver {
         })
     }
 
-    fn append(&mut self, pcm_bytes: &[u8]) {
+    pub(crate) fn append(&mut self, pcm_bytes: &[u8]) {
         use std::io::Write;
         if self.file.write_all(pcm_bytes).is_ok() {
             self.bytes_written = self
@@ -970,5 +1084,106 @@ mod tests {
         assert!(consumer.chunks.lock().unwrap().is_empty());
         assert!(state.last_callback_time.lock().is_none());
         assert_eq!(state.callback_count.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn prearm_tap_buffers_until_attach_then_replays_in_order_and_forwards_live() {
+        let tap = PrearmTap::new();
+        tap.consume_pcm_chunk(&[1, 0]);
+        tap.consume_pcm_chunk(&[2, 0]);
+        tap.forward_level(0.5); // 预置期间电平必须丢弃
+        assert_eq!(tap.buffered_bytes(), 4);
+
+        let consumer = Arc::new(RecordingConsumer::default());
+        let levels = Arc::new(StdMutex::new(Vec::new()));
+        let levels_for_handler = Arc::clone(&levels);
+        let replayed = tap.attach(
+            consumer.clone(),
+            None,
+            Arc::new(move |level| levels_for_handler.lock().unwrap().push(level)),
+        );
+        assert_eq!(replayed, 4);
+        assert_eq!(tap.buffered_bytes(), 0);
+        assert_eq!(
+            consumer.chunks.lock().unwrap().as_slice(),
+            &[vec![1, 0], vec![2, 0]],
+            "回放必须保持原始顺序"
+        );
+
+        tap.consume_pcm_chunk(&[3, 0]);
+        tap.forward_level(0.25);
+        assert_eq!(
+            consumer.chunks.lock().unwrap().as_slice(),
+            &[vec![1, 0], vec![2, 0], vec![3, 0]],
+            "attach 后实时帧直接直通"
+        );
+        assert_eq!(levels.lock().unwrap().as_slice(), &[0.25]);
+
+        // 二次 attach 不再回放旧缓冲（接管只有一次）。
+        let second = Arc::new(RecordingConsumer::default());
+        let replayed_again = tap.attach(second.clone(), None, Arc::new(|_| {}));
+        assert_eq!(replayed_again, 0);
+        assert!(second.chunks.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn prearm_tap_replay_writes_the_archive_before_live_chunks() {
+        let tap = PrearmTap::new();
+        tap.consume_pcm_chunk(&[1, 0, 2, 0]);
+        tap.consume_pcm_chunk(&[3, 0]);
+
+        let consumer = Arc::new(RecordingConsumer::default());
+        let levels: Arc<StdMutex<Vec<f32>>> = Arc::new(StdMutex::new(Vec::new()));
+        let temp = std::env::temp_dir().join(format!(
+            "openless-prearm-tap-test-{}-{}.wav",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let archiver = Arc::new(Mutex::new(
+            WavArchiver::create(&temp).expect("archive fixture must be creatable"),
+        ));
+        let levels_for_handler = Arc::clone(&levels);
+        tap.attach(
+            consumer,
+            Some(Arc::clone(&archiver)),
+            Arc::new(move |level| levels_for_handler.lock().unwrap().push(level)),
+        );
+        tap.consume_pcm_chunk(&[4, 0]);
+        drop(tap); // tap 的下游还握着归档器；全放掉才触发 Drop 回填 header
+        drop(archiver);
+
+        let wav = std::fs::read(&temp).expect("archive must exist");
+        let _ = std::fs::remove_file(&temp);
+        assert_eq!(&wav[..4], b"RIFF");
+        assert_eq!(&wav[8..12], b"WAVE");
+        let data_size = u32::from_le_bytes([wav[40], wav[41], wav[42], wav[43]]) as usize;
+        assert_eq!(data_size, 8);
+        assert_eq!(&wav[44..], &[1, 0, 2, 0, 3, 0, 4, 0]);
+        assert!(levels.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn prearm_tap_drops_oldest_chunks_when_the_buffer_cap_is_exceeded() {
+        let tap = PrearmTap::new();
+        let chunk = vec![7u8; 1024];
+        for _ in 0..(PREARM_BUFFER_CAP_BYTES / 1024 + 2) {
+            tap.consume_pcm_chunk(&chunk);
+        }
+        assert!(tap.buffered_bytes() <= PREARM_BUFFER_CAP_BYTES);
+
+        let consumer = Arc::new(RecordingConsumer::default());
+        let replayed = tap.attach(consumer.clone(), None, Arc::new(|_| {}));
+        let total: usize = consumer
+            .chunks
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|chunk| chunk.len())
+            .sum();
+        assert_eq!(total, replayed);
+        assert!(total <= PREARM_BUFFER_CAP_BYTES);
     }
 }

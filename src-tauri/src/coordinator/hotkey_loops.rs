@@ -20,6 +20,9 @@ pub(super) fn combo_abort_bridge_loop(
         if inner.shortcut_recording_active.load(Ordering::SeqCst) {
             continue;
         }
+        // 组合键 = 用户不想听写：立刻停掉本次按下预置的麦克风流
+        // （若已被正式会话接管则 slot 已空，cancel 无操作）。
+        inner.prearm.cancel();
         handler(&inner, edge);
     }
 }
@@ -228,6 +231,7 @@ pub(super) fn combo_hotkey_bridge_loop(inner: Arc<Inner>, rx: mpsc::Receiver<Com
             // 否则 latch 竞态导致 combo 快捷键二次按键失效。
             ComboHotkeyEvent::Pressed { at } => {
                 current_press_id = crate::hotkey::next_press_id();
+                prearm_on_dictation_press(&inner_cloned);
                 inner.host.block_on(async {
                     handle_pressed_edge(&inner_cloned, at, current_press_id).await;
                 });
@@ -287,6 +291,7 @@ pub(super) fn hotkey_bridge_loop(inner: Arc<Inner>, rx: mpsc::Receiver<HotkeyEve
             // request_stop_during_starting 兜底，begin_session 完成进 Listening 后
             // bridge 立刻 recv Released → end_session，行为正确，仅有短暂 stop 延迟。
             HotkeyEvent::Pressed { at, press_id } => {
+                prearm_on_dictation_press(&inner_cloned);
                 inner.host.block_on(async {
                     handle_pressed_edge(&inner_cloned, at, press_id).await;
                 });
@@ -314,6 +319,21 @@ fn emit_fn_recording_pressed(inner: &Arc<Inner>) {
     if inner.host.is_bound() {
         inner.host.emit_fn_shortcut_pressed();
     }
+}
+
+/// 听写键按下的瞬间预置麦克风流（详见 prearm 模块文档）。
+///
+/// 只在「这次按下会启动新会话」时预置：正在录音/转写时按下是停止语义，
+/// 预置一条流只会白白点亮麦克风指示灯。会话状态判空用 core 快照；
+/// 组合键撤销由 combo_abort_bridge_loop 里的 cancel 兜底。
+fn prearm_on_dictation_press(inner: &Arc<Inner>) {
+    if !crate::prearm::should_prearm(&inner.backend.snapshot()) {
+        return;
+    }
+    let mic = crate::prearm::normalize_mic_name(
+        &inner.backend.get_preferences().microphone_device_name,
+    );
+    inner.prearm.trigger(mic);
 }
 
 pub(super) fn reset_shortcut_held_state(inner: &Arc<Inner>) {

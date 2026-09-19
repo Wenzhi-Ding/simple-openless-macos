@@ -53,6 +53,7 @@ pub(crate) fn backend_dependencies(
     local_polisher: Arc<crate::local_llm::LocalLlamaPolisher>,
     preferences: Arc<openless_core::PreferencesStore>,
     hotkey_status: Arc<Mutex<openless_core::HotkeyStatus>>,
+    prearm: Arc<crate::prearm::PrearmRegistry>,
 ) -> openless_core::BackendDependencies {
     let task_spawner: Arc<dyn openless_core::TaskSpawner> = Arc::new(TauriTaskSpawner);
     let local_asr_runtime = Arc::new(TauriLocalAsrRuntimeAdapter::new(
@@ -78,6 +79,7 @@ pub(crate) fn backend_dependencies(
     let host_recorder: Arc<dyn AudioRecorder> = Arc::new(TauriAudioRecorder {
         app: Arc::clone(&app),
         backend: Arc::clone(&backend),
+        prearm,
     });
     let traditional = Arc::new(openless_core::PipelineDictationEngine::new(
         host_recorder,
@@ -486,6 +488,9 @@ fn map_native_asr_error(error: impl std::fmt::Display) -> BackendError {
 pub(crate) struct TauriAudioRecorder {
     app: AppHandleSlot,
     backend: BackendSlot,
+    /// 热键按下瞬间拉起的预置录音流；start 优先接管它，让按键到采集之间
+    /// 只剩 core 会话链自身的耗时，而不是「会话链 + cpal 建流」串行相加。
+    prearm: Arc<crate::prearm::PrearmRegistry>,
 }
 struct AudioConsumerBridge {
     inner: Arc<dyn CoreAudioConsumer>,
@@ -496,7 +501,8 @@ impl LegacyAudioConsumer for AudioConsumerBridge {
     }
 }
 struct TauriActiveRecording {
-    recorder: Option<Recorder>,
+    /// 消费式停止：正常路径是 `Recorder::stop`，预置接管路径是预置流自己的停止闭包。
+    stop: Option<Box<dyn FnOnce() + Send>>,
     archive: Option<Arc<TauriRecordingArchive>>,
     _mute: Option<crate::audio_mute::AudioMuteGuard>,
 }
@@ -576,14 +582,14 @@ impl ActiveRecording for TauriActiveRecording {
     }
     fn stop(mut self: Box<Self>) -> BoxFuture<'static, Result<(), BackendError>> {
         Box::pin(async move {
-            let recorder = self.recorder.take().ok_or_else(|| {
+            let stop = self.stop.take().ok_or_else(|| {
                 BackendError::new(
                     BackendErrorCode::InvalidState,
                     "Tauri recorder was already stopped",
                 )
             })?;
             tauri::async_runtime::spawn_blocking(move || {
-                recorder.stop();
+                stop();
                 Ok(())
             })
             .await
@@ -627,6 +633,7 @@ impl AudioRecorder for TauriAudioRecorder {
     ) -> BoxFuture<'static, Result<Box<dyn ActiveRecording>, BackendError>> {
         let app = Arc::clone(&self.app);
         let backend = Arc::clone(&self.backend);
+        let prearm = Arc::clone(&self.prearm);
         Box::pin(async move {
             if let Some(app) = app.lock().clone() {
                 let state = app.state::<crate::commands::MicrophoneMonitorState>();
@@ -657,28 +664,76 @@ impl AudioRecorder for TauriAudioRecorder {
                     recording_plan.mute_during_recording,
                     crate::audio_mute::AudioMuteGuard::activate,
                 );
-                let started_at = Instant::now();
+                let consumer: Arc<dyn LegacyAudioConsumer> =
+                    Arc::new(AudioConsumerBridge { inner: consumer });
+
+                // 优先接管热键按下瞬间预置的流：mic 匹配、还活着、未过期才用，
+                // 否则回落到新建（行为与没有预置时一致）。adopt 可能等在建的流
+                // 完工（condvar），必须留在 spawn_blocking 里。
+                let prearmed =
+                    prearm.adopt(crate::prearm::normalize_mic_name(microphone.as_deref().unwrap_or("")));
+                // 接管时 elapsed 从按键瞬间（≈预置流创建）起算， capsule 计时与
+                // 用户体感一致；新建路径维持「此刻起算」。
+                let started_at = prearmed
+                    .as_ref()
+                    .map(|prearmed| prearmed.created_at)
+                    .unwrap_or_else(Instant::now);
                 let level_progress = Arc::clone(&progress);
                 let level_handler: Arc<dyn Fn(f32) + Send + Sync> = Arc::new(move |level| {
                     let _ = level_progress
                         .publish_level(started_at.elapsed().as_millis() as u64, level);
                 });
-                let consumer: Arc<dyn LegacyAudioConsumer> =
-                    Arc::new(AudioConsumerBridge { inner: consumer });
-                let recorder_archive_path = archive_path.clone();
-                let start_result =
-                    Recorder::start(microphone, consumer, level_handler, recorder_archive_path);
-                let (recorder, runtime_errors, archive_active) = match start_result {
-                    Ok(started) => started,
-                    Err(error) => {
-                        if let Some(path) = &archive_path {
-                            let _ = std::fs::remove_file(path);
-                        }
-                        return Err(map_recorder_error(error));
+
+                let (stop, runtime_errors, archive_active) = match prearmed {
+                    Some(prearmed) => {
+                        // 归档器在接管时才创建：预置期间缓冲的音频只存内存，
+                        // 接管这一刻连同实时流一起进归档（回放先行，顺序不乱）。
+                        let archiver = archive_path.clone().and_then(|path| {
+                            match crate::recorder::WavArchiver::create(&path) {
+                                Ok(archiver) => Some(Arc::new(Mutex::new(archiver))),
+                                Err(error) => {
+                                    log::warn!(
+                                        "[recorder] wav archive create failed at {path:?}: {error}"
+                                    );
+                                    None
+                                }
+                            }
+                        });
+                        let archive_active = archiver.is_some();
+                        let replayed = prearmed.tap.attach(consumer, archiver, level_handler);
+                        log::info!(
+                            "[prearm] adopted stream {}ms after key press; replayed {} buffered bytes",
+                            prearmed.created_at.elapsed().as_millis(),
+                            replayed
+                        );
+                        (prearmed.stop, prearmed.error_rx, archive_active)
+                    }
+                    None => {
+                        let recorder_archive_path = archive_path.clone();
+                        let start_result = Recorder::start(
+                            microphone,
+                            consumer,
+                            level_handler,
+                            recorder_archive_path,
+                        );
+                        let (recorder, runtime_errors, archive_active) = match start_result {
+                            Ok(started) => started,
+                            Err(error) => {
+                                if let Some(path) = &archive_path {
+                                    let _ = std::fs::remove_file(path);
+                                }
+                                return Err(map_recorder_error(error));
+                            }
+                        };
+                        (
+                            Box::new(move || recorder.stop()) as Box<dyn FnOnce() + Send>,
+                            runtime_errors,
+                            archive_active,
+                        )
                     }
                 };
                 let recording = Box::new(TauriActiveRecording {
-                    recorder: Some(recorder),
+                    stop: Some(stop),
                     archive: archive_path
                         .map(|path| Arc::new(TauriRecordingArchive::new(path, archive_active))),
                     _mute: mute,

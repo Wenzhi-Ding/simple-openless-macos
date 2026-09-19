@@ -206,6 +206,7 @@ fn shared_backend_from_stores(
 ) -> (
     Arc<openless_core::OpenLessBackend>,
     Arc<crate::local_llm::LocalLlamaPolisher>,
+    Arc<crate::prearm::PrearmRegistry>,
 ) {
     let data_dir = crate::persistence::data_dir().unwrap_or_else(|error| {
         log::warn!("[core] data directory unavailable, using fallback config path: {error}");
@@ -225,6 +226,9 @@ fn shared_backend_from_stores(
     // 润色引擎的具体实例在这里创建,注册进 backend 依赖的同时保留给 Coordinator:
     // 启动预载/状态查询与听写润色共享同一个实例,不另起 backend。
     let local_polisher = Arc::new(crate::local_llm::LocalLlamaPolisher::new());
+    // 预置录音注册表同样一处创建、两侧共享：热键 bridge 触发/撤销，
+    // TauriAudioRecorder 接管。
+    let prearm = Arc::new(crate::prearm::PrearmRegistry::new(Arc::clone(&app)));
     let dependencies = crate::core_adapters::backend_dependencies(
         app,
         Arc::clone(&backend_slot),
@@ -232,6 +236,7 @@ fn shared_backend_from_stores(
         Arc::clone(&local_polisher),
         Arc::clone(&repositories.preferences),
         hotkey_status,
+        Arc::clone(&prearm),
     );
     let backend = Arc::new(
         openless_core::OpenLessBackend::new_with_repositories(
@@ -251,7 +256,7 @@ fn shared_backend_from_stores(
         .expect("shared backend config always has a non-empty data directory"),
     );
     *backend_slot.lock() = Some(Arc::downgrade(&backend));
-    (backend, local_polisher)
+    (backend, local_polisher, prearm)
 }
 
 struct Inner {
@@ -259,6 +264,9 @@ struct Inner {
     backend: Arc<openless_core::OpenLessBackend>,
     /// 润色引擎的具体实例（与注册进 backend 的是同一个 Arc）：预载与状态查询用。
     local_polisher: Arc<crate::local_llm::LocalLlamaPolisher>,
+    /// 预置录音注册表（与 TauriAudioRecorder 持有的是同一个 Arc）：
+    /// 热键 Pressed 边沿触发建流，组合键边沿/关机撤销。
+    prearm: Arc<crate::prearm::PrearmRegistry>,
     /// 实际安装在宿主上的快捷键目标。设置事务只通过显式 target 更新这里，
     /// 监听器安装/恢复不得回读尚未提交或已回滚的 preferences。
     hotkey_runtime_target: Mutex<openless_core::HotkeyRuntimeTarget>,
@@ -327,7 +335,7 @@ impl Coordinator {
             let app = crate::core_adapters::app_handle_slot();
             let native_asr = crate::core_adapters::TauriNativeAsrDependencies::new();
             let hotkey_status = Arc::new(Mutex::new(HotkeyStatus::default()));
-            let (backend, local_polisher) = shared_backend_from_stores(
+            let (backend, local_polisher, prearm) = shared_backend_from_stores(
                 &history,
                 &activity,
                 &prefs,
@@ -343,6 +351,7 @@ impl Coordinator {
                 host,
                 backend,
                 local_polisher,
+                prearm,
                 hotkey_runtime_target: Mutex::new(hotkey_runtime_target),
                 settings_host_gate: Mutex::new(()),
                 hotkey: Mutex::new(None),
@@ -456,6 +465,7 @@ impl Coordinator {
     #[allow(dead_code)]
     pub fn request_shutdown(&self) {
         self.inner.shutdown.store(true, Ordering::SeqCst);
+        self.inner.prearm.cancel();
     }
 
     pub fn start_hotkey_listener(&self) {

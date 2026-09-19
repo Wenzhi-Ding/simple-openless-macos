@@ -29,6 +29,7 @@ mod local_llm;
 mod ocr_engine;
 mod permissions;
 mod persistence;
+mod prearm;
 mod recorder;
 mod screen_ocr;
 mod shortcut_binding;
