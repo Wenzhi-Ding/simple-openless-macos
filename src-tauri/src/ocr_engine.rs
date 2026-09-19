@@ -15,13 +15,13 @@
 
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, ChildStdin, Command, Stdio};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{mpsc, Mutex};
 use std::time::{Duration, Instant};
 
 use anyhow::{bail, Context, Result};
 use base64::Engine as _;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 /// worker 启动 + 引擎初始化的上限（Python 冷启动 + RapidOCR 加载本地 ONNX）。
 /// 独立预算，不受调用方观测截止约束：启动慢只放弃本次观测，不杀死半成品
@@ -46,14 +46,38 @@ struct OcrWorker {
 /// 丢弃即杀进程并回收：失败重建或进程退出后，旧 worker 不得残留成孤儿。
 impl Drop for OcrWorker {
     fn drop(&mut self) {
+        let pid = self.child.id();
         let _ = self.child.kill();
         let _ = self.child.wait();
+        // 只清自己写入的 pid：替换场景下新 worker 可能已先写入。
+        let _ = WORKER_PID.compare_exchange(pid, 0, Ordering::SeqCst, Ordering::SeqCst);
     }
 }
 
 /// 当前常驻 worker；None 表示尚未拉起，或上一次失败后已丢弃（下次请求重建）。
 static WORKER: Mutex<Option<OcrWorker>> = Mutex::new(None);
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
+
+/// 状态查询用的旁路快照：识别路径在 WORKER 锁内可能停留到 5 秒观测截止，
+/// 状态卡不能跟着排队，所以进程身份与错误单独记在无竞争的静态量里。
+/// pid 由 spawn 成功写入、Drop 清除；错误由失败路径写入、成功请求清除。
+static WORKER_PID: AtomicU32 = AtomicU32::new(0);
+static BOOTING: AtomicBool = AtomicBool::new(false);
+static LAST_ERROR: Mutex<Option<String>> = Mutex::new(None);
+
+fn record_last_error(error: String) {
+    *LAST_ERROR.lock().expect("ocr last error lock poisoned") = Some(error);
+}
+
+/// `kill(pid, 0)` 只探测存活不投递信号。真实 pid 必为正数；`kill(-1, 0)` 的
+/// 语义是「向所有可发信号的进程探测」会误报，所以非正数直接按不存在处理。
+fn pid_alive(pid: u32) -> bool {
+    extern "C" {
+        fn kill(pid: i32, sig: i32) -> i32;
+    }
+    let pid = pid as i32;
+    pid > 0 && unsafe { kill(pid, 0) == 0 }
+}
 
 fn spawn_worker() -> Result<OcrWorker> {
     let (python, script) = crate::asr::local::qwen3_mlx::resolve_ocr_worker_locations()
@@ -210,9 +234,16 @@ fn roundtrip(worker: &mut OcrWorker, png: &[u8], deadline: Instant) -> Result<St
 pub(crate) fn ocr_png(png: &[u8], deadline: Instant) -> Option<String> {
     let mut guard = WORKER.lock().expect("ocr worker lock poisoned");
     if guard.is_none() {
-        match spawn_worker() {
-            Ok(worker) => *guard = Some(worker),
+        BOOTING.store(true, Ordering::SeqCst);
+        let started = spawn_worker();
+        BOOTING.store(false, Ordering::SeqCst);
+        match started {
+            Ok(worker) => {
+                WORKER_PID.store(worker.child.id(), Ordering::SeqCst);
+                *guard = Some(worker);
+            }
             Err(error) => {
+                record_last_error(format!("ocr worker start failed: {error:#}"));
                 log::info!("[screen-ocr] ocr worker start failed: {error:#}");
                 return None;
             }
@@ -225,13 +256,45 @@ pub(crate) fn ocr_png(png: &[u8], deadline: Instant) -> Option<String> {
     }
     let worker = guard.as_mut().expect("worker presence ensured above");
     match roundtrip(worker, png, deadline) {
-        Ok(text) => Some(text),
+        Ok(text) => {
+            *LAST_ERROR.lock().expect("ocr last error lock poisoned") = None;
+            Some(text)
+        }
         Err(error) => {
+            record_last_error(format!("{error:#}"));
             log::info!(
                 "[screen-ocr] worker ocr failed: {error:#} (worker dropped; will respawn on next use)"
             );
             *guard = None;
             None
         }
+    }
+}
+
+/// OCR 引擎对外状态（概览状态卡）。全部来自旁路快照与轻量系统调用，
+/// 不碰 `WORKER` 锁——识别进行中调用也不会排队。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OcrEngineStatus {
+    /// 内嵌 RapidOCR 运行时（Python + worker 脚本）是否在盘。
+    pub runtime_present: bool,
+    /// worker 正在拉起/加载引擎（下次观测的冷启动进行中）。
+    pub loading: bool,
+    /// 常驻 worker 进程是否存活（存活 = 引擎已就绪，boot 完成才会记 pid）。
+    pub worker_alive: bool,
+    /// 最近一次失败原因；成功一次即清除。失败后 worker 会在下次听写自动重建。
+    pub last_error: Option<String>,
+}
+
+pub(crate) fn engine_status() -> OcrEngineStatus {
+    let runtime_present = crate::asr::local::qwen3_mlx::resolve_ocr_worker_locations().is_ok();
+    let loading = BOOTING.load(Ordering::SeqCst);
+    let pid = WORKER_PID.load(Ordering::SeqCst);
+    let worker_alive = pid != 0 && pid_alive(pid);
+    OcrEngineStatus {
+        runtime_present,
+        loading,
+        worker_alive,
+        last_error: LAST_ERROR.lock().expect("ocr last error lock poisoned").clone(),
     }
 }

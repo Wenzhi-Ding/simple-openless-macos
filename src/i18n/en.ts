@@ -56,7 +56,9 @@ export const en = {
     "title": "Today's overview",
     "asrKind": "ASR",
     "llmKind": "LLM",
+    "ocrKind": "OCR",
     "modelError": "Error",
+    "memoryUsage": "Memory ~{{memory}}",
     "modelState": {
       "notFound": "Not found",
       "notLoaded": "Not loaded",

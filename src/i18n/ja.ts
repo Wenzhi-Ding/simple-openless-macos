@@ -56,7 +56,9 @@ export const ja = {
     "title": "今日の概要",
     "asrKind": "ASR",
     "llmKind": "LLM",
+    "ocrKind": "画面認識",
     "modelError": "エラー",
+    "memoryUsage": "メモリ約 {{memory}}",
     "modelState": {
       "notFound": "見つかりません",
       "notLoaded": "未読み込み",

@@ -1,8 +1,9 @@
-// localModels.ts — 固定本地模型（Qwen3-ASR / Gemma LLM）的真实引擎状态。
+// localModels.ts — 固定本地引擎（Qwen3-ASR / Gemma LLM / RapidOCR）的真实状态。
 //
-// 状态来自后端共享实例（预载与听写/润色是同一对象），不会与实际加载分叉：
+// 状态来自后端（预载与听写/润色/识别是同一对象），不会与实际加载分叉：
 // - ASR: local_asr_engine_status（worker 真实 loading/loaded/error + 模型在盘检查）
 // - LLM: local_llm_model_status（同一个 LocalLlamaPolisher slot 的状态机）
+// - OCR: local_ocr_engine_status（常驻 RapidOCR worker 的无锁旁路快照）
 // 订阅 engine-changed 事件即时刷新 + 窗口回前台 + 低频轮询兜底补漏。
 //
 // 查询失败的语义与「未加载」严格区分：Tauri 运行时里命令失败会得到显式的
@@ -30,6 +31,13 @@ export interface LlmEngineStatus {
   error: string | null;
 }
 
+export interface OcrEngineStatus {
+  runtimePresent: boolean;
+  loading: boolean;
+  workerAlive: boolean;
+  lastError: string | null;
+}
+
 /** 状态查询本身失败（IPC 报错/后端不可达）的显式标记 —— 与后端报告的
  *  notLoaded/failed 是两回事，但对用户都呈现为 failed + 错误提示。 */
 export interface EngineFetchError {
@@ -39,11 +47,22 @@ export interface EngineFetchError {
 
 export type AsrEngineFetch = AsrEngineStatus | EngineFetchError | null;
 export type LlmEngineFetch = LlmEngineStatus | EngineFetchError | null;
+export type OcrEngineFetch = OcrEngineStatus | EngineFetchError | null;
 
 export const ASR_FIXED_NAME = 'Qwen3-ASR 1.7B';
 export const ASR_FIXED_PROVIDER = 'local-qwen3-mlx';
 export const LLM_FIXED_NAME = 'Gemma 4 E4B';
 export const LLM_FIXED_PROVIDER = 'local-llama';
+export const OCR_FIXED_NAME = 'RapidOCR';
+export const OCR_FIXED_PROVIDER = 'local-rapidocr';
+
+/** 状态卡展示的常驻内存估算值。模型由构建固定，估算值只在换模型时需要更新。
+ *  实测基准（2026-09-20，`footprint` 口径）：ASR worker 3.9 GiB（MLX 权重驻留），
+ *  LLM 权重映射驻留 4.26 GiB（文件 4.28 GiB），OCR worker 1.3 GiB（大头是
+ *  Python + onnxruntime，识别模型本身只有约 20 MB）。 */
+export const ASR_MEMORY_ESTIMATE_BYTES = 4 * 1024 ** 3;
+export const LLM_MEMORY_ESTIMATE_BYTES = Math.round(4.3 * 1024 ** 3);
+export const OCR_MEMORY_ESTIMATE_BYTES = Math.round(1.3 * 1024 ** 3);
 
 function isFetchError(value: unknown): value is EngineFetchError {
   return (
@@ -80,6 +99,32 @@ export function llmError(status: LlmEngineFetch): string | null {
   if (!status) return null;
   if (isFetchError(status)) return status.error;
   return status.error;
+}
+
+/** OCR 状态卡：运行时缺失 → 未找到；worker 存活 → 已加载（优先于 loading，
+ *  与 ASR 卡约定一致）；冷启动 → 加载中；有失败记录且 worker 不在 → 失败；
+ *  否则 → 未加载。 */
+export function ocrState(status: OcrEngineFetch): LocalModelState {
+  if (!status) return 'notLoaded';
+  if (isFetchError(status)) return 'failed';
+  if (!status.runtimePresent) return 'notFound';
+  if (status.workerAlive) return 'loaded';
+  if (status.loading) return 'loading';
+  if (status.lastError) return 'failed';
+  return 'notLoaded';
+}
+
+export function ocrError(status: OcrEngineFetch): string | null {
+  if (!status) return null;
+  if (isFetchError(status)) return status.error;
+  return status.lastError;
+}
+
+/** 字节数 → 展示文本：≥1GB 用一位小数的 GB，其余用整 MB。 */
+export function formatMemoryBytes(bytes: number): string {
+  const gib = bytes / 1024 ** 3;
+  if (gib >= 1) return `${gib.toFixed(1)} GB`;
+  return `${Math.round(bytes / 1024 ** 2)} MB`;
 }
 
 function isTauriRuntime(): boolean {
@@ -120,23 +165,25 @@ export function snapshotInvoker(): StatusInvoker | null {
 export interface LocalModelsSnapshot {
   asr: AsrEngineFetch;
   llm: LlmEngineFetch;
+  ocr: OcrEngineFetch;
 }
 
-/** 单次刷新：两个引擎并行取数，失败各自显式 failed（不清成 notLoaded，也绝不
+/** 单次刷新：三个引擎并行取数，失败各自显式 failed（不清成 notLoaded，也绝不
  *  保留上一轮的 loaded —— 旧状态随本快照整体替换）。 */
 export async function fetchLocalModelSnapshot(
   invoke: StatusInvoker | null = snapshotInvoker(),
 ): Promise<LocalModelsSnapshot> {
-  const [asr, llm] = await Promise.all([
+  const [asr, llm, ocr] = await Promise.all([
     fetchEngineStatus<AsrEngineStatus>('local_asr_engine_status', invoke),
     fetchEngineStatus<LlmEngineStatus>('local_llm_model_status', invoke),
+    fetchEngineStatus<OcrEngineStatus>('local_ocr_engine_status', invoke),
   ]);
-  return { asr, llm };
+  return { asr, llm, ocr };
 }
 
 /** 订阅 + 回前台 + 低频轮询的共享状态 hook（同一份后端真值，不写死）。 */
 export function useLocalModelStatuses(pollMs = 5000): LocalModelsSnapshot {
-  const [snapshot, setSnapshot] = useState<LocalModelsSnapshot>({ asr: null, llm: null });
+  const [snapshot, setSnapshot] = useState<LocalModelsSnapshot>({ asr: null, llm: null, ocr: null });
   const inflight = useRef(false);
 
   const refresh = useCallback(async () => {

@@ -21,12 +21,20 @@ import { Btn, Card, PageHeader, Pill } from './_atoms';
 import {
   ASR_FIXED_NAME,
   ASR_FIXED_PROVIDER,
+  ASR_MEMORY_ESTIMATE_BYTES,
   LLM_FIXED_NAME,
   LLM_FIXED_PROVIDER,
+  LLM_MEMORY_ESTIMATE_BYTES,
+  OCR_FIXED_NAME,
+  OCR_FIXED_PROVIDER,
+  OCR_MEMORY_ESTIMATE_BYTES,
   asrError,
   asrState,
+  formatMemoryBytes,
   llmError,
   llmState,
+  ocrError,
+  ocrState,
   useLocalModelStatuses,
   type LocalModelState,
 } from '../lib/localModels';
@@ -149,7 +157,7 @@ export function Overview({ onOpenHistory }: OverviewProps) {
     <>
       <PageHeader title={t('overview.title')} />
 
-      <div style={{ display: 'grid', gridTemplateColumns: narrow ? '1fr' : '1fr 1fr', gap: 12, marginBottom: 18 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: narrow ? '1fr' : '1fr 1fr 1fr', gap: 12, marginBottom: 18 }}>
         <ModelStatusCard
           kind={t('overview.asrKind')}
           icon="mic"
@@ -157,6 +165,7 @@ export function Overview({ onOpenHistory }: OverviewProps) {
           subname={ASR_FIXED_PROVIDER}
           state={asrState(modelStatus.asr)}
           error={asrError(modelStatus.asr)}
+          memory={t('overview.memoryUsage', { memory: formatMemoryBytes(ASR_MEMORY_ESTIMATE_BYTES) })}
         />
         <ModelStatusCard
           kind={t('overview.llmKind')}
@@ -165,6 +174,16 @@ export function Overview({ onOpenHistory }: OverviewProps) {
           subname={LLM_FIXED_PROVIDER}
           state={llmState(modelStatus.llm)}
           error={llmError(modelStatus.llm)}
+          memory={t('overview.memoryUsage', { memory: formatMemoryBytes(LLM_MEMORY_ESTIMATE_BYTES) })}
+        />
+        <ModelStatusCard
+          kind={t('overview.ocrKind')}
+          icon="eye"
+          name={OCR_FIXED_NAME}
+          subname={OCR_FIXED_PROVIDER}
+          state={ocrState(modelStatus.ocr)}
+          error={ocrError(modelStatus.ocr)}
+          memory={t('overview.memoryUsage', { memory: formatMemoryBytes(OCR_MEMORY_ESTIMATE_BYTES) })}
         />
       </div>
 
@@ -238,11 +257,13 @@ interface ModelStatusCardProps {
   subname: string;
   state: LocalModelState;
   error: string | null;
+  /** 常驻内存估算文本（静态常量，与加载状态无关，始终显示）。 */
+  memory: string;
 }
 
-/** 固定模型状态卡：两行——上行类别+状态徽标，下行模型名+provider；错误短提示
- *  （完整错误放 title 悬浮），不写死任何「已配置」。 */
-function ModelStatusCard({ kind, icon, name, subname, state, error }: ModelStatusCardProps) {
+/** 固定模型状态卡：上行类别+状态徽标，下行模型名+provider（附常驻内存估算）；
+ *  错误短提示（完整错误放 title 悬浮），不写死任何「已配置」。 */
+function ModelStatusCard({ kind, icon, name, subname, state, error, memory }: ModelStatusCardProps) {
   const { t } = useTranslation();
   const failed = state === 'failed' || state === 'notFound';
   const dotColor =
@@ -293,6 +314,21 @@ function ModelStatusCard({ kind, icon, name, subname, state, error }: ModelStatu
         >
           {failed && shortError ? `${t('overview.modelError')}: ${shortError}` : subname}
         </div>
+        {memory && (
+          <div
+            style={{
+              fontSize: 11.5,
+              color: 'var(--ol-ink-3)',
+              marginTop: 1,
+              fontFamily: 'var(--ol-font-mono)',
+              whiteSpace: 'nowrap',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+            }}
+          >
+            {memory}
+          </div>
+        )}
       </div>
     </Card>
   );

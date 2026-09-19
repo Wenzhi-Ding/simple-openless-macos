@@ -56,7 +56,9 @@ export const zhTW = {
     "title": "今日概覽",
     "asrKind": "ASR 語音",
     "llmKind": "LLM 模型",
+    "ocrKind": "螢幕辨識",
     "modelError": "錯誤",
+    "memoryUsage": "記憶體占用約 {{memory}}",
     "modelState": {
       "notFound": "未找到",
       "notLoaded": "未載入",

@@ -56,7 +56,9 @@ export const zhCN = {
     "title": "今日概览",
     "asrKind": "ASR 语音",
     "llmKind": "LLM 模型",
+    "ocrKind": "屏幕识别",
     "modelError": "错误",
+    "memoryUsage": "内存占用约 {{memory}}",
     "modelState": {
       "notFound": "未找到",
       "notLoaded": "未加载",

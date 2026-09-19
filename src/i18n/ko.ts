@@ -56,7 +56,9 @@ export const ko = {
     "title": "오늘 개요",
     "asrKind": "ASR 음성",
     "llmKind": "LLM 모델",
+    "ocrKind": "화면 인식",
     "modelError": "오류",
+    "memoryUsage": "메모리 약 {{memory}}",
     "modelState": {
       "notFound": "찾을 수 없음",
       "notLoaded": "로드되지 않음",

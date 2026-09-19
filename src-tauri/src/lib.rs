@@ -107,6 +107,7 @@ macro_rules! app_invoke_handler_desktop {
             commands::validate_shortcut_binding,
             commands::set_dictation_hotkey,
             commands::local_asr_engine_status,
+            commands::local_ocr_engine_status,
             commands::export_error_log,
             commands::debug_read_cursor_context,
         ]
