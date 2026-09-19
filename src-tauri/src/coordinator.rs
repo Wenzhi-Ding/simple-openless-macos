@@ -704,13 +704,18 @@ impl Coordinator {
     }
 }
 
-const CAPSULE_AUTO_HIDE_DELAY_MS: u64 = 2000;
+/// 成功胶囊的停留时长刻意对齐热键的收尾冷却（hotkey_interpreter
+/// TERMINAL_COOLDOWN = 150ms）：胶囊消失的时刻就是下一次录音已经可以触发的
+/// 时刻，不再悬停占屏。失败保持 2 秒——没上屏的结果必须让人看清。
+const CAPSULE_DONE_HIDE_DELAY_MS: u64 = 150;
+const CAPSULE_ERROR_HIDE_DELAY_MS: u64 = 2000;
 
 /// Core 终态事件只描述语义，原生胶囊保持多久由 Tauri Host 负责。把映射集中成纯函数，
 /// 可以明确锁定成功、失败、取消三条时序，并让测试不依赖真实窗口与计时器。
 fn core_capsule_hide_delay(state: CapsuleState) -> Option<u64> {
     match state {
-        CapsuleState::Done | CapsuleState::Error => Some(CAPSULE_AUTO_HIDE_DELAY_MS),
+        CapsuleState::Done => Some(CAPSULE_DONE_HIDE_DELAY_MS),
+        CapsuleState::Error => Some(CAPSULE_ERROR_HIDE_DELAY_MS),
         CapsuleState::Cancelled => Some(0),
         _ => None,
     }
@@ -722,7 +727,8 @@ mod core_capsule_tests {
 
     #[test]
     fn core_terminal_capsule_timing_preserves_the_legacy_contract() {
-        assert_eq!(core_capsule_hide_delay(CapsuleState::Done), Some(2000));
+        // 成功胶囊在热键冷却结束的同一时刻消失（150ms），失败仍停留 2 秒。
+        assert_eq!(core_capsule_hide_delay(CapsuleState::Done), Some(150));
         assert_eq!(core_capsule_hide_delay(CapsuleState::Error), Some(2000));
         assert_eq!(core_capsule_hide_delay(CapsuleState::Cancelled), Some(0));
         assert_eq!(core_capsule_hide_delay(CapsuleState::Recording), None);

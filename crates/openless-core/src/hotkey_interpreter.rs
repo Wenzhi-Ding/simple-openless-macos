@@ -6,9 +6,15 @@ use crate::types::DictationPhase;
 /// Suppress switch bounce and accidental press-release-press bursts before they
 /// allocate another recorder or ASR session.
 const HOTKEY_DEBOUNCE: Duration = Duration::from_millis(250);
-/// A completed session keeps the next queued press from opening a surprise
-/// recording while the terminal capsule is still leaving (#545 and #856).
-const TERMINAL_COOLDOWN: Duration = Duration::from_millis(450);
+/// 会话收尾后的短冷却（#545/#856）。
+///
+/// 最初是 600ms，要覆盖当时「停止后立刻回到 Idle」的架构下胶囊离场动画
+/// （360ms）与三连按误触。现在停止按键到会话收尾之间隔着整段转写+润色+
+/// 上屏（秒级），回弹产生的第三次按下落在转写阶段、被阶段门拦截，根本到不了
+/// 冷却窗口；胶囊离场与 New/旧 payload 的竞争由 capsule epoch 机制兜底。冷却
+/// 只剩一个职责：收尾瞬间的边界竞态。150ms 足够，不再让用户为上屏后的
+/// 重启多等近半秒。
+const TERMINAL_COOLDOWN: Duration = Duration::from_millis(150);
 /// Modifier-only triggers are ambiguous until the host has had enough time to
 /// report a companion key. Explicit custom combinations skip this delay.
 const MODIFIER_ARBITRATION_GRACE: Duration = Duration::from_millis(150);
@@ -96,7 +102,6 @@ impl HotkeyInterpreter {
         {
             return HotkeyIntent::Noop;
         }
-        self.last_dispatch = Some((press_id, at));
         self.held.as_mut().expect("press was just stored").accepted = true;
 
         let intent = match phase {
@@ -109,6 +114,12 @@ impl HotkeyInterpreter {
             DictationPhase::Starting | DictationPhase::Recording => HotkeyIntent::Stop,
             _ => HotkeyIntent::Noop,
         };
+        // 只有真正派发了动作的按下才消耗防抖窗口。被冷却/阶段策略丢弃的按下
+        // 不记时间戳——否则用户撞上冷却后再重按，还会被 250ms 防抖再吞一次，
+        // 封锁期被感知得比实际更长。
+        if matches!(intent, HotkeyIntent::Start { .. } | HotkeyIntent::Stop) {
+            self.last_dispatch = Some((press_id, at));
+        }
         if matches!(intent, HotkeyIntent::Start { .. }) && modifier_only {
             // Option/Ctrl by itself may be speech, while Option/Ctrl plus a
             // normal key is ordinary typing. The caller waits once and asks us
@@ -336,11 +347,51 @@ mod tests {
         );
         interpreter.terminal(start + Duration::from_millis(310));
         assert_eq!(
-            interpreter.press(3, start + Duration::from_millis(600), DictationPhase::Idle, false),
+            interpreter.press(3, start + Duration::from_millis(400), DictationPhase::Idle, false),
             HotkeyIntent::Noop,
-            "#545: the third press must not restart during the terminal animation"
+            "#545: the third press must not restart inside the terminal boundary window"
         );
         assert_eq!(interpreter.release(3), HotkeyIntent::Noop);
+        // 冷却窗口刻意压到 150ms（转写/润色阶段已经天然拦住回弹连按）：
+        // 窗口一过，用户主动再按必须立即生效。
+        assert_eq!(
+            interpreter.press(4, start + Duration::from_millis(560), DictationPhase::Idle, false),
+            HotkeyIntent::Start { press_id: 4 },
+            "the terminal cooldown must not outlast its boundary-race purpose"
+        );
+    }
+
+    #[test]
+    fn cooldown_dropped_press_does_not_consume_the_debounce_window() {
+        let start = Instant::now();
+        let mut interpreter = HotkeyInterpreter::default();
+
+        assert_eq!(
+            interpreter.press(1, start, DictationPhase::Idle, false),
+            HotkeyIntent::Start { press_id: 1 }
+        );
+        assert_eq!(
+            interpreter.press(
+                2,
+                start + Duration::from_millis(1000),
+                DictationPhase::Recording,
+                false
+            ),
+            HotkeyIntent::Stop
+        );
+        // 转写+润色花了一秒，会话在 +2000 收尾；冷却到 +2150。
+        interpreter.terminal(start + Duration::from_millis(2000));
+        assert_eq!(
+            interpreter.press(3, start + Duration::from_millis(2100), DictationPhase::Idle, false),
+            HotkeyIntent::Noop,
+            "press inside the cooldown is dropped"
+        );
+        // 冷却刚结束 50ms 用户就重按：若 press3 消耗了防抖窗口，这次会再被吞。
+        assert_eq!(
+            interpreter.press(4, start + Duration::from_millis(2200), DictationPhase::Idle, false),
+            HotkeyIntent::Start { press_id: 4 },
+            "a press dropped by the cooldown must not push the next press into the debounce window"
+        );
     }
 
     #[test]
