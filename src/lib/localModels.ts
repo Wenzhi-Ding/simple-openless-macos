@@ -26,8 +26,6 @@ export interface AsrEngineStatus {
 
 export interface LlmEngineStatus {
   state: LocalModelState;
-  fileName: string;
-  sizeBytes: number;
   error: string | null;
 }
 

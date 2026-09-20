@@ -76,10 +76,10 @@ equal(asrState(asrStatus({ error: 'worker failed to load model' })), 'failed');
 equal(asrState(asrStatus()), 'notLoaded');
 equal(asrState(null), 'notLoaded');
 
-equal(llmState({ state: 'loaded', fileName: 'gemma-4-E4B-it-Q4_0.gguf', sizeBytes: 1, error: null }), 'loaded');
-equal(llmState({ state: 'loading', fileName: 'g', sizeBytes: 1, error: null }), 'loading');
-equal(llmState({ state: 'notFound', fileName: 'g', sizeBytes: 0, error: null }), 'notFound');
-equal(llmState({ state: 'failed', fileName: 'g', sizeBytes: 1, error: 'boom' }), 'failed');
+equal(llmState({ state: 'loaded', error: null }), 'loaded');
+equal(llmState({ state: 'loading', error: null }), 'loading');
+equal(llmState({ state: 'notFound', error: null }), 'notFound');
+equal(llmState({ state: 'failed', error: 'boom' }), 'failed');
 equal(llmState(null), 'notLoaded');
 
 // ─── OCR 状态映射：运行时缺失 / 冷启动 / 存活 / 失败 / 未拉起 ────────────────
@@ -141,7 +141,7 @@ equal(asrState(await fetchEngineStatus('local_asr_engine_status', null)), 'notLo
 
 const loadedSnapshot = {
   asr: asrStatus({ loaded: true, modelId: 'qwen3-asr-1.7b' }),
-  llm: { state: 'loaded', fileName: 'gemma-4-E4B-it-Q4_0.gguf', sizeBytes: 2_000_000_000, error: null } as LlmEngineStatus,
+  llm: { state: 'loaded', error: null } as LlmEngineStatus,
   ocr: ocrStatus({ workerAlive: true }),
 };
 equal(asrState(loadedSnapshot.asr), 'loaded');

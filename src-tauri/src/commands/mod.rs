@@ -58,7 +58,7 @@ impl AudioConsumer for LevelProbeConsumer {
     fn consume_pcm_chunk(&self, _pcm: &[u8]) {}
 }
 /// UUID-v4 字面校验：36 字符 + 5 段 `-` 分隔（8-4-4-4-12）+ 仅 ASCII 十六进制。
-/// 用于 install/detail/like —— pack_id 来自远端服务器，必须是它发的 UUID。
+/// 用于录音读取/导出/重新转写命令的会话号入参校验（会话号由前端透传）。
 pub(crate) fn is_valid_session_id(s: &str) -> bool {
     if s.len() != 36 {
         return false;

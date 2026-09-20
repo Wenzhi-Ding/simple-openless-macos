@@ -73,8 +73,6 @@ enum LoadState {
 #[serde(rename_all = "camelCase")]
 pub struct LocalLlmEngineStatus {
     pub state: String,
-    pub file_name: String,
-    pub size_bytes: u64,
     pub error: Option<String>,
 }
 
@@ -146,7 +144,6 @@ impl LocalLlamaPolisher {
     fn status_from_state(&self, state: &LoadState) -> LocalLlmEngineStatus {
         let path = self.active_model_path();
         let exists = path.is_file();
-        let size_bytes = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
         let resident = self
             .loaded
             .lock()
@@ -166,11 +163,6 @@ impl LocalLlamaPolisher {
         };
         LocalLlmEngineStatus {
             state: state.to_string(),
-            file_name: path
-                .file_name()
-                .map(|name| name.to_string_lossy().into_owned())
-                .unwrap_or_default(),
-            size_bytes,
             error,
         }
     }
