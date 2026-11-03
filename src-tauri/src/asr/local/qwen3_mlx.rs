@@ -22,7 +22,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use anyhow::{bail, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use base64::Engine as _;
 use parking_lot::Mutex;
 use tokio::sync::oneshot;
@@ -36,6 +36,9 @@ pub const PROVIDER_ID: &str = "local-qwen3-mlx";
 pub const SUPPORTED_MODEL_ID: &str = "qwen3-asr-1.7b";
 /// worker 就绪(模型加载完成)等待上限。4.7GB 权重冷盘加载留足余量。
 const WORKER_READY_TIMEOUT: Duration = Duration::from_secs(240);
+/// Qwen3-ASR 整段转写长音频会退化(重复、漏句),超过该时长就按块转写再拼接。
+/// 块边界按采样对齐，短于等于该时长的音频仍然单次转写。
+const QWEN3_ASR_CHUNK_LIMIT_MS: u64 = 30_000;
 
 #[derive(Clone, Debug, Default)]
 pub struct Qwen3MlxStatus {
@@ -307,33 +310,72 @@ impl Qwen3MlxRuntime {
 
     /// 整段 PCM batch 转写。未加载时先拉起 worker(懒加载;首次听写需要等待
     /// 模型加载,与 worker 的懒加载行为一致)。
+    ///
+    /// 超过 30 秒的音频按 30 秒块顺序送给同一个常驻 worker，逐块转写后拼接；
+    /// 不超过 30 秒时只有一块，行为与原来一致。worker 协议不变，仍是一个
+    /// 请求一段 PCM、返回一段文本。
+    ///
+    /// `audio_timeout` 是整段音频共用的总预算：分块循环只用一个绝对 deadline，
+    /// 每块用这个 deadline 等待，不会让等待上限随块数放大。`is_cancelled` 在
+    /// 每块发送前与每次响应后检查；取消命中后不再发送后续块。取消发生时如果
+    /// 某块正在等响应，该块会先返回（worker 协议没有中断在途推理的通道），
+    /// 这里不杀 worker，避免为了取消丢掉已加载的模型。
     pub async fn transcribe_pcm(
         &self,
         model_dir: &Path,
         pcm: &[u8],
         language_hint: Option<&str>,
         audio_timeout: Duration,
+        is_cancelled: &(dyn Fn() -> bool + Sync),
     ) -> Result<String> {
         if pcm.is_empty() {
             return Ok(String::new());
         }
         let audio_ms = pcm_duration_ms(pcm);
         self.ensure_loaded(model_dir).await?;
-        let mut payload = serde_json::json!({
-            "op": "transcribe",
-            "pcm_base64": base64::engine::general_purpose::STANDARD.encode(pcm),
-        });
-        if let Some(language) = language_hint.filter(|value| !value.trim().is_empty()) {
-            payload["language"] = serde_json::json!(language);
-        }
+        let chunks = openless_core::asr::pcm::split_pcm_by_duration(pcm, QWEN3_ASR_CHUNK_LIMIT_MS);
+        let chunk_count = chunks.len();
         let started = Instant::now();
-        let result = self.worker_roundtrip(payload, audio_timeout).await;
+        let deadline = Instant::now() + audio_timeout;
+        let mut timed_out = false;
+        let result = match run_chunked_transcription(
+            &chunks,
+            language_hint,
+            deadline,
+            &Instant::now,
+            is_cancelled,
+            |payload, chunk_deadline| self.worker_roundtrip(payload, chunk_deadline, audio_timeout),
+        )
+        .await
+        {
+            Ok(texts) => Ok(openless_core::asr::transcript::join_transcript_chunks(
+                &texts,
+            )),
+            Err(ChunkRunError::Cancelled) => {
+                let elapsed_ms = started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
+                log::info!(
+                    "[qwen3-mlx] transcribe cancelled audio_ms={audio_ms} chunks={chunk_count} elapsed_ms={elapsed_ms}"
+                );
+                bail!("Qwen3-ASR transcription cancelled");
+            }
+            Err(ChunkRunError::TimedOut) => {
+                timed_out = true;
+                Err(anyhow!(
+                    "Qwen3-ASR transcription timed out after {}s; worker was restarted for the next use",
+                    audio_timeout.as_secs()
+                ))
+            }
+            Err(ChunkRunError::Send(error)) => Err(error),
+        };
+        if timed_out {
+            // 总预算耗尽与单块超时同样按 worker 卡死处理：杀进程，下次重建。
+            self.kill_state_worker();
+        }
         let elapsed_ms = started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
-        let result = result.and_then(worker_text);
         match &result {
             Ok(text) => {
                 log::info!(
-                    "[qwen3-mlx] transcribe finished audio_ms={audio_ms} elapsed_ms={elapsed_ms} text_chars={}",
+                    "[qwen3-mlx] transcribe finished audio_ms={audio_ms} chunks={chunk_count} elapsed_ms={elapsed_ms} text_chars={}",
                     text.chars().count()
                 );
                 self.record_transcribe_result(audio_ms, elapsed_ms, None);
@@ -341,7 +383,7 @@ impl Qwen3MlxRuntime {
             Err(error) => {
                 let message = format!("{error:#}");
                 log::warn!(
-                    "[qwen3-mlx] transcribe failed audio_ms={audio_ms} elapsed_ms={elapsed_ms} error={message}"
+                    "[qwen3-mlx] transcribe failed audio_ms={audio_ms} chunks={chunk_count} elapsed_ms={elapsed_ms} error={message}"
                 );
                 self.record_transcribe_result(audio_ms, elapsed_ms, Some(message));
             }
@@ -349,11 +391,14 @@ impl Qwen3MlxRuntime {
         result
     }
 
-    /// 发送请求并等待响应;超时或通道断开视为 worker 异常,杀掉进程以便下次重建。
+    /// 发送请求并等待响应;写 stdin 与等响应共用整段共享 `deadline`,
+    /// 任一阶段超时或通道断开都视为 worker 异常,杀掉进程以便下次重建。
+    /// `budget` 是整段音频的总预算，只用于错误信息。
     async fn worker_roundtrip(
         &self,
         payload: serde_json::Value,
-        timeout: Duration,
+        deadline: Instant,
+        budget: Duration,
     ) -> Result<serde_json::Value> {
         // 短持锁:分配请求 id、登记 oneshot、编码行,不在锁内 await。
         let (request_id, receiver, stdin, stderr_tail, line) = {
@@ -377,37 +422,67 @@ impl Qwen3MlxRuntime {
                 line,
             )
         };
-        // 写 stdin 可能因管道背压阻塞(base64 音频可达数 MB),放到阻塞线程。
-        let write_result = tokio::task::spawn_blocking(move || {
+        // 写 stdin 可能因管道背压阻塞(base64 音频可达数 MB),仍放到阻塞线程;
+        // 完成结果经通道回报,让下面的 `timeout_at` 同时覆盖「写完成」与
+        // 「响应」,而不是先无上限地等写完再开始计响应超时。worker 卡住不读
+        // 管道时,写线程会一直阻塞在 write_all 上,只有把写完成也纳入同一个
+        // deadline,整段音频的总时长上限才成立。
+        let (write_tx, write_rx) = oneshot::channel::<std::io::Result<()>>();
+        tokio::task::spawn_blocking(move || {
             let mut guard = stdin.lock();
-            guard
+            let result = guard
                 .write_all(line.as_bytes())
                 .and_then(|_| guard.write_all(b"\n"))
-                .and_then(|_| guard.flush())
-        })
-        .await
-        .map_err(|error| anyhow::anyhow!("worker stdin write join failed: {error:#}"))?;
-        if let Err(error) = write_result {
-            let _ = self.state.lock().as_mut().map(|worker| {
-                worker.pending.lock().remove(&request_id);
-            });
-            bail!("worker stdin write failed: {error}");
-        }
-        match tokio::time::timeout(timeout, receiver).await {
+                .and_then(|_| guard.flush());
+            let _ = write_tx.send(result);
+        });
+        let wait = tokio::time::timeout_at(
+            deadline.into(),
+            async {
+                match write_rx.await {
+                    Ok(Ok(())) => {}
+                    Ok(Err(error)) => return Err(RoundtripFailure::Write(error)),
+                    // 写线程在回报前消失(panic),与旧的 join 失败同一族。
+                    Err(_) => return Err(RoundtripFailure::WriteJoin),
+                }
+                receiver.await.map_err(|_| RoundtripFailure::Dropped)
+            },
+        )
+        .await;
+        match wait {
             Ok(Ok(value)) => Ok(value),
-            Ok(Err(_cancelled)) => {
+            Ok(Err(RoundtripFailure::Dropped)) => {
                 let stderr = stderr_tail.lock().clone();
                 self.kill_state_worker();
                 bail!("Qwen3-ASR worker dropped the request; stderr tail: {stderr}");
             }
+            Ok(Err(RoundtripFailure::WriteJoin)) => {
+                self.remove_pending(request_id);
+                bail!("worker stdin write join failed: write thread ended without reporting");
+            }
+            Ok(Err(RoundtripFailure::Write(error))) => {
+                self.remove_pending(request_id);
+                bail!("worker stdin write failed: {error}");
+            }
             Err(_) => {
                 let stderr = stderr_tail.lock().clone();
                 self.kill_state_worker();
+                // 写入阶段超时时,阻塞写线程仍卡在 write_all 上。这个泄漏可以
+                // 接受:上面已杀掉 worker,管道读端关闭后该线程会带着 EPIPE
+                // 自行结束;若进程先退出,线程也随进程一起回收,不会留下僵尸
+                // 或占用后续请求(下次转写重建的是新的 stdin 句柄)。
                 bail!(
                     "Qwen3-ASR transcription timed out after {}s; worker was restarted for the next use; stderr tail: {stderr}",
-                    timeout.as_secs()
+                    budget.as_secs()
                 );
             }
+        }
+    }
+
+    /// 丢弃一个已登记但不会再有响应的请求;worker 不在时无事可做。
+    fn remove_pending(&self, request_id: u64) {
+        if let Some(worker) = self.state.lock().as_mut() {
+            worker.pending.lock().remove(&request_id);
         }
     }
 
@@ -699,6 +774,7 @@ impl Qwen3MlxAsr {
                 &conditioned.pcm,
                 self.language_hint.as_deref(),
                 audio_timeout,
+                &|| self.cancel_generation.load(Ordering::SeqCst) != cancel_generation,
             )
             .await;
         if self.cancel_generation.load(Ordering::SeqCst) != cancel_generation {
@@ -735,6 +811,69 @@ fn pcm_duration_ms(pcm: &[u8]) -> u64 {
     (pcm.len() as u64 / 2).saturating_mul(1_000) / 16_000
 }
 
+/// 组装一次转写请求。worker 只接受 pcm_base64 与 language，没有长度参数。
+fn transcribe_request(pcm: &[u8], language_hint: Option<&str>) -> serde_json::Value {
+    let mut payload = serde_json::json!({
+        "op": "transcribe",
+        "pcm_base64": base64::engine::general_purpose::STANDARD.encode(pcm),
+    });
+    if let Some(language) = language_hint.filter(|value| !value.trim().is_empty()) {
+        payload["language"] = serde_json::json!(language);
+    }
+    payload
+}
+
+/// `worker_roundtrip` 内部等待阶段的失败原因：写线程消失、写失败、响应通道断开。
+/// 三者都不算「超时」；超时由外层 `timeout_at` 单独判定，以便沿用工卡死重建。
+#[derive(Debug)]
+enum RoundtripFailure {
+    WriteJoin,
+    Write(std::io::Error),
+    Dropped,
+}
+
+/// 分块循环的退出原因。取消与超时分开，调用方据此决定是否杀 worker、是否记故障。
+#[derive(Debug)]
+enum ChunkRunError {
+    Cancelled,
+    TimedOut,
+    Send(anyhow::Error),
+}
+
+/// 逐块转写循环：整段只用一个绝对 `deadline`，每块都拿这个 deadline，
+/// 不会每块重新获得一份完整超时预算；`is_cancelled` 在每块发送前与每次
+/// 响应后检查，命中后立即停止后续块。`now` 只为测试注入时钟，生产传
+/// `Instant::now`。
+async fn run_chunked_transcription<'a, S, Fut>(
+    chunks: &[&'a [u8]],
+    language_hint: Option<&str>,
+    deadline: Instant,
+    now: &(dyn Fn() -> Instant + Sync),
+    is_cancelled: &(dyn Fn() -> bool + Sync),
+    mut send: S,
+) -> std::result::Result<Vec<String>, ChunkRunError>
+where
+    S: FnMut(serde_json::Value, Instant) -> Fut + Send,
+    Fut: std::future::Future<Output = Result<serde_json::Value>> + Send,
+{
+    let mut texts = Vec::with_capacity(chunks.len());
+    for chunk in chunks {
+        if is_cancelled() {
+            return Err(ChunkRunError::Cancelled);
+        }
+        if now() >= deadline {
+            return Err(ChunkRunError::TimedOut);
+        }
+        let payload = transcribe_request(chunk, language_hint);
+        let value = send(payload, deadline).await.map_err(ChunkRunError::Send)?;
+        if is_cancelled() {
+            return Err(ChunkRunError::Cancelled);
+        }
+        texts.push(worker_text(value).map_err(ChunkRunError::Send)?);
+    }
+    Ok(texts)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -744,6 +883,184 @@ mod tests {
     fn pcm_duration_matches_16k_mono_s16le() {
         assert_eq!(pcm_duration_ms(&[0u8; 32_000]), 1000);
         assert_eq!(pcm_duration_ms(&[]), 0);
+    }
+
+    #[test]
+    fn qwen3_chunking_uses_thirty_second_boundaries() {
+        // 2 分钟 = 4 个完整 30 秒块；30 秒以内保持单块。
+        let two_minutes = vec![0u8; 32_000 * 120];
+        let chunks =
+            openless_core::asr::pcm::split_pcm_by_duration(&two_minutes, QWEN3_ASR_CHUNK_LIMIT_MS);
+        assert_eq!(chunks.len(), 4);
+        assert!(chunks.iter().all(|chunk| chunk.len() == 32_000 * 30));
+
+        let short = vec![0u8; 32_000 * 12];
+        assert_eq!(
+            openless_core::asr::pcm::split_pcm_by_duration(&short, QWEN3_ASR_CHUNK_LIMIT_MS),
+            vec![short.as_slice()]
+        );
+    }
+
+    /// 多块转写共用同一个绝对 deadline：旧实现每块各拿一份完整
+    /// `audio_timeout`，块数越多最长等待越长；这里断言每块拿到同一个 deadline。
+    #[tokio::test]
+    async fn multi_chunk_transcription_shares_one_deadline() {
+        let audio = vec![0u8; 32_000 * 90];
+        let chunks =
+            openless_core::asr::pcm::split_pcm_by_duration(&audio, QWEN3_ASR_CHUNK_LIMIT_MS);
+        assert_eq!(chunks.len(), 3);
+        let deadline = Instant::now() + Duration::from_secs(82);
+        let mut sent_deadlines = Vec::new();
+        let texts = run_chunked_transcription(
+            &chunks,
+            None,
+            deadline,
+            &Instant::now,
+            &|| false,
+            |_payload, chunk_deadline| {
+                sent_deadlines.push(chunk_deadline);
+                async { Ok(serde_json::json!({"ok": true, "text": "块"})) }
+            },
+        )
+        .await
+        .expect("all chunks must succeed");
+        assert_eq!(texts.len(), 3);
+        assert_eq!(sent_deadlines, vec![deadline; 3]);
+    }
+
+    /// 总预算耗尽后不再发送后续块：120 秒音频 4 块、总预算 82 秒；
+    /// 模拟每块耗时 40 秒，第 4 块必须被拒绝（旧实现会继续送）。
+    #[tokio::test]
+    async fn multi_chunk_transcription_stops_when_total_budget_is_spent() {
+        let audio = vec![0u8; 32_000 * 120];
+        let chunks =
+            openless_core::asr::pcm::split_pcm_by_duration(&audio, QWEN3_ASR_CHUNK_LIMIT_MS);
+        assert_eq!(chunks.len(), 4);
+        let started = Instant::now();
+        let deadline = started + Duration::from_secs(82);
+        let now = Mutex::new(started);
+        let mut sends = 0;
+        let result = run_chunked_transcription(
+            &chunks,
+            None,
+            deadline,
+            &|| *now.lock(),
+            &|| false,
+            |_payload, _chunk_deadline| {
+                sends += 1;
+                *now.lock() += Duration::from_secs(40);
+                async { Ok(serde_json::json!({"ok": true, "text": "块"})) }
+            },
+        )
+        .await;
+        assert!(
+            matches!(result, Err(ChunkRunError::TimedOut)),
+            "expected timeout, got {result:?}"
+        );
+        assert_eq!(sends, 3);
+    }
+
+    /// worker 卡死不读 stdin 时,`write_all` 会一直阻塞在管道背压上。这条用例
+    /// 走真实 `worker_roundtrip`:接一个真实子进程(`sleep`)当 worker,它的
+    /// stdin 是管道却从不读取,payload 远大于管道缓冲区,写入必然阻塞。断言
+    /// 总时长被共享 deadline 封住(旧实现会无限期卡在写线程上),且超时后
+    /// worker 句柄被清空,下一次转写走既有重建路径。
+    #[tokio::test]
+    async fn blocked_stdin_write_is_bounded_by_deadline() {
+        let mut child = Command::new("/bin/sleep")
+            .arg("300")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn stand-in worker");
+        let stdin = child.stdin.take().expect("piped stdin");
+        let runtime = Qwen3MlxRuntime::new();
+        *runtime.state.lock() = Some(WorkerProcess {
+            child,
+            stdin: Arc::new(Mutex::new(stdin)),
+            pending: Arc::new(Mutex::new(HashMap::new())),
+            stderr_tail: Arc::new(Mutex::new(String::new())),
+            model_dir: PathBuf::from("unused"),
+            next_id: 0,
+        });
+        // macOS 管道缓冲区只有几十 KB,4MB 的 payload 必然写不进去。
+        let payload = serde_json::json!({ "pcm": "A".repeat(4 * 1024 * 1024) });
+        let started = Instant::now();
+        let result = runtime
+            .worker_roundtrip(
+                payload,
+                Instant::now() + Duration::from_millis(200),
+                Duration::from_millis(200),
+            )
+            .await;
+        let elapsed = started.elapsed();
+        assert!(result.is_err(), "blocked write must fail, got {result:?}");
+        assert!(
+            elapsed < Duration::from_secs(5),
+            "blocked stdin write must be bounded by the shared deadline, elapsed={elapsed:?}"
+        );
+        assert!(
+            runtime.state.lock().is_none(),
+            "write timeout must drop the worker so the next transcription rebuilds it"
+        );
+        let _ = runtime.release_now().await;
+    }
+
+    /// 第一块响应后取消：不得再发送剩余块。
+    #[tokio::test]
+    async fn cancellation_between_chunks_stops_remaining_chunks() {
+        let audio = vec![0u8; 32_000 * 120];
+        let chunks =
+            openless_core::asr::pcm::split_pcm_by_duration(&audio, QWEN3_ASR_CHUNK_LIMIT_MS);
+        assert_eq!(chunks.len(), 4);
+        let cancelled = AtomicBool::new(false);
+        let mut sends = 0;
+        let result = run_chunked_transcription(
+            &chunks,
+            None,
+            Instant::now() + Duration::from_secs(300),
+            &Instant::now,
+            &|| cancelled.load(Ordering::SeqCst),
+            |_payload, _chunk_deadline| {
+                sends += 1;
+                cancelled.store(true, Ordering::SeqCst);
+                async { Ok(serde_json::json!({"ok": true, "text": "块"})) }
+            },
+        )
+        .await;
+        assert!(
+            matches!(result, Err(ChunkRunError::Cancelled)),
+            "expected cancellation, got {result:?}"
+        );
+        assert_eq!(sends, 1);
+    }
+
+    /// deadline 已过时一块都不发送，直接按超时返回。
+    #[tokio::test]
+    async fn expired_deadline_sends_no_chunks() {
+        let audio = vec![0u8; 32_000 * 60];
+        let chunks =
+            openless_core::asr::pcm::split_pcm_by_duration(&audio, QWEN3_ASR_CHUNK_LIMIT_MS);
+        assert_eq!(chunks.len(), 2);
+        let mut sends = 0;
+        let result = run_chunked_transcription(
+            &chunks,
+            None,
+            Instant::now(),
+            &Instant::now,
+            &|| false,
+            |_payload, _chunk_deadline| {
+                sends += 1;
+                async { Ok(serde_json::json!({"ok": true, "text": "块"})) }
+            },
+        )
+        .await;
+        assert!(
+            matches!(result, Err(ChunkRunError::TimedOut)),
+            "expected timeout, got {result:?}"
+        );
+        assert_eq!(sends, 0);
     }
 
     #[test]
@@ -910,7 +1227,7 @@ mod tests {
 
         let started = Instant::now();
         let first = runtime
-            .transcribe_pcm(&model_dir, &pcm, None, Duration::from_secs(120))
+            .transcribe_pcm(&model_dir, &pcm, None, Duration::from_secs(120), &|| false)
             .await
             .unwrap();
         println!(
@@ -925,7 +1242,7 @@ mod tests {
 
         // 第二次转写应复用常驻 worker(不再有加载耗时)。
         let second = runtime
-            .transcribe_pcm(&model_dir, &pcm, None, Duration::from_secs(120))
+            .transcribe_pcm(&model_dir, &pcm, None, Duration::from_secs(120), &|| false)
             .await
             .unwrap();
         assert_eq!(

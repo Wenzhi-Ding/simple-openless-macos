@@ -29,6 +29,314 @@ pub const LOCAL_LLM_PROVIDER_ID: &str = "local-llama";
 const CONTEXT_TOKENS: u32 = 16_384;
 const MIN_GENERATION_TOKENS: usize = 1024;
 
+/// 推理线程预算：移植上游 f4ffcd42 `compute_policy` 的预算思想，只取线程数这一项。
+///
+/// 依据是「逻辑核数 × 采样到的空闲占比 × 0.8」，结果夹在 1–2 条线程：常驻应用里
+/// 润色峰值不该把录音/UI 线程挤掉。采样缺失或异常时按空闲 0.25 计，缺数据绝不
+/// 等于不限量。
+///
+/// 作用位置：Gemma 走 llama.cpp 的 Metal 后端（`LlamaModelParams::with_n_gpu_layers(1000)`
+/// 加 `llama-cpp-2` 的 `metal` feature），主要矩阵乘由 GPU 承担；这里限制的是 CPU
+/// 侧算子与批处理（prefill）用的线程数。`llama-cpp-2` 0.1.156 只在
+/// `LlamaContextParams` 里暴露 `with_n_threads` / `with_n_threads_batch`，没有
+/// `llama_set_n_threads` 的 Rust 包装，所以线程数只能在创建上下文时给；我们每个
+/// 润色请求都新建上下文，等价于每次润色前重新采样。
+mod compute_policy {
+    use std::time::Duration;
+
+    /// 推理最多用掉空闲 CPU 的 80%。
+    const IDLE_SHARE: f64 = 0.8;
+    /// 常驻应用里给推理的 CPU 线程上限。
+    const MAX_CPU_THREADS: i32 = 2;
+    /// 采样失败或数值异常时的保守空闲占比：缺数据绝不等于不限量。
+    const MISSING_IDLE_FALLBACK: f64 = 0.25;
+    /// 两次计数器读取之间的观察窗口，用来算这段窗口里 CPU 的忙闲比例。
+    const SAMPLE_WINDOW: Duration = Duration::from_millis(100);
+
+    #[derive(Clone, Copy, Debug)]
+    pub(super) struct Budget {
+        /// 估算可用的逻辑核份额（1.0 = 一个逻辑核），只用于日志与测试。
+        pub(super) cores: f64,
+        /// 给 llama.cpp 的线程数，1–2。
+        pub(super) threads: i32,
+    }
+
+    impl Budget {
+        pub(super) fn from_idle(logical_cores: usize, idle_fraction: f64) -> Self {
+            let idle = if idle_fraction.is_finite() {
+                idle_fraction.clamp(0.0, 1.0)
+            } else {
+                MISSING_IDLE_FALLBACK
+            };
+            let cores = (logical_cores.max(1) as f64 * idle * IDLE_SHARE).max(0.05);
+            Self {
+                cores,
+                threads: (cores.round() as i32).clamp(1, MAX_CPU_THREADS),
+            }
+        }
+
+        /// 只在阻塞推理线程上调用：内部会睡约 100ms 采样，不能放进音频/UI 回调。
+        pub(super) fn capture() -> Self {
+            let logical_cores = std::thread::available_parallelism().map_or(1, |n| n.get());
+            let idle = idle_fraction();
+            let budget = Self::from_idle(logical_cores, idle.unwrap_or(MISSING_IDLE_FALLBACK));
+            log::debug!(
+                "[local-llm] cpu budget={:.2} core(s), threads={}, logical_cores={}, idle_fraction={:?}",
+                budget.cores,
+                budget.threads,
+                logical_cores,
+                idle
+            );
+            budget
+        }
+    }
+
+    /// Mach 接口的最小 FFI 声明（`mach/host_info.h`、`mach/mach_init.h`、
+    /// `mach/mach_port.h`）。项目只支持 macOS，其余平台走下面的 `None` 分支。
+    #[cfg(target_os = "macos")]
+    mod mach {
+        /// `HOST_CPU_LOAD_INFO` 风味编号。
+        pub(super) const HOST_CPU_LOAD_INFO: i32 = 3;
+        /// 该风味返回的整数槽数（CPU_STATE_MAX = 4）。
+        pub(super) const HOST_CPU_LOAD_INFO_COUNT: u32 = 4;
+        /// `CPU_STATE_IDLE` 在 `cpu_ticks` 里的下标。
+        pub(super) const CPU_STATE_IDLE: usize = 2;
+        pub(super) const KERN_SUCCESS: i32 = 0;
+
+        /// 对应 `struct host_cpu_load_info { natural_t cpu_ticks[4]; }`。
+        #[repr(C)]
+        #[derive(Clone, Copy, Default)]
+        pub(super) struct HostCpuLoadInfo {
+            pub(super) cpu_ticks: [u32; 4],
+        }
+
+        extern "C" {
+            pub(super) fn mach_host_self() -> u32;
+            pub(super) fn mach_task_self() -> u32;
+            pub(super) fn host_statistics(
+                host: u32,
+                flavor: i32,
+                info: *mut i32,
+                count: *mut u32,
+            ) -> i32;
+            pub(super) fn mach_port_deallocate(task: u32, name: u32) -> i32;
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    fn cpu_ticks() -> Option<[u32; 4]> {
+        use mach::{
+            host_statistics, mach_host_self, mach_port_deallocate, mach_task_self,
+            HostCpuLoadInfo, HOST_CPU_LOAD_INFO, HOST_CPU_LOAD_INFO_COUNT, KERN_SUCCESS,
+        };
+        let mut info = HostCpuLoadInfo::default();
+        let mut count = HOST_CPU_LOAD_INFO_COUNT;
+        // SAFETY: HOST_CPU_LOAD_INFO 风味只会写入一个 host_cpu_load_info，count 声明
+        // 它的整数槽数；取到的 host 发送权在两条路径上都归还。
+        let result = unsafe {
+            let host = mach_host_self();
+            let result = host_statistics(
+                host,
+                HOST_CPU_LOAD_INFO,
+                (&mut info as *mut HostCpuLoadInfo).cast(),
+                &mut count,
+            );
+            mach_port_deallocate(mach_task_self(), host);
+            result
+        };
+        (result == KERN_SUCCESS && count == HOST_CPU_LOAD_INFO_COUNT).then_some(info.cpu_ticks)
+    }
+
+    #[cfg(target_os = "macos")]
+    fn idle_fraction() -> Option<f64> {
+        use mach::CPU_STATE_IDLE;
+        let before = cpu_ticks()?;
+        std::thread::sleep(SAMPLE_WINDOW);
+        let after = cpu_ticks()?;
+        let delta = std::array::from_fn::<_, 4, _>(|i| after[i].wrapping_sub(before[i]) as u64);
+        let total: u64 = delta.iter().sum();
+        (total != 0).then(|| delta[CPU_STATE_IDLE] as f64 / total as f64)
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    fn idle_fraction() -> Option<f64> {
+        None
+    }
+
+    /// 推理线程 QoS 降级：只在当前线程上把 QoS 设为 UTILITY，离开作用域时还原。
+    /// 不动整个进程，录音/UI 线程不受影响。上游 f4ffcd42 同名实现。
+    #[cfg(target_os = "macos")]
+    mod qos {
+        pub(crate) const QOS_CLASS_UTILITY: u32 = 0x11;
+        pub(crate) const QOS_CLASS_DEFAULT: u32 = 0x15;
+        pub(crate) const QOS_CLASS_UNSPECIFIED: u32 = 0;
+
+        extern "C" {
+            pub(crate) fn pthread_self() -> *mut core::ffi::c_void;
+            pub(crate) fn pthread_get_qos_class_np(
+                thread: *mut core::ffi::c_void,
+                class: *mut u32,
+                priority: *mut i32,
+            ) -> i32;
+            fn pthread_set_qos_class_self_np(class: u32, priority: i32) -> i32;
+        }
+
+        pub(crate) struct BackgroundScope {
+            previous: Option<(u32, i32)>,
+        }
+
+        impl BackgroundScope {
+            pub(crate) fn enter() -> Self {
+                let (mut class, mut priority) = (0, 0);
+                // SAFETY: 只查询并修改当前 pthread；输出存储是本次调用栈上的合法地址，
+                // UTILITY 是 Darwin 公开的 QoS 类。
+                let previous = unsafe {
+                    (pthread_get_qos_class_np(pthread_self(), &mut class, &mut priority) == 0
+                        && pthread_set_qos_class_self_np(QOS_CLASS_UTILITY, 0) == 0)
+                        .then_some((class, priority))
+                };
+                Self { previous }
+            }
+        }
+
+        impl Drop for BackgroundScope {
+            fn drop(&mut self) {
+                if let Some((class, priority)) = self.previous {
+                    // 设置器不接受 UNSPECIFIED(0)，还原成 DEFAULT，避免把 UTILITY
+                    // 留给 Tokio 复用的阻塞线程。
+                    let class = if class == QOS_CLASS_UNSPECIFIED {
+                        QOS_CLASS_DEFAULT
+                    } else {
+                        class
+                    };
+                    // SAFETY: 还原的是同一个线程刚读到的 QoS。
+                    unsafe {
+                        pthread_set_qos_class_self_np(class, priority);
+                    }
+                }
+            }
+        }
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    mod qos {
+        pub(crate) struct BackgroundScope;
+        impl BackgroundScope {
+            pub(crate) fn enter() -> Self {
+                Self
+            }
+        }
+    }
+
+    pub(super) use qos::BackgroundScope;
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn uses_idle_share_not_whole_machine() {
+            let idle = Budget::from_idle(10, 0.9);
+            assert!((idle.cores - 7.2).abs() < 1e-9);
+            assert_eq!(idle.threads, 2);
+            let busy = Budget::from_idle(10, 0.1);
+            assert!((busy.cores - 0.8).abs() < 1e-9);
+            assert_eq!(busy.threads, 1);
+        }
+
+        #[test]
+        fn thread_count_is_clamped_to_one_and_two() {
+            // 上限：核多且全空闲也只给 2 条。
+            assert_eq!(Budget::from_idle(64, 1.0).threads, MAX_CPU_THREADS);
+            // 下限：单核全忙也给 1 条，不出现 0 或负数。
+            let floor = Budget::from_idle(1, 0.0);
+            assert!((floor.cores - 0.05).abs() < 1e-9);
+            assert_eq!(floor.threads, 1);
+            // 四核全忙：0.8 核 → 1 条。
+            assert_eq!(Budget::from_idle(4, 0.0).threads, 1);
+        }
+
+        #[test]
+        fn missing_or_invalid_telemetry_falls_back_to_quarter_idle() {
+            for idle in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+                let budget = Budget::from_idle(8, idle);
+                assert_eq!(budget.threads, Budget::from_idle(8, 0.25).threads);
+                assert!((budget.cores - 1.6).abs() < 1e-9);
+            }
+            // 采样整体失败时 capture 用同一兜底值：4 核 × 0.25 × 0.8 = 0.8 核 → 1 条线程，
+            // 仍然是一个有限预算，不会退化成不限量。
+            let fallback = Budget::from_idle(4, MISSING_IDLE_FALLBACK);
+            assert!((fallback.cores - 0.8).abs() < 1e-9);
+            assert_eq!(
+                fallback.threads, 1,
+                "missing telemetry must still produce a bounded budget"
+            );
+            // 越界的空闲占比按 [0,1] 夹住，不会把线程数推过上限。
+            assert_eq!(Budget::from_idle(4, 8.0).threads, MAX_CPU_THREADS);
+            assert_eq!(Budget::from_idle(4, -3.0).threads, 1);
+        }
+
+        #[cfg(target_os = "macos")]
+        #[test]
+        fn macos_cpu_telemetry_reports_a_valid_idle_fraction() {
+            // 本机的 host CPU 计数器约每秒才刷新一次（实测 100ms 窗口大部分读到零增量），
+            // 所以单个 100ms 窗口经常返回 None。这里最多等 20 个窗口，只要读到一次
+            // 增量就足以证明遥测通路可用；连续读不到才会判失败。
+            let mut observed = None;
+            for _ in 0..20 {
+                if let Some(idle) = idle_fraction() {
+                    observed = Some(idle);
+                    break;
+                }
+            }
+            let idle = observed.expect("host CPU counters should advance within 20 x 100ms windows");
+            assert!((0.0..=1.0).contains(&idle), "idle fraction out of range: {idle}");
+        }
+
+        #[cfg(target_os = "macos")]
+        #[test]
+        fn background_scope_lowers_and_restores_thread_qos() {
+            let mut previous = (0u32, 0i32);
+            // SAFETY: 输出存储属于当前测试线程。
+            assert_eq!(
+                unsafe { qos::pthread_get_qos_class_np(qos::pthread_self(), &mut previous.0, &mut previous.1) },
+                0
+            );
+            {
+                let _scope = BackgroundScope::enter();
+                let mut class = 0;
+                // SAFETY: 查询的是同一个存活线程，输出存储合法。
+                assert_eq!(
+                    unsafe {
+                        qos::pthread_get_qos_class_np(
+                            qos::pthread_self(),
+                            &mut class,
+                            std::ptr::null_mut(),
+                        )
+                    },
+                    0
+                );
+                assert_eq!(class, qos::QOS_CLASS_UTILITY);
+            }
+            let mut restored = 0;
+            // SAFETY: 同上。
+            unsafe {
+                qos::pthread_get_qos_class_np(
+                    qos::pthread_self(),
+                    &mut restored,
+                    std::ptr::null_mut(),
+                );
+            }
+            let expected = if previous.0 == qos::QOS_CLASS_UNSPECIFIED {
+                qos::QOS_CLASS_DEFAULT
+            } else {
+                previous.0
+            };
+            assert_eq!(restored, expected);
+        }
+    }
+}
+
 /// 固定润色模型：Gemma 4 E4B it Q4_0（llama.cpp 官方 ggml-org 转换，Apache-2.0，
 /// QAT 量化）。思考关闭由 Gemma 4 canonical chat template 的 enable_thinking=false
 /// 分支保证，见 [`render_gemma4_prompt`]。
@@ -543,6 +851,10 @@ fn generate_inner(
     max_generation_tokens: usize,
     capture: &mut DiagnosticsCapture,
 ) -> Result<PolishOutput, BackendError> {
+    // 推理线程降 QoS 到 UTILITY：只作用于当前阻塞线程（spawn_blocking 的工作线程），
+    // 离开作用域即还原，录音/UI 线程与整个进程的调度都不受影响。放在最前面，
+    // 连等待 inference 锁的时间也不与界面抢优先级。
+    let _background = compute_policy::BackgroundScope::enter();
     if cancelled.load(Ordering::Acquire) {
         return Err(cancelled_error());
     }
@@ -700,9 +1012,16 @@ fn generate_inner(
             "local LLM prompt is too long",
         )
     })?;
+    // 线程预算在创建上下文时给：llama-cpp-2 0.1.156 没有运行中改线程数的 Rust
+    // 包装，而本流程每个请求都新建上下文，所以这里采样一次就等价于「润色前重新
+    // 采样」。n_threads_batch 一并限制，prefill 也不占满 CPU。预算采样放在全部
+    // 校验通过之后，早退的错误路径不必付这 100ms。
+    let budget = compute_policy::Budget::capture();
     let params = LlamaContextParams::default()
         .with_n_ctx(Some(n_ctx))
-        .with_n_batch(n_batch);
+        .with_n_batch(n_batch)
+        .with_n_threads(budget.threads)
+        .with_n_threads_batch(budget.threads);
     let mut llama_context = match loaded
         .model
         .new_context(&backend, params)
@@ -731,8 +1050,11 @@ fn generate_inner(
     // Gemma 4 it 系模型需要接近官方推荐区间的采样；实测（2026-09，gemma-4-E2B-it-Q4_0）
     // temp 0.2/0.5/0.6/1.0 都会把英文输入漂移成中文输出，0.7 + top_k 64 + top_p 0.95
     // 是矩阵实验里唯一稳定保持输出语言的组合。Qwen 等既有模型维持原采样不变。
+    // 重复惩罚（last_n=64，penalty=1.1，频率/存在惩罚关闭）加在 temperature 之前：
+    // 这是用户 2026-11-02 明确批准的采样改动，用来抑制重复到停不下来的生成。
     let mut sampler = if is_gemma4 {
         LlamaSampler::chain_simple([
+            LlamaSampler::penalties(loaded.model.n_vocab(), 64, 1.1, 0.0, 0.0),
             LlamaSampler::temp(0.7),
             LlamaSampler::top_k(64),
             LlamaSampler::top_p(0.95, 1),
@@ -754,12 +1076,24 @@ fn generate_inner(
         let token = sampler.sample(&llama_context, batch.n_tokens() - 1);
         sampler.accept(token);
         if loaded.model.is_eog_token(token) || gemma4_eot == Some(token) {
+            // 清洗（去掉首尾空白）之后做相邻近似重复检测：只观察、不改文本、
+            // 不自动回退（上游 0454dc56）。日志只写命中数与字数；正文及正文派生
+            // 的摘要都不进日志（项目规则：普通日志只记状态与字数）。
             let text = output.trim().to_string();
             if text.is_empty() {
                 return Err(BackendError::new(
                     BackendErrorCode::Internal,
                     "local LLM returned empty text",
                 ));
+            }
+            let near_duplicates =
+                openless_core::output_cleaning::find_adjacent_near_duplicates(&text);
+            if !near_duplicates.is_empty() {
+                log::warn!(
+                    "[local-llm] adjacent near-duplicate output: findings={} cleaned_chars={}",
+                    near_duplicates.len(),
+                    text.chars().count(),
+                );
             }
             return Ok(PolishOutput {
                 text,
@@ -788,8 +1122,10 @@ fn generate_inner(
         llama_context.decode(&mut batch).map_err(local_error)?;
     }
     // 生成耗尽：错误只保留计数（prompt/输出正文一律不进错误信息）。
+    // 专用错误码让听写管线能只对「停不下来」回退原文，而不扩大其它
+    // InvalidArgument（prompt 过长等）的回退面。
     Err(BackendError::new(
-        BackendErrorCode::InvalidArgument,
+        BackendErrorCode::GenerationBudgetExceeded,
         format!(
             "local LLM output exceeded its {generation_budget}-token limit after a {tokens_len}-token prompt; generated {generated_chars} characters",
             generated_chars = output.chars().count(),
@@ -1359,7 +1695,11 @@ mod tests {
             .result
             .expect_err("one-token generation cap must be reported as an error");
         println!("local_llm_smoke case=output_limit result={output_limit:?}");
-        assert_eq!(output_limit.code, BackendErrorCode::InvalidArgument);
+        // 生成耗尽用专用错误码（听写管线据此回退原文，不再整条失败）。
+        assert_eq!(
+            output_limit.code,
+            BackendErrorCode::GenerationBudgetExceeded
+        );
         assert!(
             output_limit.message.contains("1-token limit")
                 || output_limit.message.contains("output exceeded")

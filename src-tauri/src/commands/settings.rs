@@ -156,18 +156,23 @@ pub async fn set_settings(
     // set_settings 是异步 Tauri command，执行期间不在 macOS UI 主线程；从这里直接调
     // 会触发 macOS 主线程断言或在 dispatch 队列上死锁，导致整个 UI 无响应（用户改
     // 偏好后所有按键都没反应即此根因）。dispatch 到主线程后继续处理，异步任务不阻塞。
-    let app_for_main = app.clone();
+    // 命令线程不再 clone 注入的 `AppHandle`：投递借用宿主槽位里的句柄，命令拿到的那个
+    // `AppHandle` 直接 move 进闭包，使用与释放都发生在 event-loop 线程。
+    // （Tauri 把 `AppHandle` 作为命令参数注入时会在 IPC 线程上复制一次句柄，那一步在
+    // 命令体之外，命令代码无法消除。）
     let prefs_for_main = prefs.clone();
-    let _ = app.run_on_main_thread(move || {
-        if let Err(err) = crate::refresh_tray_microphone_menu(&app_for_main) {
+    if let Err(error) = coord.run_on_main_thread(move || {
+        if let Err(err) = crate::refresh_tray_microphone_menu(&app) {
             log::warn!("[tray] refresh microphone menu after settings save failed: {err}");
-            let tray_state = app_for_main.state::<TrayMicrophoneMenuState>();
+            let tray_state = app.state::<TrayMicrophoneMenuState>();
             sync_tray_microphone_selection(
                 &tray_state.lock(),
                 &prefs_for_main.microphone_device_name,
             );
         }
-    });
+    }) {
+        log::warn!("[tray] settings save: cannot post tray refresh to the event loop: {error}");
+    }
     // 抑制 unused 警告：tray_microphones 现在改在闭包里通过 app.state 取，
     // 但函数签名保留 State 入参，以便 Tauri 在调用前注入。
     let _ = tray_microphones;

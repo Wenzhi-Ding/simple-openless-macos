@@ -39,6 +39,7 @@ export {
 export {
     stopDictation,
     cancelDictation,
+    getCurrentDictationPhase,
 } from "./dictation"
 
 // permissions

@@ -223,6 +223,7 @@ fn map_dictation_state(
             }
             Some("Platform") => "录音或输入失败，请重试".to_string(),
             Some("InvalidArgument") => "输入或设置无效，请检查后重试".to_string(),
+            Some("NoAudio") => "未收到有效音频，请检查麦克风输入设备后重试".to_string(),
             Some("InvalidState") => "当前状态无法完成此操作，请重试".to_string(),
             Some("Unsupported") => "当前配置或平台不支持此操作".to_string(),
             Some("Persistence") => "保存结果失败，请检查磁盘后重试".to_string(),
@@ -335,9 +336,26 @@ mod tests {
     }
 
     #[test]
+    fn missing_audio_failure_tells_the_user_to_check_the_microphone() {
+        let payload = map_dictation_state(
+            DictationStateSnapshot {
+                phase: DictationPhase::Failed,
+                message: Some("NoAudio".into()),
+                ..DictationStateSnapshot::default()
+            },
+            CapsuleStyle::Classic,
+        );
+        assert_eq!(
+            payload.message.as_deref(),
+            Some("未收到有效音频，请检查麦克风输入设备后重试")
+        );
+    }
+
+    #[test]
     fn internal_failure_tokens_are_not_shown_to_users() {
         for token in [
             "InvalidArgument",
+            "NoAudio",
             "InvalidState",
             "Busy",
             "Cancelled",

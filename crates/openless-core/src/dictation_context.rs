@@ -12,6 +12,19 @@ use crate::types::DictationSession;
 
 pub const ASR_PROMPT_CHAR_BUDGET: usize = 240;
 
+/// 短输入跳润色的门槛：润色输入（ASR 结果经词表同音纠正之后）的非空白字符数
+/// 不超过该值时，听写管线不调用 Gemma，直接按 raw 插入。
+/// 依据：两三个字的听写跑满一次生成（载入、prefill、采样）没有收益；
+/// 用户 2026-11-02 批准固定为 4，不新增用户设置项。
+/// 只作用于听写管线；历史页「重新润色」直接调用润色器，不受此限。
+pub const POLISH_SKIP_MAX_CHARS: usize = 4;
+
+/// 润色输入的有效长度口径：去掉空白字符后的 Unicode 标量个数。
+/// 判定与诊断原因共用这一处，避免两处口径漂移。
+pub fn non_whitespace_char_count(text: &str) -> usize {
+    text.chars().filter(|c| !c.is_whitespace()).count()
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum DictationAudioSource {
     #[default]
@@ -279,9 +292,18 @@ impl DictationContext {
         self.effective_polish_prompts("").0
     }
 
-    /// The fixed local polisher always runs: dictation never bypasses the LLM.
+    /// The fixed local polisher always runs for non-short dictation: dictation
+    /// never bypasses the LLM by preference. Short input is handled separately
+    /// by [`DictationContext::skips_polish_for_short_text`].
     pub fn uses_llm_polisher(&self) -> bool {
         true
+    }
+
+    /// 短输入跳润色判定：非空白字符数 ≤ [`POLISH_SKIP_MAX_CHARS`] 时为真。
+    /// 调用方必须在拿到 ASR 结果（且词表同音纠正已应用）之后调用；
+    /// 跳过后走 raw 插入路径，并在 polishDiagnostics 记 NotCalled 与原因。
+    pub fn skips_polish_for_short_text(&self, transcript: &str) -> bool {
+        non_whitespace_char_count(transcript) <= POLISH_SKIP_MAX_CHARS
     }
 }
 
@@ -488,6 +510,22 @@ mod tests {
             reason.contains("focus check skipped"),
             "降级放行必须在诊断轨迹里如实标注，实际 reason: {reason}"
         );
+    }
+
+    #[test]
+    fn short_text_polish_skip_counts_only_non_whitespace_characters() {
+        let context = DictationContext::default();
+        assert_eq!(POLISH_SKIP_MAX_CHARS, 4);
+
+        // 空白不计入：4 个有效字符在门槛上，跳过；第 5 个字符起照常润色。
+        assert!(context.skips_polish_for_short_text("确 定 重 试"));
+        assert!(context.skips_polish_for_short_text("确定重试"));
+        assert!(!context.skips_polish_for_short_text("确定重试好"));
+        assert!(!context.skips_polish_for_short_text("a b c d e"));
+        // 纯空白与空串都按 0 字符处理。
+        assert!(context.skips_polish_for_short_text("   \n\t "));
+        assert!(context.skips_polish_for_short_text(""));
+        assert_eq!(non_whitespace_char_count("确 定 重 试"), 4);
     }
 
     #[test]

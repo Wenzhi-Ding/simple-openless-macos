@@ -68,12 +68,17 @@ fn show_insert_fallback_card(inner: &Arc<Inner>, text: String, reason: &'static 
     if text.trim().is_empty() {
         return;
     }
-    let Some(capsule) = inner.host.capsule_window() else {
-        return;
-    };
+    // 调用方是 tokio 工作线程（`forward_legacy_event` 处理 `InsertFallback`）。下面整段
+    // 都要碰胶囊窗口句柄，因此整段交给 event-loop 线程执行：宿主槽位里的 `AppHandle`
+    // 只借用不克隆，`capsule_window()` 也在主线程上取得。投递仍是一次事件循环任务，
+    // 与收尾安排的延迟隐藏（`present_core_capsule_if_current` 里的定时任务）之间的先后
+    // 不变 —— 卡片先登记自己占用窗口，后到的隐藏任务会让路。
     let inner_for_main = Arc::clone(inner);
-    let _ = capsule.run_on_main_thread(move |capsule| {
+    inner.host.on_main_thread(move || {
         let inner = inner_for_main;
+        let Some(capsule) = inner.host.capsule_window() else {
+            return;
+        };
         // 与词条卡片同一道闸、同一理由：听写不在 Idle 就绝不碰这个窗口，否则等于把
         // 正在进行的那次听写的胶囊弄没了。收尾路径是先把 phase 置回 Idle 再走到这里的。
         if inner.backend.snapshot().dictation.phase != openless_core::DictationPhase::Idle {
@@ -117,17 +122,22 @@ fn report_insert_fallback_card_height(
     presentation_id: u64,
     height: f64,
 ) -> Result<(), String> {
+    // 调用方是 `#[tauri::command]`（不在 event-loop 线程）。活跃 presentation 的读取是
+    // 纯 Mutex/Atomic 状态，留在调用线程；尺寸校验也在调用线程完成，命令的 Result 语义
+    // （非法高度报错、过期 presentation 静默忽略）不因投递改变。
     let active_presentation_id = inner.host.active_insert_fallback_presentation_id();
     let Some(height) =
         validated_fallback_card_height(active_presentation_id, presentation_id, height)?
     else {
         return Ok(());
     };
-    let Some(capsule) = inner.host.capsule_window() else {
-        return Ok(());
-    };
+    // 胶囊句柄只在 event-loop 线程上取得：宿主槽位里的 `AppHandle` 只借用不克隆。
+    // 用宿主级 `run_on_main_thread`（Result 版）投递，未绑定或投递失败原样返回给命令。
     let inner_for_main = Arc::clone(inner);
-    capsule.run_on_main_thread(move |capsule| {
+    inner.host.run_on_main_thread(move || {
+        let Some(capsule) = inner_for_main.host.capsule_window() else {
+            return;
+        };
         if !inner_for_main
             .host
             .insert_fallback_presentation_is_current(presentation_id)
@@ -153,13 +163,18 @@ fn hide_insert_fallback_card(inner: &Arc<Inner>) {
     if !was_visible {
         return;
     }
-    let Some(capsule) = inner.host.capsule_window() else {
-        return;
-    };
-    let host = inner.host.clone();
-    let backend = Arc::clone(&inner.backend);
-    let _ = capsule.run_on_main_thread(move |capsule| {
-        host.clear_insert_fallback();
+    // 状态读取（是否占用窗口、被推迟的 payload）是纯 Mutex/Atomic，留在调用线程即可；
+    // 下面整段都要碰胶囊窗口句柄，而调用方是 `#[tauri::command]`（不在 event-loop
+    // 线程），因此投递给宿主执行。`capsule_event_lock` 在投递前已取得：命令线程上
+    // 投递只是立即返回的 post（主线程调用则同步执行），两种情形都不跨锁；
+    // 闭包内不再碰这把锁。
+    let inner_for_main = Arc::clone(inner);
+    let _ = inner.host.run_on_main_thread(move || {
+        let inner = inner_for_main;
+        let Some(capsule) = inner.host.capsule_window() else {
+            return;
+        };
+        inner.host.clear_insert_fallback();
         // 先隐藏再改几何：复原要同时动尺寸和位置，窗口还亮着时改就有概率被合成出
         // 一帧「卡片被拉宽、还横着飞过半个屏幕」。
         let _ = capsule.hide();
@@ -183,7 +198,7 @@ fn hide_insert_fallback_card(inner: &Arc<Inner>) {
         if let Some(payload) = deferred_capsule {
             // 卡片期间听写状态仍会推进，只是不能碰共享窗口。
             // 卡片释放后把最新状态一次性应用回来；若最新是 Idle，该 helper 会正常隐藏。
-            let preferences = backend.get_preferences();
+            let preferences = inner.backend.get_preferences();
             let show_capsule = preferences.show_capsule;
             let classic_style = matches!(preferences.capsule_style, CapsuleStyle::Classic);
             capsule.apply_capsule_payload(&payload, show_capsule, classic_style, true);
@@ -387,12 +402,21 @@ impl Coordinator {
         // LLM：固定 Gemma 模型预载；状态变化经 watcher 广播 local-llm:engine-changed。
         {
             let polisher = self.local_polisher();
-            let app_slot = Arc::clone(self.inner.host.app_handle_slot());
+            // 状态回调在 async runtime 工作线程上触发（`preload()` 与润色的状态机都在
+            // 那里推进）。回调里只复制纯数据的 status；`AppHandle` 从宿主槽位借出、
+            // 克隆与释放都发生在 event-loop 线程。
+            let host = self.inner.host.clone();
             polisher.set_status_watcher(Box::new(move |status| {
-                let app = app_slot.lock().clone();
-                if let Some(app) = app {
-                    let _ = tauri::Emitter::emit(&app, "local-llm:engine-changed", status);
-                }
+                let host_for_main = host.clone();
+                let status = status.clone();
+                host.on_main_thread(move || {
+                    // 槽位锁只在克隆这一句持有：`if let` 的临时值会活到整个 body，
+                    // 持锁 emit 会让别的工作线程卡在槽位上。
+                    let app = { host_for_main.app_handle_slot().lock().clone() };
+                    if let Some(app) = app {
+                        let _ = tauri::Emitter::emit(&app, "local-llm:engine-changed", &status);
+                    }
+                });
             }));
             tauri::async_runtime::spawn(async move {
                 match polisher.preload().await {
@@ -581,6 +605,19 @@ impl Coordinator {
     /// 落字失败兜底卡片自己关掉了（用户点关闭 / TTL 到时）。
     pub fn dismiss_insert_fallback_card(&self) {
         hide_insert_fallback_card(&self.inner);
+    }
+
+    /// 在 event-loop 线程上执行 `task`。
+    ///
+    /// 供异步 `#[tauri::command]`（跑在 async runtime 工作线程上）把碰 Tauri 句柄的
+    /// 收尾工作交回主线程：宿主槽位里的 `AppHandle` 只借用不克隆，工作线程上投递后
+    /// 立即返回（本来就在主线程时同步执行）。未 bind 或投递失败时返回错误串，
+    /// 由调用方决定是否忽略。
+    pub(crate) fn run_on_main_thread<F>(&self, task: F) -> Result<(), String>
+    where
+        F: FnOnce() + Send + 'static,
+    {
+        self.inner.host.run_on_main_thread(task)
     }
 
     pub fn report_insert_fallback_card_height(

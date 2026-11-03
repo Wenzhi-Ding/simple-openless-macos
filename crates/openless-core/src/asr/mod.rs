@@ -1,8 +1,9 @@
 //! Fixed local-ASR protocol and audio helpers.
-//! Only network-independent PCM, frame, and WAV utilities live here.
+//! Only network-independent PCM, frame, WAV, and chunk-joining helpers live here.
 
 pub mod frame;
 pub mod pcm;
+pub mod transcript;
 pub mod wav;
 
 pub use crate::ports::AudioConsumer;

@@ -311,14 +311,22 @@ pub(super) fn hotkey_bridge_loop(inner: Arc<Inner>, rx: mpsc::Receiver<HotkeyEve
 }
 
 /// 录制态检测到 Fn 按下 → 发事件给前端，让 ShortcutRecorder 提交 Fn 绑定。
+///
+/// 调用方是 `openless-hotkey-bridge` 工作线程（`hotkey_bridge_loop`）。
+/// `emit_fn_shortcut_pressed` 内部经 `self.app()` 克隆 `AppHandle`，在工作线程调用会与
+/// event-loop 线程竞争非原子引用计数；整段交给 `host.on_main_thread` 投递，克隆、发送
+/// 与释放都发生在主线程。
 fn emit_fn_recording_pressed(inner: &Arc<Inner>) {
-    log::info!(
-        "[hotkey] 录制 Fn 按下 → emit fn-shortcut-pressed (app_ready={})",
-        inner.host.is_bound()
-    );
-    if inner.host.is_bound() {
-        inner.host.emit_fn_shortcut_pressed();
-    }
+    let inner_for_main = Arc::clone(inner);
+    inner.host.on_main_thread(move || {
+        log::info!(
+            "[hotkey] 录制 Fn 按下 → emit fn-shortcut-pressed (app_ready={})",
+            inner_for_main.host.is_bound()
+        );
+        if inner_for_main.host.is_bound() {
+            inner_for_main.host.emit_fn_shortcut_pressed();
+        }
+    });
 }
 
 /// 听写键按下的瞬间预置麦克风流（详见 prearm 模块文档）。

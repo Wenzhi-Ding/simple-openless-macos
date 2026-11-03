@@ -190,5 +190,40 @@ pub async fn retranscribe_recording(
     let retranscribe_ms = retranscribe_started.elapsed().as_millis() as u64;
 
     core.apply_history_retranscription(&session_id, text, &asr_call_label, retranscribe_ms)
-        .map_err(|e| e.to_string())
+        .map_err(retranscription_rejection_message)
+}
+
+/// 历史页把 IPC 错误字符串直接显示在「重新转录失败：…」后面。Core 拒绝非失败
+/// 条目时给用户一句能看懂的原因；其余错误保持原始说明。
+fn retranscription_rejection_message(error: openless_core::BackendError) -> String {
+    if error.code == openless_core::BackendErrorCode::InvalidState {
+        return "该条目已完成，不支持重新转录".to_string();
+    }
+    error.to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn completed_entry_rejection_reaches_the_ui_as_a_readable_reason() {
+        let rejected = openless_core::BackendError::new(
+            openless_core::BackendErrorCode::InvalidState,
+            "history entry is not a failed transcription",
+        );
+        assert_eq!(
+            retranscription_rejection_message(rejected),
+            "该条目已完成，不支持重新转录"
+        );
+
+        let not_found = openless_core::BackendError::new(
+            openless_core::BackendErrorCode::InvalidArgument,
+            "history entry not found",
+        );
+        assert_eq!(
+            retranscription_rejection_message(not_found),
+            "history entry not found"
+        );
+    }
 }

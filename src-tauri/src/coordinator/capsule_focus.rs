@@ -89,8 +89,26 @@ fn emit_capsule_payload_locked(inner: &Arc<Inner>, payload: CapsulePayload) -> u
         .wrapping_add(1);
     let prev_state = inner.last_capsule_state.lock().replace(state);
     defer_capsule_payload_if_fallback_active(inner, &payload);
+    // 调用方包括 cpal 音频回调（约 30 Hz）与后端事件任务。下面每一步都会碰 Tauri 句柄，
+    // 而句柄经由非原子的 `Rc` 共享 event loop：在调用线程克隆或释放它们会与主线程竞争
+    // 引用计数。因此与句柄无关的 epoch / 兜底 / 快照工作留在调用线程，展示整段交给
+    // `TauriCoordinatorHost::on_main_thread` 投递（队列保持帧的发出顺序）。
+    let inner_for_main = Arc::clone(inner);
+    inner
+        .host
+        .on_main_thread(move || present_capsule_payload(&inner_for_main, payload, prev_state));
+    event_epoch
+}
+
+/// [`emit_capsule_payload_locked`] 的主线程半段：胶囊窗口展示与 `capsule:state` 事件。
+fn present_capsule_payload(
+    inner: &Arc<Inner>,
+    payload: CapsulePayload,
+    prev_state: Option<CapsuleState>,
+) {
+    let state = payload.state;
     let Some(capsule) = inner.host.capsule_window() else {
-        return event_epoch;
+        return;
     };
     let visible = !matches!(state, CapsuleState::Idle);
     let was_visible = matches!(prev_state, Some(s) if ! matches!(s, CapsuleState::Idle));
@@ -124,7 +142,6 @@ fn emit_capsule_payload_locked(inner: &Arc<Inner>, payload: CapsulePayload) -> u
         inner.host.emit_capsule_state_to_capsule(&payload);
     }
     inner.host.emit_capsule_state_to_main(&payload);
-    event_epoch
 }
 #[cfg(test)]
 mod epoch_tests {

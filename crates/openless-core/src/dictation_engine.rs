@@ -44,7 +44,29 @@ struct PipelineSession {
     polishing: AtomicBool,
     polisher_cancelled: AtomicBool,
     recording_fault: Mutex<Option<BackendError>>,
+    /// 采集期间是否出现过非零 PCM 样本。finalize 用它区分「麦克风没出数据」
+    /// 和「安静但有效的录音」：前者显式报错，后者照常交给 ASR/VAD。
+    pcm_signal: Arc<AudioSignalProbe>,
     resources: Mutex<PipelineResources>,
+}
+
+/// 单次会话的 PCM 观测：只在首次看到非零字节时写一次原子量。
+#[derive(Default)]
+struct AudioSignalProbe {
+    has_nonzero_pcm: AtomicBool,
+}
+
+impl AudioSignalProbe {
+    /// 任意一个字节非零即视为设备出过数据；全零（或零长度）不算。
+    fn observe(&self, pcm: &[u8]) {
+        if !self.has_nonzero_pcm.load(Ordering::Relaxed) && pcm.iter().any(|byte| *byte != 0) {
+            self.has_nonzero_pcm.store(true, Ordering::Release);
+        }
+    }
+
+    fn has_nonzero_pcm(&self) -> bool {
+        self.has_nonzero_pcm.load(Ordering::Acquire)
+    }
 }
 
 #[derive(Default)]
@@ -64,6 +86,7 @@ impl PipelineSession {
             polishing: AtomicBool::new(false),
             polisher_cancelled: AtomicBool::new(false),
             recording_fault: Mutex::new(None),
+            pcm_signal: Arc::new(AudioSignalProbe::default()),
             resources: Mutex::new(PipelineResources::default()),
         }
     }
@@ -172,6 +195,7 @@ impl DictationEngine for PipelineDictationEngine {
 
             let audio_consumer: Arc<dyn AudioConsumer> = Arc::new(SessionAudioConsumer {
                 session: Arc::clone(&transcription),
+                pcm_signal: Arc::clone(&session.pcm_signal),
             });
             let recording_progress: Arc<dyn RecordingProgressSink> =
                 Arc::new(RecordingProgressForwarder {
@@ -251,6 +275,7 @@ impl DictationEngine for PipelineDictationEngine {
             }
             let consumer: Arc<dyn AudioConsumer> = Arc::new(SessionAudioConsumer {
                 session: Arc::clone(&transcription),
+                pcm_signal: Arc::new(AudioSignalProbe::default()),
             });
             match recorder
                 .start(session_id, context, consumer, progress)
@@ -364,6 +389,23 @@ impl DictationEngine for PipelineDictationEngine {
                     "dictation was cancelled before transcription finished",
                 )
                 .into());
+            }
+            // 采集已停止，这里看到的就是整段录音：全零（或零长度）说明
+            // 麦克风根本没出数据（设备被拔掉、被系统静音成数字零、流没真正
+            // 启动），显式报错让用户去查输入设备。安静但非零的样本是有效
+            // 录音，不算 —— 那种情况照旧交给 ASR/VAD 走空转写（emptyTranscript）。
+            if !session.pcm_signal.has_nonzero_pcm() {
+                let _ = cancel_transcription_once(&session, transcription).await;
+                remove_session(&sessions, session_id, &session);
+                let mut failure = EngineFailure::new(
+                    BackendError::new(
+                        BackendErrorCode::NoAudio,
+                        "未收到有效音频，请检查麦克风输入设备后重试",
+                    ),
+                    EngineFailureStage::Transcribing,
+                );
+                failure.has_audio_recording = has_audio_recording;
+                return Err(failure);
             }
 
             publish_progress(
@@ -483,7 +525,12 @@ impl DictationEngine for PipelineDictationEngine {
                     is_final: true,
                 }),
             )?;
-            let uses_polisher = context.uses_llm_polisher();
+            // 短输入跳润色（用户 2026-11-02 批准，阈值见 POLISH_SKIP_MAX_CHARS）：
+            // 词表同音纠正已在转写适配器完成，这里拿到的 transcript.text 就是
+            // 本来要送进 Gemma 的那份输入；非空白字符数不足阈值时直接按 raw 插入。
+            let skips_for_short_text = context.uses_llm_polisher()
+                && context.skips_polish_for_short_text(&transcript.text);
+            let uses_polisher = context.uses_llm_polisher() && !skips_for_short_text;
             // 屏幕 OCR 结果在润色输入冻结的这一刻非阻塞收取：未就绪即忽略，
             // 绝不为它等待（转写完成时仍未就绪的识别就此作废）。
             let context = if uses_polisher && context.has_pending_screen_ocr() {
@@ -569,13 +616,22 @@ impl DictationEngine for PipelineDictationEngine {
             } else {
                 // Raw 直通：润色器从未被调用（也不冻结屏幕 OCR 槽位），快照记
                 // NotCalled —— 没有 prompt 可拼，绝不事后伪造。
+                let skip_reason = if skips_for_short_text {
+                    format!(
+                        "skipped polish: transcript has {} non-whitespace characters, at or below the {}-character threshold",
+                        crate::dictation_context::non_whitespace_char_count(&transcript.text),
+                        crate::dictation_context::POLISH_SKIP_MAX_CHARS,
+                    )
+                } else {
+                    "raw passthrough: the polisher was bypassed".to_string()
+                };
                 (
                     crate::ports::PolishOutput::text(transcript.text.clone()),
                     false,
                     None,
                     Some(PolishDiagnostics::not_called_from_context(
                         &context,
-                        "raw passthrough: the polisher was bypassed",
+                        &skip_reason,
                     )),
                 )
             };
@@ -877,7 +933,11 @@ fn can_fallback_to_raw(policy: PolishFailurePolicy, error: &BackendError) -> boo
     policy == PolishFailurePolicy::UseRawText
         && matches!(
             error.code,
-            BackendErrorCode::Provider | BackendErrorCode::Unsupported
+            BackendErrorCode::Provider
+                | BackendErrorCode::Unsupported
+                // 本地 Gemma 生成预算耗尽（停不下来）：没有可用的润色结果，
+                // 但原文完整，回退原文比整条听写失败更符合用户预期。
+                | BackendErrorCode::GenerationBudgetExceeded
         )
 }
 
@@ -895,10 +955,12 @@ fn retain_first_error(first_error: &mut Option<BackendError>, result: Result<(),
 
 struct SessionAudioConsumer {
     session: Arc<dyn TranscriptionSession>,
+    pcm_signal: Arc<AudioSignalProbe>,
 }
 
 impl AudioConsumer for SessionAudioConsumer {
     fn consume_pcm_chunk(&self, pcm: &[u8]) {
+        self.pcm_signal.observe(pcm);
         self.session.consume_pcm_chunk(pcm);
     }
 }
@@ -1058,9 +1120,39 @@ mod tests {
         }
     }
 
+    /// 按固定 PCM 喂下游的录音器：覆盖全零、零长度和安静但非零的录音。
+    struct FixedPcmRecorder {
+        pcm: Vec<u8>,
+        stops: Arc<AtomicUsize>,
+        archive: Arc<FixtureArchive>,
+    }
+
+    impl AudioRecorder for FixedPcmRecorder {
+        fn start(
+            &self,
+            _session_id: SessionId,
+            _context: Arc<DictationContext>,
+            consumer: Arc<dyn AudioConsumer>,
+            _progress: Arc<dyn RecordingProgressSink>,
+        ) -> BoxFuture<'static, Result<Box<dyn ActiveRecording>, BackendError>> {
+            let pcm = self.pcm.clone();
+            let stops = Arc::clone(&self.stops);
+            let archive = Arc::clone(&self.archive);
+            Box::pin(async move {
+                if !pcm.is_empty() {
+                    consumer.consume_pcm_chunk(&pcm);
+                }
+                Ok(Box::new(FixtureRecording { stops, archive }) as Box<dyn ActiveRecording>)
+            })
+        }
+    }
+
     struct FixtureTranscriptionSession {
+        /// 本次会话返回的 ASR 文本（短输入跳润色的测试需要可变的字数）。
+        text: String,
         pcm: Arc<Mutex<Vec<u8>>>,
         cancels: Arc<AtomicUsize>,
+        finishes: Arc<AtomicUsize>,
         finish_entered: Option<Arc<tokio::sync::Notify>>,
         finish_release: Option<Arc<tokio::sync::Notify>>,
     }
@@ -1073,8 +1165,10 @@ mod tests {
 
     impl TranscriptionSession for FixtureTranscriptionSession {
         fn finish(&self) -> BoxFuture<'static, Result<TranscriptOutput, BackendError>> {
+            self.finishes.fetch_add(1, Ordering::SeqCst);
             let entered = self.finish_entered.clone();
             let release = self.finish_release.clone();
+            let text = self.text.clone();
             Box::pin(async move {
                 if let Some(entered) = entered {
                     entered.notify_one();
@@ -1083,7 +1177,7 @@ mod tests {
                     release.notified().await;
                 }
                 Ok(TranscriptOutput {
-                    text: "raw text".to_string(),
+                    text,
                     duration_ms: 25,
                 })
             })
@@ -1243,6 +1337,22 @@ mod tests {
         finish_entered: Option<Arc<tokio::sync::Notify>>,
         finish_release: Option<Arc<tokio::sync::Notify>>,
     ) -> FixtureParts {
+        fixture_engine_with_transcript(
+            "raw text",
+            recorder_fails,
+            polish_result,
+            finish_entered,
+            finish_release,
+        )
+    }
+
+    fn fixture_engine_with_transcript(
+        transcript: &str,
+        recorder_fails: bool,
+        polish_result: Result<crate::ports::PolishOutput, BackendError>,
+        finish_entered: Option<Arc<tokio::sync::Notify>>,
+        finish_release: Option<Arc<tokio::sync::Notify>>,
+    ) -> FixtureParts {
         let pcm = Arc::new(Mutex::new(Vec::new()));
         let recorder_stops = Arc::new(AtomicUsize::new(0));
         let archive_discards = Arc::new(AtomicUsize::new(0));
@@ -1256,8 +1366,10 @@ mod tests {
         let polish_contexts = Arc::new(Mutex::new(Vec::new()));
         let transcriber = Arc::new(FixtureTranscriber {
             session: Arc::new(FixtureTranscriptionSession {
+                text: transcript.to_string(),
                 pcm: Arc::clone(&pcm),
                 cancels: Arc::clone(&transcription_cancels),
+                finishes: Arc::new(AtomicUsize::new(0)),
                 finish_entered,
                 finish_release,
             }),
@@ -1337,6 +1449,200 @@ mod tests {
                 is_final: true,
             }))
         );
+    }
+
+    #[tokio::test]
+    async fn short_transcript_skips_polish_and_records_not_called() {
+        // "确定重试" 是 4 个非空白字符，正好在 POLISH_SKIP_MAX_CHARS 门槛上。
+        let fixture = fixture_engine_with_transcript(
+            "确定重试",
+            false,
+            Ok(crate::ports::PolishOutput::text("polished text")),
+            None,
+            None,
+        );
+        let session_id = SessionId::new();
+        fixture
+            .engine
+            .start(
+                session_id,
+                Arc::new(DictationContext::default()),
+                fixture.progress.clone(),
+            )
+            .await
+            .unwrap();
+        let result = fixture
+            .engine
+            .finish(session_id, fixture.progress.clone())
+            .await
+            .unwrap();
+
+        assert_eq!(fixture.polish_calls.load(Ordering::SeqCst), 0);
+        // raw 插入路径：上屏的就是 ASR 结果（词表纠正发生在上游适配器）。
+        assert_eq!(result.raw_text, "确定重试");
+        assert_eq!(result.polished_text, "确定重试");
+        assert!(!result.polish_failed);
+        assert_eq!(result.polish_ms, None);
+        // 没有进入润色阶段，前端不会显示润色进度。
+        assert!(!fixture
+            .progress
+            .events
+            .lock()
+            .unwrap()
+            .contains(&EngineProgress::Stage(EngineStage::Polishing)));
+
+        // 诊断如实记「未调用」与原因：没有 prompt，绝不事后伪造。
+        let diagnostics = result
+            .polish_diagnostics
+            .as_ref()
+            .expect("short-input skip carries diagnostics");
+        assert_eq!(
+            diagnostics.stage,
+            crate::polish_diagnostics::PolishDiagnosticsStage::NotCalled
+        );
+        assert_eq!(
+            diagnostics.outcome,
+            crate::polish_diagnostics::PolishDiagnosticsOutcome::NotCalled
+        );
+        assert!(diagnostics.prompt.is_none());
+        assert!(diagnostics.messages.is_none());
+        let reason = diagnostics
+            .not_called_reason
+            .as_deref()
+            .expect("skip reason");
+        assert!(reason.contains("skipped polish"), "reason: {reason}");
+        assert!(reason.contains('4'), "reason: {reason}");
+    }
+
+    #[tokio::test]
+    async fn transcript_over_the_short_limit_still_polishes() {
+        // "确定重试好" 是 5 个非空白字符，超过门槛，照常调用润色器。
+        let fixture = fixture_engine_with_transcript(
+            "确定重试好",
+            false,
+            Ok(crate::ports::PolishOutput::text("polished text")),
+            None,
+            None,
+        );
+        let session_id = SessionId::new();
+        fixture
+            .engine
+            .start(
+                session_id,
+                Arc::new(DictationContext::default()),
+                fixture.progress.clone(),
+            )
+            .await
+            .unwrap();
+        let result = fixture
+            .engine
+            .finish(session_id, fixture.progress.clone())
+            .await
+            .unwrap();
+
+        assert_eq!(fixture.polish_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(result.polished_text, "polished text");
+        assert!(!result.polish_failed);
+    }
+
+    fn pcm_validation_engine(
+        pcm: Vec<u8>,
+    ) -> (
+        PipelineDictationEngine,
+        Arc<RecordingProgress>,
+        Arc<AtomicUsize>,
+        Arc<AtomicUsize>,
+        Arc<Mutex<Vec<u8>>>,
+    ) {
+        let received = Arc::new(Mutex::new(Vec::new()));
+        let finishes = Arc::new(AtomicUsize::new(0));
+        let cancels = Arc::new(AtomicUsize::new(0));
+        let engine = PipelineDictationEngine::new(
+            Arc::new(FixedPcmRecorder {
+                pcm,
+                stops: Arc::new(AtomicUsize::new(0)),
+                archive: Arc::new(FixtureArchive {
+                    available: AtomicBool::new(true),
+                    discards: Arc::new(AtomicUsize::new(0)),
+                    pcm: Vec::new(),
+                }),
+            }),
+            Arc::new(FixtureTranscriber {
+                session: Arc::new(FixtureTranscriptionSession {
+                    text: "raw text".to_string(),
+                    pcm: Arc::clone(&received),
+                    cancels: Arc::clone(&cancels),
+                    finishes: Arc::clone(&finishes),
+                    finish_entered: None,
+                    finish_release: None,
+                }),
+            }),
+            Arc::new(FixturePolisher {
+                result: Ok(crate::ports::PolishOutput::text("must not run")),
+                calls: Arc::new(AtomicUsize::new(0)),
+                cancels: Arc::new(AtomicUsize::new(0)),
+                contexts: Arc::new(Mutex::new(Vec::new())),
+            }),
+        );
+        (
+            engine,
+            Arc::new(RecordingProgress::default()),
+            finishes,
+            cancels,
+            received,
+        )
+    }
+
+    #[tokio::test]
+    async fn empty_or_all_zero_pcm_fails_explicitly_without_finalizing_asr() {
+        for pcm in [Vec::new(), vec![0u8; 640]] {
+            let (engine, progress, finishes, cancels, received) =
+                pcm_validation_engine(pcm.clone());
+            let session_id = SessionId::new();
+            engine
+                .start(session_id, raw_dictation_context(), progress.clone())
+                .await
+                .unwrap();
+
+            let failure = engine.finish(session_id, progress).await.unwrap_err();
+
+            assert_eq!(failure.error.code, BackendErrorCode::NoAudio);
+            assert!(!failure.error.retryable);
+            assert_eq!(
+                failure.error.message,
+                "未收到有效音频，请检查麦克风输入设备后重试"
+            );
+            assert_eq!(failure.stage, EngineFailureStage::Transcribing);
+            assert_eq!(
+                finishes.load(Ordering::SeqCst),
+                0,
+                "全零/零长度 PCM 不得进入 ASR finalize"
+            );
+            assert_eq!(cancels.load(Ordering::SeqCst), 1, "ASR 会话被取消释放");
+            assert_eq!(
+                &*received.lock().unwrap(),
+                &pcm,
+                "PCM 照常转发给 ASR 会话，只是不 finalize"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn quiet_nonzero_pcm_is_not_rejected_as_missing_audio() {
+        let pcm = vec![1u8, 0];
+        let (engine, progress, finishes, cancels, received) = pcm_validation_engine(pcm.clone());
+        let session_id = SessionId::new();
+        engine
+            .start(session_id, raw_dictation_context(), progress.clone())
+            .await
+            .unwrap();
+
+        let result = engine.finish(session_id, progress).await.unwrap();
+
+        assert_eq!(result.raw_text, "raw text");
+        assert_eq!(finishes.load(Ordering::SeqCst), 1);
+        assert_eq!(cancels.load(Ordering::SeqCst), 0);
+        assert_eq!(&*received.lock().unwrap(), &pcm);
     }
 
     #[tokio::test]
@@ -1531,6 +1837,84 @@ mod tests {
         );
         assert!(fallback_diagnostics.prompt.is_some());
         assert!(fallback_diagnostics.error.is_some());
+    }
+
+    #[tokio::test]
+    async fn generation_budget_exhaustion_uses_raw_text_fallback() {
+        // 本地 Gemma 生成耗尽（停不下来）不再让整条听写失败：回退原文插入，
+        // 与现有的 Provider 回退走同一条路径。
+        let fixture = fixture_engine(
+            false,
+            Err(BackendError::new(
+                BackendErrorCode::GenerationBudgetExceeded,
+                "local LLM output exceeded its 1024-token limit",
+            )),
+            None,
+            None,
+        );
+        let session_id = SessionId::new();
+        fixture
+            .engine
+            .start(
+                session_id,
+                Arc::new(DictationContext::default()),
+                fixture.progress.clone(),
+            )
+            .await
+            .unwrap();
+        let result = fixture
+            .engine
+            .finish(session_id, fixture.progress.clone())
+            .await
+            .expect("budget exhaustion falls back instead of failing the dictation");
+        assert_eq!(result.raw_text, "raw text");
+        assert_eq!(result.polished_text, "raw text");
+        assert!(result.polish_failed);
+        let diagnostics = result
+            .polish_diagnostics
+            .as_ref()
+            .expect("fallback keeps the failed attempt diagnostics");
+        assert_eq!(
+            diagnostics.outcome,
+            crate::polish_diagnostics::PolishDiagnosticsOutcome::Failed
+        );
+        assert!(diagnostics.prompt.is_some());
+    }
+
+    #[test]
+    fn fallback_policy_covers_generation_budget_but_not_other_invalid_arguments() {
+        let budget_error = BackendError::new(
+            BackendErrorCode::GenerationBudgetExceeded,
+            "local LLM output exceeded its limit",
+        );
+        assert!(can_fallback_to_raw(
+            PolishFailurePolicy::UseRawText,
+            &budget_error
+        ));
+        assert!(!can_fallback_to_raw(
+            PolishFailurePolicy::Fail,
+            &budget_error
+        ));
+
+        // 其它 InvalidArgument（prompt 超上下文、prompt 无 token）仍然照旧失败，
+        // 回退面不扩大。
+        let prompt_too_long =
+            BackendError::new(BackendErrorCode::InvalidArgument, "prompt is too long");
+        assert!(!can_fallback_to_raw(
+            PolishFailurePolicy::UseRawText,
+            &prompt_too_long
+        ));
+
+        let provider_error = BackendError::new(BackendErrorCode::Provider, "provider failed");
+        assert!(can_fallback_to_raw(
+            PolishFailurePolicy::UseRawText,
+            &provider_error
+        ));
+        let cancelled = BackendError::new(BackendErrorCode::Cancelled, "cancelled");
+        assert!(!can_fallback_to_raw(
+            PolishFailurePolicy::UseRawText,
+            &cancelled
+        ));
     }
 
     #[tokio::test]
@@ -1916,8 +2300,10 @@ mod tests {
         let entered = Arc::new(tokio::sync::Notify::new());
         let release = Arc::new(tokio::sync::Notify::new());
         let late = Arc::new(FixtureTranscriptionSession {
+            text: "raw text".to_string(),
             pcm: Arc::new(Mutex::new(Vec::new())),
             cancels: Arc::new(AtomicUsize::new(0)),
+            finishes: Arc::new(AtomicUsize::new(0)),
             finish_entered: None,
             finish_release: None,
         });
@@ -2032,8 +2418,10 @@ mod tests {
             }),
             Arc::new(FixtureTranscriber {
                 session: Arc::new(FixtureTranscriptionSession {
+                    text: "raw text".to_string(),
                     pcm: Arc::new(Mutex::new(Vec::new())),
                     cancels: Arc::new(AtomicUsize::new(0)),
+                    finishes: Arc::new(AtomicUsize::new(0)),
                     finish_entered: None,
                     finish_release: None,
                 }),

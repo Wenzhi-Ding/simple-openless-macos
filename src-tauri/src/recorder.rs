@@ -334,12 +334,8 @@ fn run_audio_thread(
         }
     };
 
-    if let Err(err) = stream.play() {
-        let _ = startup_tx.send(Err(RecorderError::EngineFailed(format!("play: {err}"))));
-        return;
-    }
-
-    // 启动成功。
+    // build_input_stream 只在 play() 成功后才返回 Ok：构建期/启动期的回调
+    // 与错误不会进入运行时通道（见 StreamState::accepting_audio）。
     let _ = startup_tx.send(Ok(()));
 
     // 启动 liveness watchdog 线程：检测录音回调是否静默停止
@@ -459,7 +455,10 @@ fn run_audio_thread(
     }
 }
 
-/// 选默认输入设备 + 默认配置 + 构造 Stream。
+/// 选输入设备 + 麦克风原生配置 + 构造 Stream 并启动播放。
+///
+/// 只有 `play()` 成功才返回 Ok：返回的 `StreamState.accepting_audio` 在
+/// 这一刻才打开，构建期和启动期的数据/错误回调都不能进 ASR 通道。
 fn build_input_stream(
     microphone_device_name: Option<String>,
     consumer: Arc<dyn AudioConsumer>,
@@ -470,15 +469,52 @@ fn build_input_stream(
     let host = cpal::default_host();
     let device = select_input_device(&host, microphone_device_name.as_deref())?;
 
+    // 直接用麦克风原生格式：不再为 16 kHz/单声道 强行改造硬件配置，
+    // 下混与重采样在 process_callback 里统一处理。
     let supported = device
         .default_input_config()
         .map_err(|e| classify_default_config_err(e.to_string()))?;
 
+    start_native_config(
+        &device,
+        supported,
+        &consumer,
+        &level_handler,
+        archiver,
+        &runtime_error_tx,
+    )
+}
+
+/// 用给定设备与原生配置构造 Stream 并启动播放；成功后才放行音频回调。
+fn start_native_config(
+    device: &cpal::Device,
+    supported: cpal::SupportedStreamConfig,
+    consumer: &Arc<dyn AudioConsumer>,
+    level_handler: &Arc<dyn Fn(f32) + Send + Sync>,
+    archiver: Option<Arc<Mutex<WavArchiver>>>,
+    runtime_error_tx: &Sender<RecorderError>,
+) -> Result<(cpal::Stream, Arc<StreamState>), RecorderError> {
     let sample_format = supported.sample_format();
-    let default_config: StreamConfig = supported.config();
-    let config = stable_input_config_for_platform(&default_config);
+    let config: StreamConfig = supported.config();
     let input_sr = config.sample_rate.0;
     let channels = config.channels as usize;
+
+    let state = Arc::new(StreamState::new());
+    state.accepting_audio.store(false, Ordering::Release);
+    let stream = build_stream_for_format(
+        device,
+        &config,
+        sample_format,
+        Arc::clone(consumer),
+        Arc::clone(level_handler),
+        archiver,
+        Arc::clone(&state),
+        input_sr,
+        channels,
+        runtime_error_tx.clone(),
+    )?;
+    stream.play().map_err(classify_play_err)?;
+    state.accepting_audio.store(true, Ordering::Release);
 
     log::info!(
         "[recorder] inputDevice={} inputFormat sampleRate={} channels={} fmt={:?}",
@@ -487,45 +523,27 @@ fn build_input_stream(
         channels,
         sample_format
     );
-
-    let state = Arc::new(StreamState::new());
-    let stream = match build_stream_for_format(
-        &device,
-        &config,
-        sample_format,
-        Arc::clone(&consumer),
-        Arc::clone(&level_handler),
-        archiver.clone(),
-        Arc::clone(&state),
-        input_sr,
-        channels,
-        runtime_error_tx.clone(),
-    ) {
-        Ok(stream) => stream,
-        Err(err) if config != default_config => {
-            log::warn!(
-                "[recorder] stable input config failed; falling back to default config: {err}"
-            );
-            build_stream_for_format(
-                &device,
-                &default_config,
-                sample_format,
-                consumer,
-                level_handler,
-                archiver,
-                Arc::clone(&state),
-                default_config.sample_rate.0,
-                default_config.channels as usize,
-                runtime_error_tx,
-            )?
-        }
-        Err(err) => return Err(err),
-    };
     Ok((stream, state))
 }
 
-fn stable_input_config_for_platform(default_config: &StreamConfig) -> StreamConfig {
-    default_config.clone()
+/// 设备选择：默认输入设备优先；没有默认设备时取枚举结果里的第一个。
+///
+/// 枚举在确实需要兜底时才执行（有默认设备就不枚举）。一个设备都没有
+/// 才是真的 `NoInputDevice`。
+fn choose_input_device<T, I>(
+    default: Option<T>,
+    enumerate: impl FnOnce() -> Result<I, RecorderError>,
+) -> Result<T, RecorderError>
+where
+    I: IntoIterator<Item = T>,
+{
+    if let Some(device) = default {
+        return Ok(device);
+    }
+    enumerate()?
+        .into_iter()
+        .next()
+        .ok_or(RecorderError::NoInputDevice)
 }
 
 fn select_input_device(
@@ -549,8 +567,10 @@ fn select_input_device(
         );
     }
 
-    host.default_input_device()
-        .ok_or(RecorderError::NoInputDevice)
+    choose_input_device(host.default_input_device(), || {
+        host.input_devices()
+            .map_err(|e| RecorderError::EngineFailed(format!("input_devices: {e}")))
+    })
 }
 
 /// 启动期 default_input_config 失败：依靠错误字符串关键字粗判权限问题。
@@ -564,6 +584,20 @@ fn classify_default_config_err(msg: String) -> RecorderError {
         RecorderError::PermissionDenied
     } else {
         RecorderError::EngineFailed(format!("default_input_config: {msg}"))
+    }
+}
+
+/// 启动期 stream.play() 失败：与 build_stream 一样按错误字符串粗判权限/无设备。
+fn classify_play_err(err: cpal::PlayStreamError) -> RecorderError {
+    let msg = err.to_string();
+    let lower = msg.to_lowercase();
+    if is_no_device_error(&lower) {
+        RecorderError::NoInputDevice
+    } else if lower.contains("permission") || lower.contains("denied") || lower.contains("authoriz")
+    {
+        RecorderError::PermissionDenied
+    } else {
+        RecorderError::EngineFailed(format!("play: {msg}"))
     }
 }
 
@@ -603,7 +637,14 @@ fn build_stream_for_format(
             let archiver = archiver.clone();
             let state = Arc::clone(&state);
             let runtime_error_tx = runtime_error_tx.clone();
+            let error_state = Arc::clone(&state);
             let err_cb = move |err| {
+                // play() 成功前忽略错误：构建期/启动期的错误由启动结果本身
+                // 报告，不能再经运行期通道重复上报或污染后续会话。
+                if !error_state.accepting_audio.load(Ordering::Acquire) {
+                    log::warn!("[recorder] ignoring stream error before playback started: {err}");
+                    return;
+                }
                 log::error!("[recorder] stream error: {err}");
                 let _ =
                     runtime_error_tx.send(RecorderError::EngineFailed(format!("stream: {err}")));
@@ -659,6 +700,9 @@ struct StreamState {
     /// 上一回调最后一帧（单声道下混后），下一回调插值起点。
     last_sample: Mutex<f32>,
     callback_count: AtomicUsize,
+    /// play() 成功前为 false：此期间的数据回调与错误回调一律忽略，
+    /// 构建期错误不能伪装成运行期故障。
+    accepting_audio: AtomicBool,
     peak_input_rms_milli: AtomicUsize,
     peak_output_rms_milli: AtomicUsize,
     /// 最后一次成功调用 consumer 的时间戳（用于 liveness 检测）
@@ -671,6 +715,9 @@ impl StreamState {
             resample_phase: Mutex::new(0.0),
             last_sample: Mutex::new(0.0),
             callback_count: AtomicUsize::new(0),
+            // 默认放行，构造后由 start_native_config 在 play() 前关闭；
+            // play() 成功才重新打开。
+            accepting_audio: AtomicBool::new(true),
             peak_input_rms_milli: AtomicUsize::new(0),
             peak_output_rms_milli: AtomicUsize::new(0),
             // 初始化为 None，只有在第一次回调后才开始计时，避免误报慢启动设备
@@ -689,7 +736,7 @@ fn process_callback(
     archiver: Option<&Mutex<WavArchiver>>,
     state: &StreamState,
 ) {
-    if interleaved.is_empty() || channels == 0 {
+    if !state.accepting_audio.load(Ordering::Acquire) || interleaved.is_empty() || channels == 0 {
         return;
     }
 
@@ -1084,6 +1131,63 @@ mod tests {
         assert!(consumer.chunks.lock().unwrap().is_empty());
         assert!(state.last_callback_time.lock().is_none());
         assert_eq!(state.callback_count.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn unstarted_stream_cannot_feed_asr_or_mark_audio_valid() {
+        let state = StreamState::new();
+        state.accepting_audio.store(false, Ordering::Release);
+        let consumer = RecordingConsumer::default();
+        let levels = Arc::new(StdMutex::new(Vec::new()));
+        let levels_for_handler = Arc::clone(&levels);
+
+        process_callback(
+            &[0.5; 320],
+            1,
+            TARGET_SAMPLE_RATE,
+            &consumer,
+            &move |level| levels_for_handler.lock().unwrap().push(level),
+            None,
+            &state,
+        );
+
+        assert!(
+            consumer.chunks.lock().unwrap().is_empty(),
+            "play() 成功前的数据回调不能进入 ASR 通道"
+        );
+        assert!(levels.lock().unwrap().is_empty(), "也不能驱动电平/胶囊");
+        assert!(
+            state.last_callback_time.lock().is_none(),
+            "不能刷新 liveness 时间戳"
+        );
+        assert_eq!(state.callback_count.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn input_device_selection_prefers_default_then_first_enumerated() {
+        let mut enumerated = false;
+        let chosen = choose_input_device(Some("默认麦克风"), || {
+            enumerated = true;
+            Ok(Vec::<&str>::new())
+        })
+        .unwrap();
+        assert_eq!(chosen, "默认麦克风");
+        assert!(!enumerated, "有默认设备时不应枚举");
+        assert_eq!(
+            choose_input_device(None, || Ok(vec!["内置麦克风", "USB 麦克风"])).unwrap(),
+            "内置麦克风",
+            "没有默认设备时按枚举顺序取第一个"
+        );
+        assert!(matches!(
+            choose_input_device::<&str, _>(None, || Ok(Vec::new())),
+            Err(RecorderError::NoInputDevice)
+        ));
+        assert!(matches!(
+            choose_input_device::<&str, Vec<&str>>(None, || Err(RecorderError::EngineFailed(
+                "enumeration failed".into()
+            ))),
+            Err(RecorderError::EngineFailed(_))
+        ));
     }
 
     #[test]

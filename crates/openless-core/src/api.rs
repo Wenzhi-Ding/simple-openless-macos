@@ -1087,6 +1087,18 @@ impl OpenLessBackend {
             .ok_or_else(|| {
                 BackendError::new(BackendErrorCode::InvalidArgument, "history entry not found")
             })?;
+        // 只有「转录失败 / 空转写」两种条目能原地覆盖：这两类没有可用的
+        // 转写结果，重转只是补上原本缺失的东西。已完成、润色失败或带润色
+        // 结果的条目保留原记录，重转不能悄悄改写历史事实。
+        if !matches!(
+            entry.error_code.as_deref(),
+            Some("transcribeFailed" | "emptyTranscript")
+        ) {
+            return Err(BackendError::new(
+                BackendErrorCode::InvalidState,
+                "history entry is not a failed transcription",
+            ));
+        }
         entry.raw_transcript = text.clone();
         entry.final_text = text;
         entry.error_code = None;
@@ -2319,5 +2331,167 @@ fn ensure_active_session(state: &MutableState, session_id: SessionId) -> Result<
             BackendErrorCode::Cancelled,
             "dictation progress belongs to an inactive session",
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::auxiliary::AsrCallLabel;
+
+    fn test_backend() -> OpenLessBackend {
+        let data_dir =
+            std::env::temp_dir().join(format!("openless-api-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&data_dir).unwrap();
+        OpenLessBackend::new(
+            BackendConfig {
+                data_dir,
+                ..BackendConfig::default()
+            },
+            BackendDependencies::unsupported(),
+        )
+        .unwrap()
+    }
+
+    fn history_entry(id: &str, error_code: Option<&str>) -> DictationSession {
+        DictationSession {
+            id: id.into(),
+            created_at: chrono::Utc::now().to_rfc3339(),
+            source: HistorySource::Voice,
+            raw_transcript: "raw".into(),
+            asr_transcript: None,
+            final_text: "final".into(),
+            polish_source: None,
+            app_bundle_id: None,
+            app_name: None,
+            insert_status: HistoryInsertStatus::Inserted,
+            error_code: error_code.map(str::to_string),
+            duration_ms: Some(1000),
+            dictionary_entry_count: None,
+            has_audio_recording: Some(true),
+            asr_provider: Some("failed-provider".into()),
+            asr_model: Some("failed-model".into()),
+            llm_provider: None,
+            llm_model: None,
+            pipeline_mode: None,
+            asr_ms: Some(1),
+            polish_ms: None,
+            polish_diagnostics: None,
+        }
+    }
+
+    fn stored_entry(backend: &OpenLessBackend, id: &str) -> DictationSession {
+        backend
+            .list_history()
+            .unwrap()
+            .into_iter()
+            .find(|entry| entry.id == id)
+            .expect("history entry should still exist")
+    }
+
+    fn asr_call() -> AsrCallLabel {
+        AsrCallLabel::new("local-qwen3-mlx", Some("qwen3-asr-1.7b".into()))
+    }
+
+    #[test]
+    fn retranscription_replaces_failed_and_empty_entries() {
+        let backend = test_backend();
+        for (index, error_code) in ["transcribeFailed", "emptyTranscript"].iter().enumerate() {
+            let id = format!("failed-{index}");
+            backend
+                .append_history(history_entry(&id, Some(error_code)), 30, Some(20))
+                .unwrap();
+
+            let updated = backend
+                .apply_history_retranscription(&id, "retranscribed".into(), &asr_call(), 480)
+                .unwrap();
+
+            assert_eq!(updated.raw_transcript, "retranscribed");
+            assert_eq!(updated.final_text, "retranscribed");
+            assert_eq!(updated.error_code, None);
+            assert_eq!(updated.asr_provider.as_deref(), Some("local-qwen3-mlx"));
+            assert_eq!(updated.asr_model.as_deref(), Some("qwen3-asr-1.7b"));
+            assert_eq!(updated.asr_ms, Some(480));
+            assert_eq!(updated.llm_provider, None);
+            assert_eq!(updated.llm_model, None);
+            assert_eq!(updated.polish_ms, None);
+            assert_eq!(stored_entry(&backend, &id), updated);
+        }
+    }
+
+    #[test]
+    fn retranscription_rejects_completed_entries() {
+        let backend = test_backend();
+        backend
+            .append_history(history_entry("completed", None), 30, Some(20))
+            .unwrap();
+
+        let error = backend
+            .apply_history_retranscription(
+                "completed",
+                "must not replace history".into(),
+                &asr_call(),
+                1,
+            )
+            .unwrap_err();
+
+        assert_eq!(error.code, BackendErrorCode::InvalidState);
+        // 历史事实保持原样：没有被半途覆盖成重转结果。
+        let entry = stored_entry(&backend, "completed");
+        assert_eq!(entry.raw_transcript, "raw");
+        assert_eq!(entry.final_text, "final");
+        assert_eq!(entry.error_code, None);
+        assert_eq!(entry.asr_provider.as_deref(), Some("failed-provider"));
+    }
+
+    #[test]
+    fn retranscription_rejects_polished_entries_and_repeated_overwrites() {
+        let backend = test_backend();
+        let mut polished = history_entry("polished", Some("polishFailed"));
+        entry_with_polish(&mut polished);
+        backend.append_history(polished, 30, Some(20)).unwrap();
+
+        let error = backend
+            .apply_history_retranscription(
+                "polished",
+                "must not replace polish".into(),
+                &asr_call(),
+                1,
+            )
+            .unwrap_err();
+        assert_eq!(error.code, BackendErrorCode::InvalidState);
+        let entry = stored_entry(&backend, "polished");
+        assert_eq!(entry.raw_transcript, "raw");
+        assert_eq!(entry.final_text, "raw");
+        assert_eq!(entry.error_code.as_deref(), Some("polishFailed"));
+        assert_eq!(entry.polish_ms, Some(12));
+        assert_eq!(entry.asr_provider.as_deref(), Some("failed-provider"));
+
+        // 失败条目成功重转后变成已完成，再转一次同样被拒绝。
+        backend
+            .append_history(
+                history_entry("failed", Some("transcribeFailed")),
+                30,
+                Some(20),
+            )
+            .unwrap();
+        backend
+            .apply_history_retranscription("failed", "retranscribed".into(), &asr_call(), 1)
+            .unwrap();
+        let error = backend
+            .apply_history_retranscription("failed", "second pass".into(), &asr_call(), 1)
+            .unwrap_err();
+        assert_eq!(error.code, BackendErrorCode::InvalidState);
+        assert_eq!(stored_entry(&backend, "failed").final_text, "retranscribed");
+    }
+
+    /// polishFailed 条目保留 raw 作为 final，但已经走过 LLM 并记下了润色
+    /// 归属；这类记录同样不允许被重转覆盖。
+    fn entry_with_polish(entry: &mut DictationSession) {
+        entry.raw_transcript = "raw".into();
+        entry.final_text = "raw".into();
+        entry.llm_provider = Some("local-llama".into());
+        entry.llm_model = Some("gemma-4-E4B".into());
+        entry.polish_ms = Some(12);
     }
 }

@@ -3,9 +3,11 @@
 //   - playRecordStartCue()  播放（按下录音热键、进入 recording 状态时调用）
 //   - stopAudioCue()        关闭/停止（离开 recording、或连按热键避免叠音时调用）
 //
-// 触发点在 capsule 窗口（始终存活、收到 capsule:state 事件）；设置页「试听」也复用同一份。
+// 触发点在主窗（FloatingShell 常驻挂载，收到 capsule:state 事件）；设置页「试听」也复用同一份。
 // 设计原则：任何环境（无 Web Audio、AudioContext 被自动播放策略挂起、单音创建失败）都
 // 静默降级，绝不抛错影响录音主流程。
+
+import type { CapsuleState } from './types';
 
 /** 单个正弦音符的合成参数（相对提示音起点）。 */
 export interface CueTone {
@@ -31,6 +33,49 @@ export function recordStartCueTones(): CueTone[] {
 /** 提示音总时长 (ms) = 最后一个音的结束时刻。供调用方排期 stop / 试听反馈用。 */
 export function cueTotalDurationMs(tones: CueTone[]): number {
   return tones.reduce((max, t) => Math.max(max, t.startMs + t.durationMs), 0);
+}
+
+/** 一次 capsule 状态迁移对提示音该做什么。 */
+export type CueEdgeAction = 'play' | 'stop' | 'none';
+
+/**
+ * 按前后状态判定提示音边沿。纯函数，便于单测。
+ * prev 是「监听器挂载时从后端快照取到的真实状态」或上一条事件的状态：
+ * 正常启动时快照是 idle，第一次 idle → recording 必须返回 'play'；录音进行中重挂载时
+ * 快照已是 recording，首条 recording 事件返回 'none'，不重放开始提示音。
+ */
+export function cueEdgeAction(prev: CapsuleState, next: CapsuleState): CueEdgeAction {
+  if (next === 'recording' && prev !== 'recording') return 'play';
+  if (next !== 'recording' && prev === 'recording') return 'stop';
+  return 'none';
+}
+
+/**
+ * 把后端听写阶段（camelCase，来自 StartupSnapshot.backend.dictation.phase）映射成提示音
+ * 使用的胶囊状态。映射与 src-tauri/src/tauri_events.rs 的 map_dictation_state 一致。
+ * 监听器挂载时用它把 prevStateRef 初始化成后端真实状态：录音进行中重挂载时首条
+ * recording 就不会被当成「刚开始录音」而误放提示音；正常启动后第一次录音则是真实的
+ * idle → recording 边沿，照常播放。
+ */
+export function cueStateFromDictationPhase(phase: string): CapsuleState {
+  switch (phase) {
+    case 'starting':
+    case 'recording':
+      return 'recording';
+    case 'transcribing':
+      return 'transcribing';
+    case 'polishing':
+    case 'inserting':
+      return 'polishing';
+    case 'completed':
+      return 'done';
+    case 'cancelled':
+      return 'cancelled';
+    case 'failed':
+      return 'error';
+    default:
+      return 'idle';
+  }
 }
 
 // Safari/WKWebView 旧前缀；用结构化类型而非 any 拿到 webkit 兜底构造器。
