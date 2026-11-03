@@ -26,16 +26,30 @@ if (!functionMatch) {
 const macosNoActivateFunction = functionMatch[0];
 const executableMacosNoActivateFunction = macosNoActivateFunction.replace(/\/\/.*$/gm, '');
 
+// 2026-11-03 起（46a86b29 线程纪律收编），裸位值抽成了模块常量并加了漂移检测重注册；
+// 行为不变：函数仍经命名常量做绝对 setCollectionBehavior 写入，然后 orderFrontRegardless。
+assertMatch(
+  coordinatorHostRs,
+  /const CAN_JOIN_ALL_SPACES: usize = 1 << 0;/,
+  'macOS capsule collection behavior constants must keep CAN_JOIN_ALL_SPACES = 1 << 0',
+);
+
+assertMatch(
+  coordinatorHostRs,
+  /const FULL_SCREEN_AUXILIARY: usize = 1 << 8;/,
+  'macOS capsule collection behavior constants must keep FULL_SCREEN_AUXILIARY = 1 << 8',
+);
+
 assertMatch(
   macosNoActivateFunction,
-  /CAN_JOIN_ALL_SPACES[\s\S]*?1 << 0[\s\S]*?setCollectionBehavior[\s\S]*?orderFrontRegardless/,
+  /setCollectionBehavior[\s\S]*?orderFrontRegardless/,
   'macOS capsule should join all Spaces via an absolute collectionBehavior write before showing without activation',
 );
 
 assertMatch(
   macosNoActivateFunction,
-  /FULL_SCREEN_AUXILIARY[\s\S]*?1 << 8[\s\S]*?setCollectionBehavior[\s\S]*?orderFrontRegardless/,
-  'macOS capsule should join fullscreen Spaces as an auxiliary window before showing without activation',
+  /setCollectionBehavior : CAPSULE_COLLECTION_BEHAVIOR/,
+  'macOS capsule must write the full CAN_JOIN_ALL_SPACES|STATIONARY|FULL_SCREEN_AUXILIARY combination, not a partial mask',
 );
 
 assertMatch(

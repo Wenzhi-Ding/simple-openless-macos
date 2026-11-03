@@ -1,14 +1,13 @@
-// 录音提示音：监听 capsule:state 事件，在"开始录音"边沿播放合成提示音。
+// 录音提示音：监听 capsule:state 事件，在状态边沿触发宿主进程发声。
 // 独立组件，不依赖胶囊窗口显示——胶囊隐藏时也能正常工作。
+// 发声不在本进程：WKWebView 音频通道用久了会不可探测地卡死，改走 IPC 由
+// Rust 侧 cpal 播放（见 src/lib/audioCue.ts 头注与 docs/upstream-sync.md）。
 
 import { useEffect, useRef } from 'react';
-import { isTauri } from '../lib/ipc';
+import { isTauri, playCue, stopCue } from '../lib/ipc';
 import {
   cueEdgeAction,
   cueStateFromDictationPhase,
-  playRecordStartCue,
-  primeAudioCue,
-  stopAudioCue,
 } from '../lib/audioCue';
 import type { CapsuleState, UserPreferences } from '../lib/types';
 
@@ -56,12 +55,6 @@ export function AudioCueListener() {
     return () => { cancelled = true; unlisten?.(); };
   }, []);
 
-  // 预热 AudioContext
-  useEffect(() => {
-    if (!isTauri) return;
-    primeAudioCue();
-  }, []);
-
   // 监听 capsule 状态边沿
   useEffect(() => {
     if (!isTauri) return;
@@ -90,18 +83,23 @@ export function AudioCueListener() {
         prevStateRef.current = state;
         const edge = cueEdgeAction(prev, state);
         if (edge === 'play') {
-          if (audioCueEnabledRef.current) playRecordStartCue();
+          if (audioCueEnabledRef.current) playCue('start').catch(() => undefined);
         } else if (edge === 'stop') {
-          stopAudioCue();
+          // 正常说完松键（进入转写）→ 下行「结束音」；取消/失败等异常退出只截断在播的
+          // 开始音，不另响——失败路径有自己的可读错误提示。
+          if (audioCueEnabledRef.current && state === 'transcribing') {
+            playCue('stop').catch(() => undefined);
+          } else {
+            stopCue().catch(() => undefined);
+          }
         }
       }).then(fn => { if (cancelled) fn(); else unlisten = fn; }).catch(() => {});
     })();
     return () => {
       cancelled = true;
       unlisten?.();
-      // 卸载时若还有提示音在排期或播放，只 unlisten 会让它继续响完；这里停掉在播节点，
-      // 并记一次 stop——挂起 resume 的补播若已超过迟到阈值就丢弃（阈值内仍按原设计补响）。
-      stopAudioCue();
+      // 卸载时若还有提示音在播，只 unlisten 会让它继续响完；这里通知宿主截断。
+      stopCue().catch(() => undefined);
     };
   }, []);
 

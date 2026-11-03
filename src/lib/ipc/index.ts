@@ -40,7 +40,10 @@ export {
     stopDictation,
     cancelDictation,
     getCurrentDictationPhase,
+    playCue,
+    stopCue,
 } from "./dictation"
+export type { CueKind } from "./dictation"
 
 // permissions
 export {

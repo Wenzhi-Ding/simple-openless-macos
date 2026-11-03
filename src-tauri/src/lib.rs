@@ -10,6 +10,7 @@
 //! - coordinator: dictation state machine glue
 //! - commands: Tauri IPC surface
 mod asr;
+mod audio_cue;
 mod audio_mute;
 #[cfg(test)]
 mod build_target;
@@ -96,6 +97,8 @@ macro_rules! app_invoke_handler_desktop {
             commands::retranscribe_recording,
             commands::stop_dictation,
             commands::cancel_dictation,
+            commands::play_cue,
+            commands::stop_cue,
             commands::repolish,
             commands::check_accessibility_permission,
             commands::request_accessibility_permission,

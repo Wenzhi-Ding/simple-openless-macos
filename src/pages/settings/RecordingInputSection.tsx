@@ -4,11 +4,11 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ShortcutRecorder } from '../../components/ShortcutRecorder';
-import { playRecordStartCue } from '../../lib/audioCue';
 import { defaultDictationHotkey } from '../../lib/hotkey';
 import {
   isTauri,
   listMicrophoneDevices,
+  playCue,
   setDictationHotkey,
 } from '../../lib/ipc';
 import { getPlatformCapabilities } from '../../lib/platform';
@@ -256,7 +256,7 @@ export function RecordingInputSection() {
               <Toggle on={prefs.audioCueOnRecord} onToggle={onAudioCueChange} />
               <button
                 type="button"
-                onClick={() => playRecordStartCue()}
+                onClick={() => playCue('start').catch(() => undefined)}
                 style={{
                   padding: '5px 12px',
                   fontSize: 12,

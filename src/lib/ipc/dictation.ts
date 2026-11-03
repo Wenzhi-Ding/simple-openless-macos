@@ -29,3 +29,18 @@ export async function getCurrentDictationPhase(): Promise<string> {
     const phase = snapshot.backend?.dictation?.phase
     return typeof phase === "string" ? phase : "idle"
 }
+
+export type CueKind = "start" | "stop"
+
+/**
+ * 播放听写提示音（宿主进程 cpal 合成，不经 WebKit，杜绝 WebView 音频通道卡死导致的
+ * 静默）。start = 开始录音的上行「叮咚」；stop = 正常结束录音的下行「咚叮」。
+ */
+export function playCue(kind: CueKind): Promise<void> {
+    return invokeOrMock("play_cue", { kind }, () => undefined)
+}
+
+/** 截断正在播的提示音（不另起新音）。取消/失败退出与组件卸载清理用。 */
+export function stopCue(): Promise<void> {
+    return invokeOrMock("stop_cue", undefined, () => undefined)
+}
