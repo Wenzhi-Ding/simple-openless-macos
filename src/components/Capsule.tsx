@@ -575,7 +575,6 @@ interface CapsuleProps {
 }
 
 export function Capsule({ os: forcedOs }: CapsuleProps = {}) {
-  const { t } = useTranslation();
   const os = forcedOs ?? detectOS();
   const preview = useMemo(() => getPreviewCapsulePayload(), []);
   const [state, setState] = useState<CapsuleState>(preview.state);
@@ -606,7 +605,8 @@ export function Capsule({ os: forcedOs }: CapsuleProps = {}) {
   // - 若期间 state 又切回非 idle（例如用户连按热键），立刻中止 leaving 并恢复显示。
   const [leaving, setLeaving] = useState<boolean>(false);
   const [lastVisibleState, setLastVisibleState] = useState<CapsuleState>(preview.state);
-  const [lastVisibleMessage, setLastVisibleMessage] = useState<string | undefined>(preview.message);
+  // setter 从未被调用：值恒等于初始 preview.message（idle 离场渲染读取）。
+  const lastVisibleMessage = preview.message;
   // 退出动画时长跟随样式；leaving effect 故意只依赖 state，所以经 ref 读取最新值。
   const exitMsRef = useRef(isClassic ? EXIT_ANIM_MS_CLASSIC : EXIT_ANIM_MS_SIRI);
   exitMsRef.current = isClassic ? EXIT_ANIM_MS_CLASSIC : EXIT_ANIM_MS_SIRI;

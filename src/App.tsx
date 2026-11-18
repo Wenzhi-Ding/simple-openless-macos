@@ -137,8 +137,6 @@ function ReadyApp({ isCapsule, forcedOs }: AppProps) {
     let cancelled = false;
 
     void (async () => {
-      const caps = platformCaps;
-
       const [a, m] = await Promise.all([
         checkPermission('accessibility', checkAccessibilityPermission, 'startup'),
         checkPermission('microphone', checkMicrophonePermission, 'startup'),

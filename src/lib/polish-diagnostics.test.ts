@@ -10,10 +10,6 @@ import {
 } from './polish-diagnostics';
 import type { PolishDiagnostics } from './types';
 
-function assert(condition: boolean, message: string) {
-  if (!condition) throw new Error(message);
-}
-
 function assertEqual<T>(actual: T, expected: T, message: string) {
   if (actual !== expected) {
     throw new Error(`${message}: expected ${String(expected)}, got ${String(actual)}`);

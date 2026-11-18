@@ -1,6 +1,6 @@
 // Onboarding.tsx — first-run permission and service setup.
 
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   checkAccessibilityPermission,
@@ -15,7 +15,7 @@ import { requiresScreenCapturePermission } from '../lib/platform';
 import { checkPermission, permissionAction, permissionStatusKey, type PermissionCheck, dictationPermissionsReady, permissionGranted } from '../lib/permissionOnboarding';
 import { usePermissionRefresh } from '../lib/usePermissionRefresh';
 import { checkScreenCapturePermission, requestScreenCapturePermission } from '../lib/ipc/permissions';
-import type { PermissionStatus, PlatformCapabilities } from '../lib/types';
+import type { PlatformCapabilities } from '../lib/types';
 import { useHotkeySettings } from '../state/HotkeySettingsContext';
 
 interface OnboardingProps {

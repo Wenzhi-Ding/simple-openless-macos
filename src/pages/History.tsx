@@ -9,7 +9,6 @@ import { detectOS } from '../components/WindowChrome';
 import { formatComboLabel } from '../lib/hotkey';
 import { clearHistory, deleteHistoryEntry, listHistory, readAudioRecording, repolish, retranscribeRecording, isTauri } from '../lib/ipc';
 import {
-  contextStatusLabelKey,
   contextSummary,
   diagnosticsHeadlineParts,
   formatPolishDiagnosticsJson,

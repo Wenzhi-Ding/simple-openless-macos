@@ -43,7 +43,7 @@ async function autostartDisable(): Promise<void> {
 
 export function RecordingInputSection() {
   const { t } = useTranslation();
-  const { prefs, capability, updatePrefs: savePrefs, refresh } = useHotkeySettings();
+  const { prefs, capability, updatePrefs: savePrefs } = useHotkeySettings();
   const [platformCaps, setPlatformCaps] = useState<PlatformCapabilities | null>(null);
   const [microphoneDevices, setMicrophoneDevices] = useState<MicrophoneDevice[]>([]);
   const [microphoneDevicesLoaded, setMicrophoneDevicesLoaded] = useState(false);
