@@ -1,10 +1,6 @@
 // SettingsModal.tsx — 居中弹窗，左侧单层侧栏。
 //
-// 重构（2026-05）：原本是「外层弹窗侧栏 + 设置页内层侧栏」双层嵌套，用户点
-// 「设置」还要再面对第二个侧栏。现在拍平成单层 —— 通用 / 服务 / 隐私 / 高级 /
-// 关于 五个 tab + 帮助外链组。每个 tab 的内容见 pages/settings/tabs.tsx，
-// 分组原则：按「用户带着什么问题来」归类 —— 怎么录（通用）/ 识别润色由谁提供
-// （服务，含本地模型）/ 数据去哪了（隐私）/ 实验功能（高级）/ 版本与更新（关于）。
+// 通用 / 隐私 / 高级三个 tab，内容见 pages/settings/tabs.tsx。
 //
 // 设计原则：每个可见控件都必须可用。
 
@@ -32,20 +28,15 @@ interface SettingsModalProps {
 }
 
 interface ModalNavItem {
-  id: string;
+  id: SettingsSectionId;
   icon: string;
-  external?: boolean;
-  href?: string;
 }
 
-
-// 第一组：可选中的 tab；第二组：外部链接（永远不 active）。
 const TAB_ITEMS: ModalNavItem[] = [
   { id: 'general', icon: 'settings' },
   { id: 'privacy', icon: 'shield' },
   { id: 'advanced', icon: 'bolt' },
 ];
-const LINK_ITEMS: ModalNavItem[] = [];
 
 export function SettingsModal({ os: _os, onClose, initialSettingsSection }: SettingsModalProps) {
   const { t } = useTranslation();
@@ -53,7 +44,7 @@ export function SettingsModal({ os: _os, onClose, initialSettingsSection }: Sett
   const [section, setSection] = useState<SettingsSectionId>(initialSettingsSection ?? 'general');
   const savedToast = useSavedToastListener();
 
-  // 与 sidebar nav 一致的滑动指示器：仅 tab 组有 pill；外链组永远不画 pill（desktop）。
+  // 与 sidebar nav 一致的滑动指示器（desktop）。
   const tabRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const [pillRect, setPillRect] = useState<{ top: number; height: number } | null>(null);
   useLayoutEffect(() => {
@@ -130,7 +121,7 @@ export function SettingsModal({ os: _os, onClose, initialSettingsSection }: Sett
                   <button
                     key={it.id}
                     type="button"
-                    onClick={() => setSection(it.id as SettingsSectionId)}
+                    onClick={() => setSection(it.id)}
                     className={active ? 'ol-nav-btn ol-nav-btn-active' : 'ol-nav-btn'}
                     style={narrowTabChipStyle(active)}
                   >
@@ -176,7 +167,7 @@ export function SettingsModal({ os: _os, onClose, initialSettingsSection }: Sett
                 <button
                   key={it.id}
                   ref={el => { tabRefs.current[idx] = el; }}
-                  onClick={() => setSection(it.id as SettingsSectionId)}
+                  onClick={() => setSection(it.id)}
                   className={active ? 'ol-nav-btn ol-nav-btn-active' : 'ol-nav-btn'}
                   style={navBtnStyle}>
                   <Icon name={it.icon} size={14} />

@@ -711,10 +711,6 @@ impl DownloadManager {
             flag.store(true, Ordering::SeqCst);
         }
     }
-
-    pub fn is_active(&self, key: ModelKey) -> bool {
-        self.cancel_flags.lock().contains_key(key.as_str())
-    }
 }
 
 /// 下载完成后重预载引擎。与启动预载同一个 `preload_local_models`：ASR 共享

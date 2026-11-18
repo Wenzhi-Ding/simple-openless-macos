@@ -578,7 +578,6 @@ export function Capsule({ os: forcedOs }: CapsuleProps = {}) {
   const { t } = useTranslation();
   const os = forcedOs ?? detectOS();
   const preview = useMemo(() => getPreviewCapsulePayload(), []);
-  const metrics = getCapsulePillMetrics(os);
   const [state, setState] = useState<CapsuleState>(preview.state);
   const [level, setLevel] = useState<number>(preview.level);
   const [message, setMessage] = useState<string | undefined>(preview.message);
@@ -617,9 +616,6 @@ export function Capsule({ os: forcedOs }: CapsuleProps = {}) {
     useState<InsertFallbackCardPayload | null>(null);
   // 前端 host 与原生窗口保持同一份透明语音 orb 舞台尺寸。
   const hostMetrics = getCapsuleHostMetrics(os);
-  // Windows 端 host 用「host 高 − pill 高」把 pill 垂直居中；Siri 舞台 460×180 与 host
-  // 等高（padding 0），经典药丸则在 180 高的窗口里垂直居中。
-  const pillMetrics = isClassic ? classicPillMetrics(os) : metrics;
 
   // 空闲预热 shader 编译缓存：首次按下热键时光条不用现场编译（响应延迟反馈）。
   useEffect(() => {

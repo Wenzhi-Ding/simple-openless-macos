@@ -87,10 +87,6 @@ export function modifiersFromPressedCodes(
     : genericModifiersFromPressedCodes(codes);
 }
 
-function modifierDisplayName(tag: string, platform: { isMac: boolean; isWindows: boolean }): string {
-  return sideModifierDisplayName(tag, platform);
-}
-
 function sideModifierDisplayName(tag: string, platform: { isMac: boolean; isWindows: boolean }): string {
   const sideLabels: Record<string, string> = platform.isMac
     ? {
