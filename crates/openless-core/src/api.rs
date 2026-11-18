@@ -532,7 +532,6 @@ impl OpenLessBackend {
                 runtime,
                 config.data_dir.join("models"),
                 BackendEventPublisher::new(Arc::clone(&events)),
-                Arc::clone(&preferences_revision),
             ));
         }
         if let Some((polisher, transcription)) = deps.services.take_auxiliary_runtime() {

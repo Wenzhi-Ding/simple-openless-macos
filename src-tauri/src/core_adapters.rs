@@ -1,5 +1,5 @@
 //! Thin Tauri implementations of the framework-independent core ports.
-use crate::recorder::{AudioConsumer as LegacyAudioConsumer, Recorder, RecorderError};
+use crate::recorder::{Recorder, RecorderError};
 use futures_util::future::BoxFuture;
 use openless_core::{
     ActiveRecording, AudioConsumer as CoreAudioConsumer, AudioRecorder, BackendError,
@@ -393,7 +393,6 @@ impl TranscriptionEngine for TauriNativeTranscriptionEngine {
             }
             let provider = crate::asr::local::qwen3_mlx::Qwen3MlxAsr::new(
                 Arc::clone(&qwen3),
-                model.clone(),
                 model_dir,
                 context.asr.language.clone(),
             );
@@ -417,7 +416,7 @@ impl TranscriptionEngine for TauriNativeTranscriptionEngine {
 impl CoreAudioConsumer for TauriNativeTranscriptionSession {
     fn consume_pcm_chunk(&self, pcm: &[u8]) {
         let TauriNativeTranscriptionSessionKind::Qwen3Mlx { provider, .. } = &self.kind;
-        LegacyAudioConsumer::consume_pcm_chunk(provider.as_ref(), pcm);
+        provider.consume_pcm_chunk(pcm);
     }
 }
 impl TranscriptionSession for TauriNativeTranscriptionSession {
@@ -491,14 +490,6 @@ pub(crate) struct TauriAudioRecorder {
     /// 热键按下瞬间拉起的预置录音流；start 优先接管它，让按键到采集之间
     /// 只剩 core 会话链自身的耗时，而不是「会话链 + cpal 建流」串行相加。
     prearm: Arc<crate::prearm::PrearmRegistry>,
-}
-struct AudioConsumerBridge {
-    inner: Arc<dyn CoreAudioConsumer>,
-}
-impl LegacyAudioConsumer for AudioConsumerBridge {
-    fn consume_pcm_chunk(&self, pcm: &[u8]) {
-        self.inner.consume_pcm_chunk(pcm);
-    }
 }
 struct TauriActiveRecording {
     /// 消费式停止：正常路径是 `Recorder::stop`，预置接管路径是预置流自己的停止闭包。
@@ -664,9 +655,6 @@ impl AudioRecorder for TauriAudioRecorder {
                     recording_plan.mute_during_recording,
                     crate::audio_mute::AudioMuteGuard::activate,
                 );
-                let consumer: Arc<dyn LegacyAudioConsumer> =
-                    Arc::new(AudioConsumerBridge { inner: consumer });
-
                 // 优先接管热键按下瞬间预置的流：mic 匹配、还活着、未过期才用，
                 // 否则回落到新建（行为与没有预置时一致）。adopt 可能等在建的流
                 // 完工（condvar），必须留在 spawn_blocking 里。
@@ -1078,7 +1066,6 @@ mod tests {
         let runtime = Arc::new(crate::asr::local::qwen3_mlx::Qwen3MlxRuntime::new());
         let provider = Arc::new(crate::asr::local::qwen3_mlx::Qwen3MlxAsr::new(
             Arc::clone(&runtime),
-            "qwen3-asr-1.7b".into(),
             PathBuf::from("unused-fixture"),
             None,
         ));

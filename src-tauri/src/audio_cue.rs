@@ -13,7 +13,7 @@
 //! 与旧 Web Audio 版「新播放先停上一轮」的去叠音行为一致。任何失败（无输出设备、
 //! 打流失败）只 log::warn 并放弃：提示音是非关键 UI 反馈，绝不影响听写主流程。
 
-use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use cpal::traits::{DeviceTrait, HostTrait};
 use std::f32::consts::TAU;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;

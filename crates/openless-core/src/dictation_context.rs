@@ -165,13 +165,8 @@ impl DictationContext {
     ) -> Self {
         let DictationProviderInvocations { mut asr, llm } = providers;
         let hotwords = normalize_hotwords(hotwords);
-        let (fallback_asr_model, fallback_asr_language) =
-            selected_asr_details(preferences, &asr.provider_type);
         if asr.model.is_none() {
-            asr.model = fallback_asr_model;
-        }
-        if asr.language.is_none() {
-            asr.language = fallback_asr_language;
+            asr.model = non_blank(&preferences.local_asr_active_model);
         }
         asr.keep_loaded_secs = Some(preferences.local_asr_keep_loaded_secs);
         asr.prompt = build_asr_prompt(&hotwords);
@@ -362,13 +357,6 @@ pub fn eligible_polish_context_turns(sessions: Vec<DictationSession>) -> Vec<Pol
         })
         .take(MAX_POLISH_CONTEXT_TURNS)
         .collect()
-}
-
-fn selected_asr_details(
-    preferences: &UserPreferences,
-    _provider_type: &str,
-) -> (Option<String>, Option<String>) {
-    (non_blank(&preferences.local_asr_active_model), None)
 }
 
 fn normalize_hotwords(hotwords: Vec<String>) -> Vec<String> {

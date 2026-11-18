@@ -64,7 +64,6 @@ impl LocalAsrService {
         runtime: Arc<dyn ModelRuntimeAdapter>,
         default_models_root: PathBuf,
         events: BackendEventPublisher,
-        _preferences_revision: Arc<std::sync::atomic::AtomicU64>,
     ) -> Self {
         Self {
             preferences,

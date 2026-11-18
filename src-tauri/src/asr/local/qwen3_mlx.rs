@@ -714,7 +714,6 @@ fn spawn_worker(
 /// `cancel()` 递增代次使过期结果被丢弃。
 pub struct Qwen3MlxAsr {
     runtime: Arc<Qwen3MlxRuntime>,
-    model_id: String,
     model_dir: PathBuf,
     language_hint: Option<String>,
     buffer: Mutex<Vec<u8>>,
@@ -724,23 +723,16 @@ pub struct Qwen3MlxAsr {
 impl Qwen3MlxAsr {
     pub fn new(
         runtime: Arc<Qwen3MlxRuntime>,
-        model_id: String,
         model_dir: PathBuf,
         language_hint: Option<String>,
     ) -> Self {
         Self {
             runtime,
-            model_id,
             model_dir,
             language_hint: normalize_language_hint(language_hint),
             buffer: Mutex::new(Vec::new()),
             cancel_generation: AtomicU64::new(0),
         }
-    }
-
-    #[allow(dead_code)]
-    pub fn model_id(&self) -> &str {
-        &self.model_id
     }
 
     pub fn buffer_duration_ms(&self) -> u64 {
@@ -1111,7 +1103,6 @@ mod tests {
     fn cancel_bumps_generation_and_clears_buffer() {
         let provider = Qwen3MlxAsr::new(
             Arc::new(Qwen3MlxRuntime::new()),
-            SUPPORTED_MODEL_ID.into(),
             PathBuf::from("unused"),
             None,
         );
@@ -1127,7 +1118,6 @@ mod tests {
     async fn empty_buffer_returns_empty_transcript() {
         let provider = Qwen3MlxAsr::new(
             Arc::new(Qwen3MlxRuntime::new()),
-            SUPPORTED_MODEL_ID.into(),
             PathBuf::from("unused"),
             None,
         );
@@ -1142,7 +1132,6 @@ mod tests {
     async fn all_silent_buffer_skips_worker_and_returns_empty_transcript() {
         let provider = Qwen3MlxAsr::new(
             Arc::new(Qwen3MlxRuntime::new()),
-            SUPPORTED_MODEL_ID.into(),
             PathBuf::from("unused"),
             None,
         );

@@ -31,23 +31,7 @@ const LOG_EVERY_N_CALLBACKS: usize = 50;
 /// RMS → UI 电平的放大系数，与 Swift 端 `min(1.0, rms * 4)` 一致。
 const LEVEL_RMS_GAIN: f32 = 4.0;
 
-/// 接收已重采样 Int16 PCM 字节流（小端）的下游。
-pub trait AudioConsumer: Send + Sync {
-    /// 每次拿到的是若干 Int16 样本拼成的 little-endian 字节序列。
-    /// 长度一定是 2 的倍数。
-    fn consume_pcm_chunk(&self, pcm: &[u8]);
-}
-
-/// Compatibility bridge for legacy recorder call sites while cloud ASR
-/// implementations live in the framework-independent core.
-impl<T> AudioConsumer for T
-where
-    T: openless_core::AudioConsumer + ?Sized,
-{
-    fn consume_pcm_chunk(&self, pcm: &[u8]) {
-        openless_core::AudioConsumer::consume_pcm_chunk(self, pcm);
-    }
-}
+pub use openless_core::AudioConsumer;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
