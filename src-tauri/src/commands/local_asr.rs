@@ -22,6 +22,9 @@ pub struct LocalAsrEngineStatus {
     pub model_present: bool,
     /// 最近一次错误(worker 启动/加载/转写失败原因),供状态卡显式展示。
     pub error: Option<String>,
+    /// 已安装权重的实际字节数（*.safetensors 合计）。应用内下载支持 bf16 与
+    /// 4bit 两种变体，常驻内存估算按实际变体展示，不以单一常量伪装。
+    pub weights_bytes: Option<u64>,
 }
 
 impl LocalAsrEngineStatus {
@@ -34,8 +37,31 @@ impl LocalAsrEngineStatus {
             loading: status.operation.as_deref() == Some("loading"),
             model_present: fixed_model_present(),
             error: status.error,
+            weights_bytes: fixed_model_weights_bytes(),
         }
     }
+}
+
+fn fixed_model_weights_bytes() -> Option<u64> {
+    let Some(root) = crate::persistence::models_root().ok() else {
+        return None;
+    };
+    let dir = root.join(crate::asr::local::qwen3_mlx::SUPPORTED_MODEL_ID);
+    let entries = std::fs::read_dir(&dir).ok()?;
+    Some(
+        entries
+            .flatten()
+            .filter(|entry| {
+                entry
+                    .file_name()
+                    .to_str()
+                    .is_some_and(|name| name.ends_with(".safetensors"))
+            })
+            .filter_map(|entry| entry.metadata().ok())
+            .filter(|meta| meta.is_file())
+            .map(|meta| meta.len())
+            .sum::<u64>(),
+    )
 }
 
 fn fixed_model_present() -> bool {

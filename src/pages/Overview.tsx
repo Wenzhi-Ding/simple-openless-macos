@@ -1,11 +1,12 @@
 // Overview.tsx — 真实指标，从 listHistory + getCredentials 派生。
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Icon } from '../components/Icon';
 import { formatComboLabel } from '../lib/hotkey';
 import { getActivityStats, listHistory } from '../lib/ipc';
 import { Heatmap } from '../components/Heatmap';
+import { ModelDownloadDialog } from '../components/ModelDownloadDialog';
 import { useNarrowLayout } from '../lib/useResponsiveLayout';
 import { countCodePoints } from '../lib/unicode';
 import {
@@ -30,6 +31,7 @@ import {
   OCR_MEMORY_ESTIMATE_BYTES,
   asrError,
   asrState,
+  asrWeightsBytes,
   formatMemoryBytes,
   llmError,
   llmState,
@@ -152,6 +154,15 @@ export function Overview({ onOpenHistory }: OverviewProps) {
   // 固定本地模型的真实引擎状态（后端共享实例）：事件 + 回前台 + 低频轮询，
   // 永远不写死「已配置」。
   const modelStatus = useLocalModelStatuses();
+  // 模型缺失（notFound）时的引导下载入口；下载完成后 Rust 侧重预载引擎，
+  // 状态卡经既有 engine-changed/轮询自动翻转到真实状态。
+  const [downloadOpen, setDownloadOpen] = useState(false);
+  const downloadAction = (
+    <Btn onClick={() => setDownloadOpen(true)}>{t('overview.downloadCta')}</Btn>
+  );
+  // ASR 常驻内存随安装变体（bf16≈4.1GB / 4bit≈1.6GB）不同：优先用后端实测
+  // 的权重字节数，模型缺失时退回静态估算常量（带实测基准的默认值）。
+  const asrMemoryBytes = asrWeightsBytes(modelStatus.asr) ?? ASR_MEMORY_ESTIMATE_BYTES;
 
   return (
     <>
@@ -165,7 +176,8 @@ export function Overview({ onOpenHistory }: OverviewProps) {
           subname={ASR_FIXED_PROVIDER}
           state={asrState(modelStatus.asr)}
           error={asrError(modelStatus.asr)}
-          memory={t('overview.memoryUsage', { memory: formatMemoryBytes(ASR_MEMORY_ESTIMATE_BYTES) })}
+          memory={t('overview.memoryUsage', { memory: formatMemoryBytes(asrMemoryBytes) })}
+          action={asrState(modelStatus.asr) === 'notFound' ? downloadAction : undefined}
         />
         <ModelStatusCard
           kind={t('overview.llmKind')}
@@ -175,6 +187,7 @@ export function Overview({ onOpenHistory }: OverviewProps) {
           state={llmState(modelStatus.llm)}
           error={llmError(modelStatus.llm)}
           memory={t('overview.memoryUsage', { memory: formatMemoryBytes(LLM_MEMORY_ESTIMATE_BYTES) })}
+          action={llmState(modelStatus.llm) === 'notFound' ? downloadAction : undefined}
         />
         <ModelStatusCard
           kind={t('overview.ocrKind')}
@@ -246,6 +259,12 @@ export function Overview({ onOpenHistory }: OverviewProps) {
           </div>
         </Card>
       </div>
+      <ModelDownloadDialog
+        open={downloadOpen}
+        onClose={() => setDownloadOpen(false)}
+        missingAsr={asrState(modelStatus.asr) === 'notFound'}
+        missingLlm={llmState(modelStatus.llm) === 'notFound'}
+      />
     </>
   );
 }
@@ -259,11 +278,13 @@ interface ModelStatusCardProps {
   error: string | null;
   /** 常驻内存估算文本（静态常量，与加载状态无关，始终显示）。 */
   memory: string;
+  /** 右侧动作区（如模型缺失时的「获取模型」入口）。仅在传入时渲染。 */
+  action?: ReactNode;
 }
 
 /** 固定模型状态卡：上行类别+状态徽标，下行模型名+provider（附常驻内存估算）；
  *  错误短提示（完整错误放 title 悬浮），不写死任何「已配置」。 */
-function ModelStatusCard({ kind, icon, name, subname, state, error, memory }: ModelStatusCardProps) {
+function ModelStatusCard({ kind, icon, name, subname, state, error, memory, action }: ModelStatusCardProps) {
   const { t } = useTranslation();
   const failed = state === 'failed' || state === 'notFound';
   const dotColor =
@@ -330,6 +351,7 @@ function ModelStatusCard({ kind, icon, name, subname, state, error, memory }: Mo
           </div>
         )}
       </div>
+      {action}
     </Card>
   );
 }

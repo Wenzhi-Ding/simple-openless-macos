@@ -27,6 +27,7 @@ mod hotkey;
 mod hotwords;
 mod insertion;
 mod local_llm;
+mod model_download;
 mod ocr_engine;
 mod permissions;
 mod persistence;
@@ -111,6 +112,8 @@ macro_rules! app_invoke_handler_desktop {
             commands::set_dictation_hotkey,
             commands::local_asr_engine_status,
             commands::local_ocr_engine_status,
+            commands::model_download_start,
+            commands::model_download_cancel,
             commands::export_error_log,
             commands::debug_read_cursor_context,
         ]
@@ -157,6 +160,7 @@ fn run_desktop() {
         )
         .manage(coordinator.clone())
         .manage(core_backend.clone())
+        .manage(model_download::DownloadManager::new())
         .manage(commands::MicrophoneMonitorState::new(None))
         .manage(commands::TrayMicrophoneMenuState::new(Vec::new()))
         .manage(TrayMicrophoneDeviceCache(parking_lot::Mutex::new(Vec::new())))

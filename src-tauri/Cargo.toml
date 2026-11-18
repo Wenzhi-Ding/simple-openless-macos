@@ -1,6 +1,6 @@
 [package]
 name = "openless"
-version = "2.6.0"
+version = "2.7.0"
 license = "AGPL-3.0-only"
 description = "OpenLess — local voice input that types where your cursor is"
 authors = ["OpenLess"]
@@ -66,6 +66,16 @@ foreign-types = "0.5"
 
 tauri-nspanel = { git = "https://github.com/ahkohd/tauri-nspanel", branch = "v2" }
 window-vibrancy = "0.6"
+
+# 首启模型下载（2026-11-18 用户裁定的唯一网络通道；推理路径仍完全离线，
+# 护栏豁免与理由见 crates/openless-core/tests/offline_guard.rs）。
+# native-tls 而非 rustls：HF 的 LFS CDN 常不发 TLS close_notify 就关 TCP，
+# rustls 0.22+ 视为致命 unexpected_eof，SecureTransport 容错（上游实践）。
+reqwest = { version = "0.12", default-features = false, features = ["native-tls", "stream"] }
+# 下载完整性校验：pinned 权重文件的流式 SHA-256。
+sha2 = "0.10"
+# 磁盘剩余空间检查（statfs）。
+libc = "0.2"
 
 [features]
 default = ["custom-protocol"]

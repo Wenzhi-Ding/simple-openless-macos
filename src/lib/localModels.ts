@@ -22,6 +22,8 @@ export interface AsrEngineStatus {
   loading: boolean;
   modelPresent: boolean;
   error: string | null;
+  /** 已安装权重的实际字节数（bf16/4bit 变体不同）；后端不可用时缺省。 */
+  weightsBytes?: number | null;
 }
 
 export interface LlmEngineStatus {
@@ -91,6 +93,12 @@ export function asrError(status: AsrEngineFetch): string | null {
   if (!status) return null;
   if (isFetchError(status)) return status.error;
   return status.error;
+}
+
+/** 已安装 ASR 权重的实测字节（>0 时优先于静态估算展示，bf16/4bit 变体不同）。 */
+export function asrWeightsBytes(status: AsrEngineFetch): number | null {
+  if (!status || isFetchError(status)) return null;
+  return status.weightsBytes && status.weightsBytes > 0 ? status.weightsBytes : null;
 }
 
 export function llmError(status: LlmEngineFetch): string | null {

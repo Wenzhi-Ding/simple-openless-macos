@@ -1,12 +1,18 @@
 //! 静态离线守卫:断言「纯本地」改造不被回退。
 //!
 //! 三层检查(全部纯静态、无网络):
-//! 1. 两份 Cargo manifest 不再声明任何网络/服务端依赖;
-//! 2. Rust 源码里不再出现联网客户端/监听器 API 的调用面;
+//! 1. 两份 Cargo manifest 不再声明任何网络/服务端依赖(唯一豁免见下);
+//! 2. Rust 源码里不再出现联网客户端/监听器 API 的调用面(唯一豁免见下);
 //! 3. 已删除的云功能入口符号没有回流。
 //!
 //! 新增本地功能不需要改这里;任何重新引入联网路径的改动都必须先改本测试,
 //! 让评审在 diff 里看到「为什么需要网络」。
+//!
+//! 现存豁免(2026-11-18 用户裁定):首启模型下载(`src-tauri/src/model_download.rs`)
+//! 是全应用唯一网络通道——引导页显式点击后,按钉死的 revision + SHA-256 从
+//! HuggingFace/镜像下载固定模型;识别/润色推理路径仍完全离线,ASR worker 进程内
+//! 禁网的 fail-closed 设计不变。豁免清单与理由就登记在本文件,新增联网面必须
+//! 先在此登记「为什么需要网络」,不接受未登记的例外。
 
 use std::path::Path;
 
@@ -112,6 +118,15 @@ fn fixed_polish_ui_has_no_style_entry_points() {
     assert!(!repo_root().join("src/pages/Style.tsx").exists());
 }
 
+/// 路径级豁免登记处。每条 = (相对路径, 允许的 token)。
+/// 新增联网面必须先在这里登记理由并通过评审,否则守卫直接失败。
+/// 理由(2026-11-18 用户裁定):首启模型下载是唯一网络通道,下载源钉死
+/// revision + SHA-256,推理路径仍完全离线;TcpListener::bind 仅用于
+/// #[cfg(test)] 的 localhost 假服务器,产品代码不监听任何端口。
+const SOURCE_TOKEN_EXCEPTIONS: &[(&str, &[&str])] = &[
+    ("src-tauri/src/model_download.rs", &["reqwest::", "TcpListener::bind"]),
+];
+
 #[test]
 fn manifests_declare_no_network_dependencies() {
     for relative in ["crates/openless-core/Cargo.toml", "src-tauri/Cargo.toml"] {
@@ -119,6 +134,11 @@ fn manifests_declare_no_network_dependencies() {
             .unwrap_or_else(|error| panic!("read {relative} failed: {error}"));
         let deps = dependency_sections(&manifest);
         for token in BANNED_MANIFEST_TOKENS {
+            // 唯一豁免:reqwest 仅允许出现在 src-tauri/Cargo.toml,供首启模型
+            // 下载使用(理由同 SOURCE_TOKEN_EXCEPTIONS 登记处)。
+            if *token == "reqwest" && relative == "src-tauri/Cargo.toml" {
+                continue;
+            }
             assert!(
                 !deps.contains(token),
                 "{relative} 的依赖里出现了网络库 `{token}`;纯本地构建禁止重新引入联网依赖"
@@ -207,12 +227,22 @@ fn sources_contain_no_network_call_surface() {
                 }
                 let source = std::fs::read_to_string(&path)
                     .unwrap_or_else(|error| panic!("read {} failed: {error}", path.display()));
+                // 相对仓库根的路径,用于豁免匹配。
+                let relative = path
+                    .strip_prefix(repo_root())
+                    .unwrap_or(&path)
+                    .to_string_lossy()
+                    .replace('\\', "/");
                 for (token, label) in BANNED_SOURCE_TOKENS {
+                    let exempt = SOURCE_TOKEN_EXCEPTIONS.iter().any(|(file, tokens)| {
+                        file == &relative && tokens.contains(token)
+                    });
                     assert!(
-                        !source.contains(token),
-                        "{} 出现了 `{token}`({label});纯本地构建禁止联网路径回流入 {}",
+                        exempt || !source.contains(token),
+                        "{} 出现了 `{token}`({label});纯本地构建禁止联网路径回流。\
+                         如确需联网,先在 offline_guard.rs 的 SOURCE_TOKEN_EXCEPTIONS \
+                         登记理由再改代码",
                         path.display(),
-                        path.display()
                     );
                 }
             }
