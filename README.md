@@ -80,7 +80,7 @@ OPENLESS_SIGNING_IDENTITY=<你的身份SHA-1> bash scripts/build-mac-stable.sh
 
 ## 安装
 
-从源码构建后把 `OpenLess.app` 拖入 `/Applications`；也可以从 [Releases](https://github.com/Wenzhi-Ding/simple-openless-macos/releases) 下载已构建的 app（自签证书签名，首次打开需右键 →「打开」绕过 Gatekeeper 提示）。应用不含模型权重，首次启动后按引导下载。
+从源码构建后把 `OpenLess.app` 拖入 `/Applications`；也可以从 [Releases](https://github.com/Wenzhi-Ding/simple-openless-macos/releases) 下载已构建的 app（约 271MB：内置完整推理运行时 Python/MLX/OpenCV/onnxruntime，**屏幕 OCR 模型已内置**，无需下载；自签证书签名，首次打开需右键 →「打开」绕过 Gatekeeper 提示）。应用不含两个大模型权重（约 8.7GB），首次启动后按引导下载。
 
 ## 使用
 

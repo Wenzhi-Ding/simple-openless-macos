@@ -81,7 +81,7 @@ The output is `src-tauri/target/release/bundle/macos/OpenLess.app`; it is not in
 
 ## Install
 
-After building from source, drag `OpenLess.app` into `/Applications`; you can also grab a prebuilt app from [Releases](https://github.com/Wenzhi-Ding/simple-openless-macos/releases) (self-signed certificate — right-click → "Open" the first time to pass Gatekeeper). The app ships without model weights; download them via the in-app guide on first launch.
+After building from source, drag `OpenLess.app` into `/Applications`; you can also grab a prebuilt app from [Releases](https://github.com/Wenzhi-Ding/simple-openless-macos/releases) (~271MB: it bundles the full inference runtime — Python/MLX/OpenCV/ONNX Runtime — with the **screen-OCR models baked in**, so nothing else is needed for OCR; self-signed certificate — right-click → "Open" the first time to pass Gatekeeper). The two large model weights (~8.7GB) are not included; download them via the in-app guide on first launch.
 
 ## Usage
 
